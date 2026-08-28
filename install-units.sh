@@ -26,9 +26,11 @@ fi
 
 # The prep script runs as root from a system unit, so it is installed out of the
 # checkout rather than referenced in it -- a unit with an ExecStart= pointing
-# into a home directory breaks the moment the checkout moves.
+# into a home directory breaks the moment the checkout moves. It lives under
+# libexec/ for the same reason it is installed under /usr/local/lib: it is the
+# unit's to run, not yours.
 sudo install -D -m 0755 \
-    "${SCRIPT_DIR}/prep-session.sh" \
+    "${SCRIPT_DIR}/libexec/prep-session.sh" \
     /usr/local/lib/weaselway/prep-session.sh
 
 sudo install -D -m 0644 \
