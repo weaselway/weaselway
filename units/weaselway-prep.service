@@ -1,0 +1,20 @@
+[Unit]
+Description=Weaselway host preparation for the GNOME session
+Documentation=https://github.com/weaselway/setup
+
+# /mnt/wslg/mutter-rdp.env is what WSLGd in the system distro publishes. Without
+# it there is no shared-memory tag to act on and no vsock port for the session,
+# which means the system distro from step 2 of the README is not the one in use.
+# A Condition rather than an Assert: on a distro that is not set up for this,
+# staying out of the way is better than a failed unit at every boot.
+ConditionPathExists=/mnt/wslg/mutter-rdp.env
+
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/weaselway/prep-session.sh
+
+[Install]
+WantedBy=multi-user.target

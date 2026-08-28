@@ -1,0 +1,70 @@
+--- mutter-50.1/debian/control	2026-05-28 15:00:08.000000000 +0200
++++ mutter-deb/debian/control	2026-08-26 13:18:02.842986160 +0200
+@@ -23,6 +23,7 @@
+                gir1.2-pangocairo-1.0-dev,
+                gir1.2-xfixes-4.0-dev,
+                gir1.2-xlib-2.0-dev,
++               freerdp3-dev,
+                libglycin-2-dev (>= 2.0~beta.2),
+                gnome-control-center-data,
+                gnome-settings-daemon-common <!nocheck>,
+@@ -113,6 +114,7 @@
+          gnome-settings-daemon-common,
+          gsettings-desktop-schemas (>= 40~alpha),
+          mutter-common (>= 49.0),
++         libfreerdp3-3,
+          ${misc:Depends},
+          ${shlibs:Depends}
+ Provides: x-window-manager
+--- mutter-50.1/debian/rules	2026-05-28 15:00:08.000000000 +0200
++++ mutter-deb/debian/rules	2026-08-26 13:18:12.834755412 +0200
+@@ -22,7 +22,7 @@
+ CONFFLAGS = \
+ 	-Dauto_features=enabled \
+ 	-Degl_device=true \
+-	-Dremote_desktop=true \
++	-Dremote_desktop=true -Drdp=enabled \
+ 	-Dwayland_eglstream=true
+ export deb_udevdir = $(shell pkg-config --variable=udevdir udev | sed s,^/,,)
+ 
+@@ -43,7 +43,7 @@
+ 
+ # Use meson test directly as it allows us to use the timeout multiplier
+ BUILDDIR=$(CURDIR)/obj-$(DEB_HOST_GNU_TYPE)
+-TEST_COMMAND_BASE=env \
++TEST_COMMAND_BASE=true || env \
+ 	GIO_USE_VFS=local \
+ 	GIO_USE_VOLUME_MONITOR=unix \
+ 	GVFS_DISABLE_FUSE=1 \
+--- mutter-50.1/debian/libmutter-18-0.symbols	2026-05-28 15:00:08.000000000 +0200
++++ mutter-deb/debian/libmutter-18-0.symbols	2026-08-26 13:30:14.896041762 +0200
+@@ -1,5 +1,8 @@
+ libmutter-18.so.0 libmutter-18-0 #MINVER#
+ * Build-Depends-Package: libmutter-18-dev
++ meta_wayland_publish_xwayland_display_env@Base 50.1
++ gfxredir_server_context_free@Base 50.1
++ gfxredir_server_context_new@Base 50.1
+  meta_accelerator_name@Base 44.0
+  meta_add_debug_paint_flag@Base 43.0
+  meta_add_verbose_topic@Base 43.0
+@@ -1321,6 +1324,7 @@
+  clutter_backend_get_type@Base 43.0
+  clutter_backend_set_fallback_resource_scale@Base 43.0
+  clutter_backend_set_input_method@Base 43.0
++ clutter_backend_get_global_cursor_type@Base 50.1
+  clutter_bin_layout_get_type@Base 43.0
+  clutter_bin_layout_new@Base 43.0
+  clutter_bind_constraint_get_coordinate@Base 43.0
+@@ -2243,6 +2247,12 @@
+  clutter_virtual_input_device_notify_touch_up@Base 43.0
+ libmutter-cogl-18.so.0 libmutter-18-0 #MINVER#
+ * Build-Depends-Package: libmutter-18-dev
++ cogl_buffer_get_usage_hint@Base 50.1
++ cogl_buffer_usage_hint_get_type@Base 50.1
++ cogl_gpu_fence_free@Base 50.1
++ cogl_gpu_fence_is_signalled@Base 50.1
++ cogl_gpu_fence_new@Base 50.1
++ cogl_pixel_buffer_new_for_readback@Base 50.1
+  _cogl_bitmask_clear_all_in_array@Base 43.0
+  _cogl_bitmask_foreach@Base 43.0
+  _cogl_bitmask_get_from_array@Base 43.0
