@@ -1,6 +1,6 @@
 [Unit]
 Description=Weaselway host preparation for the GNOME session
-Documentation=https://github.com/weaselway/setup
+Documentation=https://github.com/weaselway/weaselway
 
 # /mnt/wslg/mutter-rdp.env is what WSLGd in the system distro publishes. Without
 # it there is no shared-memory tag to act on and no vsock port for the session,

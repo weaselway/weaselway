@@ -9,7 +9,8 @@ set -xeuo pipefail
 
 # WSL bind mounts the system distro's /mnt/wslg/.X11-unix here, but the Xwayland
 # mutter spawns needs to own the directory. Take the mount away if it is there.
-# Only a try: a busy mount is not a reason to abort the boot.
+# The umount is only a try -- what matters is the state it leaves behind, which
+# is checked below rather than inferred from an exit status.
 if [ -L /tmp/.X11-unix ]; then
     rm -f /tmp/.X11-unix
 fi
@@ -18,14 +19,51 @@ if mountpoint -q /tmp/.X11-unix; then
     umount /tmp/.X11-unix || true
 fi
 
+# Prove the takeover worked. A busy umount leaves WSL's mount in place, and the
+# next sign of it is Xwayland failing to bind its socket much later, with
+# MUTTER_X11_MANDATORY=1 taking the whole session down. Nothing else checks
+# this -- the shell drop-in asserts on the render node and the shared-memory
+# mount, not on /tmp/.X11-unix -- so failing the unit here is the only way it
+# gets said out loud.
+#
+# A missing directory is fine and left alone: the X server creates it.
+if [ -d /tmp/.X11-unix ]; then
+    PROBE="/tmp/.X11-unix/.weaselway-writable.$$"
+    if ! touch "${PROBE}"; then
+        echo "error: /tmp/.X11-unix not writable -- WSL mount still there" >&2
+        exit 1
+    fi
+    rm -f "${PROBE}"
+fi
+
 # The d3d12 driver needs the render node that dxgdrm provides, and nothing loads
 # the module at boot. Read /proc/modules directly rather than piping lsmod, so
 # pipefail has nothing to trip over. The udevadm calls are what turn the module
 # into /dev/dri/renderD128, which is what the shell drop-in asserts on.
+#
+# The module is loaded by path, from where build-kernel-module.sh put it, not by
+# name: /lib/modules is an overlay WSL mounts itself and empties on every
+# `wsl --shutdown`, so the directory `modprobe dxgdrm` would search is exactly
+# the one that never has it. A path with a slash in it makes modprobe load that
+# file instead. That skips modules.dep, which costs nothing here -- dxgdrm links
+# only against DRM core, and CONFIG_DRM=y.
+#
+# The path carries the kernel release, so after a WSL kernel update the module
+# built for the old one is not silently picked up and rejected -- it is just not
+# there, and the message says what to do. Only a warning: the shared-memory
+# mount below has nothing to do with the module, and a missing render node
+# already stops the session at org.gnome.Shell's AssertPathExists, right below
+# this line in the journal.
+DXGDRM_KO="/usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko"
+
 if ! grep -q '^dxgdrm ' /proc/modules; then
-    modprobe dxgdrm
-    udevadm trigger --subsystem-match=drm
-    udevadm settle
+    if [ -e "${DXGDRM_KO}" ]; then
+        modprobe "${DXGDRM_KO}"
+        udevadm trigger --subsystem-match=drm
+        udevadm settle
+    else
+        echo "error: ${DXGDRM_KO} missing -- run build-kernel-module.sh" >&2
+    fi
 fi
 
 # WSLGd, in the system distro, picked the vsock port and published the transport

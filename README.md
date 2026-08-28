@@ -21,17 +21,17 @@ Four pieces have to be in place:
 - **docker**, inside that distro. Both build steps run in a container.
 - `git`, `curl` and `unzip`.
 
-## 0. Get this repo
+### 0. Get this repo
 
 ```sh
-git clone https://github.com/weaselway/setup.git
-cd setup
+git clone https://github.com/weaselway/weaselway.git
+cd weaselway
 ```
 
 Run every step from the repo root. The paths matter: the container mounts the
 current directory, so running a script from elsewhere gives it the wrong tree.
 
-## 1. Install FreeRDP
+### 1. Install FreeRDP
 
 ```sh
 ./install-freerdp.sh
@@ -41,7 +41,7 @@ Downloads the client release and unpacks it into `C:\Weaselway`
 (`/mnt/c/Weaselway`), creating the directory if it does not exist. The piece you
 will use is `sdl-freerdp.exe`.
 
-## 2. Install the system distro image
+### 2. Install the system distro image
 
 ```sh
 ./install-system-image.sh
@@ -66,7 +66,7 @@ wsl --shutdown
 
 Nothing picks up the new image until WSL is restarted.
 
-## 3. Build the dxgdrm kernel module
+### 3. Build the dxgdrm kernel module
 
 ```sh
 ./build-kernel-module.sh
@@ -77,23 +77,33 @@ this clones the matching kernel source and builds enough of it to compile an
 out-of-tree module against. It takes a while -- most of it is that kernel build,
 which is what produces the symbol versions the module is checked against.
 
+The module lands in `/usr/local/lib/weaselway/modules/$(uname -r)/`, and the
+udev rules that open up permissions on the render node in `/etc/udev/rules.d`.
+Not `/lib/modules`: WSL mounts that as an overlay of its own and throws the
+contents away at every `wsl --shutdown`, so a module installed there is gone by
+the time anything wants to load it.
+
 The result is tied to the running kernel (`uname -r`). After a WSL kernel update,
 run it again.
 
-## 4. Load the module
+### 4. Load the module
 
 ```sh
-sudo modprobe dxgdrm
+sudo modprobe /usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko
 sudo udevadm trigger --subsystem-match=drm
 sudo udevadm settle
 ```
 
-This creates `/dev/dri/renderD128`. Nothing loads the module automatically, so
-it is gone again after every `wsl --shutdown` -- `weaselway-prep.service` from
-step 7 runs these three lines at every boot. In practice you only need them here
-to confirm the module built in step 3 actually loads.
+This creates `/dev/dri/renderD128`. The full path is the point -- `modprobe
+dxgdrm` searches `/lib/modules` and will not find it there, for the reason
+above.
 
-## 5. Build the patched mesa and mutter packages
+Nothing loads the module automatically, so it is gone from the kernel again
+after every `wsl --shutdown` -- `weaselway-prep.service` from step 7 runs these
+three lines at every boot. In practice you only need them here to confirm the
+module built in step 3 actually loads.
+
+### 5. Build the patched mesa and mutter packages
 
 ```sh
 ./build-packages.sh
@@ -105,7 +115,7 @@ patches on top, inside a container, and drops the `.deb`s in
 [ubuntu/resolute/README.md](ubuntu/resolute/README.md) for what it does and how
 to add a package.
 
-## 6. Install them
+### 6. Install them
 
 ```sh
 sudo apt install -y ./ubuntu/resolute/packages/*/*.deb
@@ -114,7 +124,7 @@ sudo apt install -y ./ubuntu/resolute/packages/*/*.deb
 The rebuilt packages carry a `+weasel0` version suffix, so they install over the
 distro ones and `apt policy mutter` will show which is active.
 
-## 7. Install the session units
+### 7. Install the session units
 
 ```sh
 ./install-units.sh
@@ -144,7 +154,7 @@ The script refuses to run if `~/.config/systemd/user/org.gnome.Shell@.service`
 exists: a file of that name shadows the distro unit outright, and the drop-in
 would then be layered onto the copy instead of the real one.
 
-## Running it
+### Running it (session)
 
 In the Ubuntu distro, start the session:
 
@@ -184,7 +194,9 @@ Not `systemctl --user stop gnome-session@ubuntu.target` -- the target carries
 with it, which is why the start wrapper puts `dbus.service` back before trying
 again.
 
-Then, from a second shell, connect to it:
+### Connect to it
+
+Then connect to it:
 
 ```sh
 ./start-viewer.sh
@@ -207,8 +219,9 @@ If something does not come up, this is roughly where to look:
 
 ```sh
 ls /mnt/c/Weaselway           # sdl-freerdp.exe and system_x64-*.vhd
+ls /usr/local/lib/weaselway/modules/$(uname -r)/  # module built for this kernel
 lsmod | grep dxgdrm           # module loaded
-ls /dev/dri                   # renderD128 present
+ls -l /dev/dri                # renderD128 present
 apt policy mutter             # the +weasel0 version is installed
 cat /mnt/wslg/mutter-rdp.env  # WSLGd published the transport
 ```
