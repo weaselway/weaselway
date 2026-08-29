@@ -441,8 +441,7 @@ Write-Host @"
 
 Start the session and connect to it, from inside the distro:
 
-    wsl -d $Distro
-    cd ~/weaselway
+    wsl -d $Distro --cd ~/weaselway
     ./start-gnome-shell.sh
     ./start-viewer.sh
 

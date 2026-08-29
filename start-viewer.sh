@@ -15,4 +15,5 @@ source /mnt/wslg/mutter-rdp.env
     /dynamic-resolution \
     /w:1280 \
     /kbd:layout:German \
-    /log-level:warn
+    /log-level:warn \
+    "$@"
