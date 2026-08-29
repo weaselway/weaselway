@@ -41,7 +41,7 @@ fi
 # pipefail has nothing to trip over. The udevadm calls are what turn the module
 # into /dev/dri/renderD128, which is what the shell drop-in asserts on.
 #
-# The module is loaded by path, from where build-kernel-module.sh put it, not by
+# The module is loaded by path, from where install-kernel-module.sh put it, not by
 # name: /lib/modules is an overlay WSL mounts itself and empties on every
 # `wsl --shutdown`, so the directory `modprobe dxgdrm` would search is exactly
 # the one that never has it. A path with a slash in it makes modprobe load that
@@ -62,7 +62,7 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
         udevadm trigger --subsystem-match=drm
         udevadm settle
     else
-        echo "error: ${DXGDRM_KO} missing -- run build-kernel-module.sh" >&2
+        echo "error: ${DXGDRM_KO} missing -- run install-kernel-module.sh" >&2
     fi
 fi
 

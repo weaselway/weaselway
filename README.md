@@ -23,7 +23,32 @@ Four pieces have to be in place:
 
 ### 0. Get this repo
 
+Create the distro:
+
+```powershell
+wsl --install Ubuntu-26.04 --name "Gnome"
+```
+
+It must be either the only WSL distro you have, or the first one started
+after `wsl --shutdown` -- WSL only wires up `/run/user/1000/` for the distro
+that starts first, and everything here depends on that directory being
+non-empty. If in doubt, run `wsl --shutdown` and then start this distro
+before any other.
+
+Install a few dependencies. This repository uses docker to get isolated build
+environments. You can remove it once setup is done:
+
 ```sh
+sudo apt -y update
+sudo apt -y install git unzip docker.io gnome-session ubuntu-session winpr-utils
+sudo usermod -aG docker $(whoami)
+```
+
+`usermod` does not affect your current login session -- open a new shell (or
+`su - $(whoami)`) for the new group membership to take effect.
+
+```sh
+cd $HOME
 git clone https://github.com/weaselway/weaselway.git
 cd weaselway
 ```
@@ -69,7 +94,7 @@ Nothing picks up the new image until WSL is restarted.
 ### 3. Build the dxgdrm kernel module
 
 ```sh
-./build-kernel-module.sh
+./install-kernel-module.sh
 ```
 
 WSL runs Microsoft's kernel, for which no `linux-headers` package exists, so
@@ -86,22 +111,18 @@ the time anything wants to load it.
 The result is tied to the running kernel (`uname -r`). After a WSL kernel update,
 run it again.
 
-### 4. Load the module
+### 4. Load the module (optional)
+
+`weaselway-prep.service`, installed in step 7, loads the module by this same
+path at every boot, so there is nothing to do here in normal use. This step
+is only for confirming, right after building it, that the module from step 3
+actually loads before you go any further:
 
 ```sh
 sudo modprobe /usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko
 sudo udevadm trigger --subsystem-match=drm
 sudo udevadm settle
 ```
-
-This creates `/dev/dri/renderD128`. The full path is the point -- `modprobe
-dxgdrm` searches `/lib/modules` and will not find it there, for the reason
-above.
-
-Nothing loads the module automatically, so it is gone from the kernel again
-after every `wsl --shutdown` -- `weaselway-prep.service` from step 7 runs these
-three lines at every boot. In practice you only need them here to confirm the
-module built in step 3 actually loads.
 
 ### 5. Build the patched mesa and mutter packages
 
@@ -111,11 +132,14 @@ module built in step 3 actually loads.
 
 Rebuilds Ubuntu's own `mesa` and `mutter` source packages with the fork's
 patches on top, inside a container, and drops the `.deb`s in
-`ubuntu/resolute/packages/`. This is the long one. See
+`ubuntu/resolute/packages/`. See
 [ubuntu/resolute/README.md](ubuntu/resolute/README.md) for what it does and how
 to add a package.
 
-### 6. Install them
+Building locally takes a while. If you would rather skip it, a PPA carries the
+same packages already built -- see below.
+
+### 6. Install the updated packages
 
 ```sh
 sudo apt install -y ./ubuntu/resolute/packages/*/*.deb
@@ -123,6 +147,41 @@ sudo apt install -y ./ubuntu/resolute/packages/*/*.deb
 
 The rebuilt packages carry a `+weasel0` version suffix, so they install over the
 distro ones and `apt policy mutter` will show which is active.
+
+#### Alternative: install from the PPA
+
+Instead of steps 5 and 6, pull the same packages from a PPA:
+
+```sh
+./install-ppa-packages.sh
+```
+
+This writes `/etc/apt/preferences.d/weaselway`, pinning that PPA above every
+other source (including a later distro update) so `apt upgrade` does not
+silently revert `mesa` or `mutter` back to the unpatched build:
+
+```
+Package: *
+Pin: release o=LP-PPA-oliver-bestmann-weaselway
+Pin-Priority: 1001
+```
+
+Then it adds the PPA and upgrades:
+
+```sh
+sudo add-apt-repository ppa:oliver-bestmann/weaselway
+sudo apt update
+sudo apt upgrade
+```
+
+Sanity check that the installed `mutter` actually came from the PPA rather
+than the distro:
+
+```sh
+apt info mutter | grep APT-Sources
+```
+
+The output should mention `oliver-bestmann/weaselway`.
 
 ### 7. Install the session units
 
@@ -156,7 +215,23 @@ would then be layered onto the copy instead of the real one.
 
 ### Running it (session)
 
-In the Ubuntu distro, start the session:
+Before starting, make sure you actually have a logind session:
+`loginctl session-status` must return a valid session. If it does not, `su -
+$(whoami)` to get one.
+
+WSL mounts a tmpfs over `/tmp`, and `/tmp/.X11-unix` inside it can end up
+owned such that mutter's Xwayland cannot use it. Before starting the session,
+free it up:
+
+```sh
+sudo umount /tmp/.X11-unix
+sudo rm -rf /tmp/.X11-unix/
+```
+
+(`chown $(whoami): /tmp/.X11-unix` may be enough on its own, without the
+unmount/recreate -- worth trying first.)
+
+Then start the session:
 
 ```sh
 ./start-gnome-shell.sh
@@ -206,11 +281,14 @@ That runs `sdl-freerdp.exe` from `C:\Weaselway`, pointed at the vsock address
 and shared memory from the same env file. Edit it to taste -- the resolution
 and `/kbd:layout:German` in particular.
 
-To launch an application into that session, use `exec.sh` from the
-[weaselway/wslg] checkout:
+Do not install Chromium via snap: the snap bundles its own mesa, which is not
+the patched one and will either fail to accelerate or break outright. Use the
+PPA instead:
 
 ```sh
-./exec.sh nautilus
+sudo add-apt-repository ppa:xtradeb/apps
+sudo apt update
+sudo apt install chromium
 ```
 
 ## Checking each step

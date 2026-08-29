@@ -44,8 +44,3 @@ sudo install -D -m 0644 \
     /etc/udev/rules.d/99-dxgdrm.rules
 
 sudo udevadm control --reload
-
-echo "You could now load the kernel module:"
-echo "  sudo modprobe ${MODULE_DIR}/dxgdrm.ko"
-echo "  sudo udevadm trigger --subsystem-match=drm"
-echo "  sudo udevadm settle"
