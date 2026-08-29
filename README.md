@@ -35,6 +35,10 @@ that starts first, and everything here depends on that directory being
 non-empty. If in doubt, run `wsl --shutdown` and then start this distro
 before any other.
 
+```powershell
+wsl -d Gnome
+```
+
 Install a few dependencies. This repository uses docker to get isolated build
 environments. You can remove it once setup is done:
 
@@ -193,8 +197,11 @@ The session runs as the units GNOME already ships, rather than as a script of
 our own. Three things have to be added for those units to work here:
 
 - `weaselway-prep.service`, a system unit doing the root-side setup once per
-  boot -- loading `dxgdrm`, taking `/tmp/.X11-unix` back from WSL so mutter's
-  Xwayland can own it, and mounting the shared-memory share.
+  boot -- loading `dxgdrm`, taking `/tmp/.X11-unix` back from WSL so mutter can
+  create its X socket there, and mounting the shared-memory share. It is ordered
+  `After=wslg.service`, the unit WSL generates to bind `/mnt/wslg/.X11-unix`
+  read-only over that path; we have to undo that after it happens rather than
+  before.
 - `~/.config/environment.d/10-weaselway.conf`, the environment the user manager
   hands to every service in the session: the driver variables, and
   `XDG_SESSION_TYPE=wayland`. That last one is not optional --
@@ -214,22 +221,6 @@ exists: a file of that name shadows the distro unit outright, and the drop-in
 would then be layered onto the copy instead of the real one.
 
 ### Running it (session)
-
-Before starting, make sure you actually have a logind session:
-`loginctl session-status` must return a valid session. If it does not, `su -
-$(whoami)` to get one.
-
-WSL mounts a tmpfs over `/tmp`, and `/tmp/.X11-unix` inside it can end up
-owned such that mutter's Xwayland cannot use it. Before starting the session,
-free it up:
-
-```sh
-sudo umount /tmp/.X11-unix
-sudo rm -rf /tmp/.X11-unix/
-```
-
-(`chown $(whoami): /tmp/.X11-unix` may be enough on its own, without the
-unmount/recreate -- worth trying first.)
 
 Then start the session:
 
@@ -325,6 +316,27 @@ start also stops `dbus.service` on the way down, so clear the wreckage with
 An empty or missing `mutter-rdp.env` means the system distro is not the one from
 step 2 -- check the `.wslconfig` path and that WSL was restarted. You can look
 around inside it with `wsl --system`.
+
+If the shell starts but Xwayland cannot bind its display, look at
+`/tmp/.X11-unix`: it should be `drwxrwxrwt` (mode 1777), on the same filesystem
+as `/tmp`. A root-owned `drwxr-xr-x` there means `weaselway-prep.service` did
+not get its turn, and `sudo systemctl restart weaselway-prep.service` fixes it.
+
+That directory is worth understanding, because the obvious diagnostics lie about
+it. WSL generates `wslg.service` to bind `/mnt/wslg/.X11-unix` read-only over
+`/tmp/.X11-unix`, and `X-mount.mkdir` creates the mountpoint as a root-owned
+`0755` directory on the way in. systemd's `tmp.mount` then covers `/tmp` with a
+fresh tmpfs, leaving WSL's bind *shadowed* -- still listed in
+`/proc/self/mountinfo`, mounted over, affecting nothing. So `mountpoint` calls
+the path a mountpoint while `umount` calls it "not mounted", and only `umount`
+is right. Comparing `stat -c %d` against `/tmp` is the honest check, which is
+what the prep script does.
+
+There is no way to move the socket somewhere WSL does not touch:
+`/tmp/.X11-unix` is a compile-time constant on both sides, baked into
+`libmutter` (which creates the socket and hands Xwayland the fd via
+`-listenfd`) and into `libxcb` (which every X client uses to find it). No
+environment variable overrides either.
 
 [weaselway/wslg]: https://github.com/weaselway/wslg
 [weaselway/freerdp]: https://github.com/weaselway/freerdp

@@ -7,33 +7,69 @@
 
 set -xeuo pipefail
 
-# WSL bind mounts the system distro's /mnt/wslg/.X11-unix here, but the Xwayland
-# mutter spawns needs to own the directory. Take the mount away if it is there.
-# The umount is only a try -- what matters is the state it leaves behind, which
-# is checked below rather than inferred from an exit status.
+# Take /tmp/.X11-unix back from WSL, so the socket mutter creates there (it
+# binds the socket itself and hands Xwayland the fd with -listenfd) is not
+# landing in something read-only or unwritable.
+#
+# WSL generates wslg.service for this path, ordered After=tmp.mount, whose whole
+# body is:
+#
+#   mount -o bind,ro,X-mount.mkdir -t none /mnt/wslg/.X11-unix /tmp/.X11-unix
+#
+# Two things there matter. The mount is read-only, and X-mount.mkdir creates the
+# mountpoint first -- as root, mode 0755. So undoing the mount is not enough:
+# the directory it made stays behind, owned by root and writable by nobody else,
+# and mutter running as the user cannot create its socket in it.
+#
+# Hence rm -rf rather than umount alone, and a fresh 1777 directory after it --
+# sticky and world-writable, which is what /usr/lib/tmpfiles.d/x11.conf asks for
+# on any normal desktop and what makes the owner question moot.
+#
+# The unit is ordered After=wslg.service so this runs once WSL has had its turn;
+# wslg.service carries ConditionPathExists=!/tmp/.X11-unix/X0 and so does not
+# come back and redo it afterwards.
 if [ -L /tmp/.X11-unix ]; then
     rm -f /tmp/.X11-unix
 fi
 
-if mountpoint -q /tmp/.X11-unix; then
-    umount /tmp/.X11-unix || true
+# Stacked mounts are possible here, and each umount pops one. Bounded rather
+# than `while true` so a mount that will not go away fails the unit below
+# instead of spinning.
+for _ in 1 2 3 4 5; do
+    mountpoint -q /tmp/.X11-unix || break
+    umount /tmp/.X11-unix || break
+done
+
+rm -rf /tmp/.X11-unix
+mkdir -m 1777 /tmp/.X11-unix
+
+# Prove the takeover worked, because the failure is otherwise silent until much
+# later: Xwayland cannot bind its socket, and MUTTER_X11_MANDATORY=1 takes the
+# whole session down with it. Nothing else checks this -- the shell drop-in
+# asserts on the render node and the shared-memory mount, not on this path.
+#
+# Note this cannot be a `touch` probe: that runs as root, which can write into a
+# root-owned 0755 directory perfectly well, and so passes in exactly the broken
+# case it is meant to catch. Check the state itself instead.
+#
+# Nor can it be `mountpoint`: that reads /proc/self/mountinfo, and WSL's bind is
+# still listed there long after it stopped being reachable. tmp.mount covers
+# /tmp with a fresh tmpfs *after* wslg.service mounted onto the old one, which
+# leaves the bind shadowed -- present in the table, mounted over, affecting
+# nothing. `mountpoint` calls that a mountpoint and `umount` calls it "not
+# mounted", and only the latter is telling the truth.
+#
+# Comparing device numbers asks the question that actually matters: if our
+# directory is on the same filesystem as /tmp, then nothing is mounted over it.
+if [ "$(stat -c %d /tmp/.X11-unix)" != "$(stat -c %d /tmp)" ]; then
+    echo "error: something is still mounted over /tmp/.X11-unix" >&2
+    exit 1
 fi
 
-# Prove the takeover worked. A busy umount leaves WSL's mount in place, and the
-# next sign of it is Xwayland failing to bind its socket much later, with
-# MUTTER_X11_MANDATORY=1 taking the whole session down. Nothing else checks
-# this -- the shell drop-in asserts on the render node and the shared-memory
-# mount, not on /tmp/.X11-unix -- so failing the unit here is the only way it
-# gets said out loud.
-#
-# A missing directory is fine and left alone: the X server creates it.
-if [ -d /tmp/.X11-unix ]; then
-    PROBE="/tmp/.X11-unix/.weaselway-writable.$$"
-    if ! touch "${PROBE}"; then
-        echo "error: /tmp/.X11-unix not writable -- WSL mount still there" >&2
-        exit 1
-    fi
-    rm -f "${PROBE}"
+MODE="$(stat -c %a /tmp/.X11-unix)"
+if [ "${MODE}" != "1777" ]; then
+    echo "error: /tmp/.X11-unix has mode ${MODE}, expected 1777" >&2
+    exit 1
 fi
 
 # The d3d12 driver needs the render node that dxgdrm provides, and nothing loads

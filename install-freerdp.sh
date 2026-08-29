@@ -2,7 +2,7 @@
 
 set -exu -o pipefail
 
-VERSION=v1.0.1
+VERSION=v1.0.2
 URL=https://github.com/weaselway/freerdp/releases/download/${VERSION}/freerdp-${VERSION}.zip
 
 mkdir -p /mnt/c/Weaselway
