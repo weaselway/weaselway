@@ -9,10 +9,47 @@
 #
 # After this, `systemctl --user start gnome-session@ubuntu.target` is the whole
 # of starting a session.
+#
+# Usage: install-units.sh [--adapter NAME]
+#
+# --adapter pins the GPU d3d12 renders on, for machines where the first adapter
+# Windows lists is not the one you want. It is matched against a substring of
+# the adapter description, so "intel" or "nvidia" does. Without it, no adapter
+# is pinned and d3d12 picks; passing an empty name clears a previous choice.
 
-set -xeuo pipefail
+set -euo pipefail
+
+ADAPTER=""
+ADAPTER_SET=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --adapter)
+            [ $# -ge 2 ] || { echo "error: --adapter needs a value" >&2; exit 1; }
+            ADAPTER="$2"
+            ADAPTER_SET=1
+            shift 2
+            ;;
+        --adapter=*)
+            ADAPTER="${1#--adapter=}"
+            ADAPTER_SET=1
+            shift
+            ;;
+        *)
+            echo "error: unknown argument '$1'" >&2
+            exit 1
+            ;;
+    esac
+done
+
+set -x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Read after 10-weaselway.conf -- environment.d files are applied in name order,
+# so this one wins on the variable it sets. Kept separate from the shipped conf
+# so that file stays a verbatim copy of what is in the checkout.
+ADAPTER_CONF="${HOME}/.config/environment.d/20-weaselway-adapter.conf"
 
 # A unit file of the same name under ~/.config/systemd/user shadows the distro's
 # entirely -- the drop-in would then be layered onto that copy instead, and the
@@ -45,6 +82,17 @@ install -D -m 0644 \
     "${SCRIPT_DIR}/units/org.gnome.Shell@.service.d/weaselway.conf" \
     "${HOME}/.config/systemd/user/org.gnome.Shell@.service.d/weaselway.conf"
 
+# Only touched when --adapter was given: a plain re-run should not silently drop
+# a choice made earlier.
+if [ "${ADAPTER_SET}" -eq 1 ]; then
+    if [ -n "${ADAPTER}" ]; then
+        mkdir -p "$(dirname "${ADAPTER_CONF}")"
+        printf 'MESA_D3D12_DEFAULT_ADAPTER_NAME=%s\n' "${ADAPTER}" > "${ADAPTER_CONF}"
+    else
+        rm -f "${ADAPTER_CONF}"
+    fi
+fi
+
 # The drop-in used to be installed under the @ubuntu instance. Left behind it
 # would still apply, and instance drop-ins are read after template-wide ones --
 # so the stale copy would quietly win, for that one session only.
@@ -64,4 +112,11 @@ systemctl --user daemon-reload
 # which is exactly set-environment's argument form.
 # shellcheck disable=SC2046
 systemctl --user set-environment \
-    $(grep -vE '^[[:space:]]*(#|$)' "${SCRIPT_DIR}/environment.d/10-weaselway.conf")
+    $(grep -hvE '^[[:space:]]*(#|$)' \
+        "${SCRIPT_DIR}/environment.d/10-weaselway.conf" \
+        $([ -f "${ADAPTER_CONF}" ] && echo "${ADAPTER_CONF}"))
+
+# An adapter cleared just now is still in the manager's environment from before.
+if [ ! -f "${ADAPTER_CONF}" ]; then
+    systemctl --user unset-environment MESA_D3D12_DEFAULT_ADAPTER_NAME
+fi

@@ -1,0 +1,3 @@
+# Scratch scripts install.ps1 hands to the distro. Normally removed as soon as
+# they have run; they survive only if a run is interrupted.
+.weaselway-tmp/

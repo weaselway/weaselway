@@ -15,18 +15,55 @@ Four pieces have to be in place:
 - a small kernel module (`dxgdrm`) giving the d3d12 driver a real
   `/dev/dri/renderD128` to find.
 
-## Prerequisites
+## Installation
 
-- **Ubuntu 26.04 (`resolute`)** under WSL2.
-- **docker**, inside that distro. Both build steps run in a container.
-- `git`, `curl` and `unzip`.
+### The scripted way
 
-### 0. Get this repo
+`install.ps1` does everything below from a Windows PowerShell prompt -- creates
+the distro, installs the dependencies, clones this repo inside it and runs each
+of the `install-*.sh` scripts, including the two Windows-side steps the manual
+walkthrough leaves to you (the `systemDistro` line in `.wslconfig` and the
+`wsl --shutdown` after it). Download it, then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+It is safe to re-run; each step checks whether it is already done. `-Distro
+<name>` picks a different distro name (default `Gnome`), `-BuildPackages`
+builds mesa and mutter locally instead of taking them from the PPA, and
+`-SkipDistroInstall` uses a distro you already made, and `-Adapter <name>` pins
+the GPU (see step 7). Creating the distro opens Ubuntu's first-run setup for a
+username and password.
+
+At the end it offers to install Firefox and Chromium from the xtradeb PPA,
+defaulting to yes; `-Browsers` and `-Browsers:$false` answer that up front. See
+"Browsers" below for why they do not come from the archive.
+
+Early on it offers to enable passwordless sudo. Most of the `install-*.sh`
+scripts call `sudo` themselves, so saying yes is what makes the rest of the run
+unattended; saying no just means a password prompt at each of those steps. It
+writes `/etc/sudoers.d/weaselway`, which is a lasting change to the distro --
+delete that file to undo it. `-PasswordlessSudo` and `-PasswordlessSudo:$false`
+answer it up front, which is also what a non-interactive run needs.
+
+The rest of this section is the same thing by hand.
+
+### By hand
+
+First make sure WSL itself is current, from Windows:
+
+```powershell
+wsl --update
+wsl --version
+```
+
+`wsl --version` should report a `WSL version:` of at least `2.7`.
 
 Create the distro:
 
 ```powershell
-wsl --install Ubuntu-26.04 --name "Gnome"
+wsl --install Ubuntu-26.04 --name Gnome
 ```
 
 It must be either the only WSL distro you have, or the first one started
@@ -44,7 +81,8 @@ environments. You can remove it once setup is done:
 
 ```sh
 sudo apt -y update
-sudo apt -y install git unzip docker.io gnome-session ubuntu-session winpr-utils
+sudo apt -y upgrade
+sudo apt -y install git unzip docker.io gnome-session ubuntu-session winpr-utils ptyxis
 sudo usermod -aG docker $(whoami)
 ```
 
@@ -220,6 +258,31 @@ The script refuses to run if `~/.config/systemd/user/org.gnome.Shell@.service`
 exists: a file of that name shadows the distro unit outright, and the drop-in
 would then be layered onto the copy instead of the real one.
 
+#### Picking a GPU
+
+By default nothing is pinned: `d3d12` takes whatever adapter Windows lists
+first, which is the right answer on a machine with one GPU. On a hybrid laptop
+it may not be, and `--adapter` says which to use:
+
+```sh
+./install-units.sh --adapter intel
+```
+
+The name is matched against a substring of the adapter description, so `intel`
+or `nvidia` is enough. It goes to
+`~/.config/environment.d/20-weaselway-adapter.conf`, read after
+`10-weaselway.conf` and so winning over it. `--adapter ''` clears the choice
+again; a plain re-run of `install-units.sh` leaves whatever is already set
+alone.
+
+To try another GPU without committing to it, pass the same flag to the start
+script instead -- it applies to that session only, and the next start without
+the flag goes back to the installed setting:
+
+```sh
+./start-gnome-shell.sh --adapter nvidia
+```
+
 ### Running it (session)
 
 Then start the session:
@@ -238,6 +301,9 @@ Any session the distro ships works; pass its name to get it:
 ```sh
 ./start-gnome-shell.sh gnome
 ```
+
+It also takes `--adapter <name>`, which overrides the pinned GPU for that one
+session; see "Picking a GPU" above.
 
 `ls /usr/share/gnome-session/sessions/` lists them -- `ubuntu`, `gnome` and
 `gnome-login` on 26.04, with `ubuntu` the default here.
@@ -272,15 +338,24 @@ That runs `sdl-freerdp.exe` from `C:\Weaselway`, pointed at the vsock address
 and shared memory from the same env file. Edit it to taste -- the resolution
 and `/kbd:layout:German` in particular.
 
-Do not install Chromium via snap: the snap bundles its own mesa, which is not
-the patched one and will either fail to accelerate or break outright. Use the
-PPA instead:
+### Browsers
+
+Do not install Firefox or Chromium via snap: a browser snap bundles its own
+mesa, which is not the patched one and will either fail to accelerate or break
+outright. The packages of those names in the Ubuntu archive are transitional
+and pull in exactly that snap, so they are no help either. Take them from the
+xtradeb PPA, which builds both as ordinary `.deb`s against the system
+libraries -- and so against our mesa:
 
 ```sh
-sudo add-apt-repository ppa:xtradeb/apps
-sudo apt update
-sudo apt install chromium
+./install-xtradeb.sh
 ```
+
+Like `install-ppa-packages.sh`, this writes a pin
+(`/etc/apt/preferences.d/weaselway-xtradeb`) putting that PPA above the
+archive, so `apt upgrade` does not swap the real packages back for the
+transitional ones. It prints `apt policy firefox chromium` at the end; both
+should name xtradeb.
 
 ## Checking each step
 

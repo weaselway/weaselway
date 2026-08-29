@@ -13,16 +13,61 @@
 # manager already owns a session bus, and the session has to share it rather
 # than get one of its own.
 #
-# Usage: start-gnome-shell.sh [session]
+# Usage: start-gnome-shell.sh [--adapter NAME] [session]
 #
 # `ls /usr/share/gnome-session/sessions/` lists what the distro offers -- ubuntu,
 # gnome and gnome-login on Ubuntu 26.04. Nothing in the units is specific to any
 # of them.
+#
+# --adapter pins the GPU d3d12 renders on for this session only, overriding
+# whatever `install-units.sh --adapter` settled on; an empty name pins nothing.
 
 set -euo pipefail
 
-SESSION="${1:-ubuntu}"
+SESSION=""
+ADAPTER=""
+ADAPTER_SET=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --adapter)
+            [ $# -ge 2 ] || { echo "error: --adapter needs a value" >&2; exit 1; }
+            ADAPTER="$2"
+            ADAPTER_SET=1
+            shift 2
+            ;;
+        --adapter=*)
+            ADAPTER="${1#--adapter=}"
+            ADAPTER_SET=1
+            shift
+            ;;
+        -*)
+            echo "error: unknown option '$1'" >&2
+            exit 1
+            ;;
+        *)
+            SESSION="$1"
+            shift
+            ;;
+    esac
+done
+
+SESSION="${SESSION:-ubuntu}"
 TARGET="gnome-session@${SESSION}.target"
+
+# The manager's environment outlives a session, so an --adapter from a previous
+# run is still in it. Put the configured value back when none is given, rather
+# than inheriting the last one silently.
+ADAPTER_CONF="${HOME}/.config/environment.d/20-weaselway-adapter.conf"
+if [ "${ADAPTER_SET}" -eq 0 ] && [ -f "${ADAPTER_CONF}" ]; then
+    ADAPTER="$(sed -n 's/^MESA_D3D12_DEFAULT_ADAPTER_NAME=//p' "${ADAPTER_CONF}")"
+fi
+
+if [ -n "${ADAPTER}" ]; then
+    systemctl --user set-environment "MESA_D3D12_DEFAULT_ADAPTER_NAME=${ADAPTER}"
+else
+    systemctl --user unset-environment MESA_D3D12_DEFAULT_ADAPTER_NAME
+fi
 
 # The shell's instance name is the gnome-shell *mode*, which is not the session
 # name: ubuntu.session wants org.gnome.Shell@ubuntu.service, but gnome.session
