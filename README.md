@@ -23,11 +23,17 @@ Four pieces have to be in place:
 the distro, installs the dependencies, clones this repo inside it and runs each
 of the `install-*.sh` scripts, including the two Windows-side steps the manual
 walkthrough leaves to you (the `systemDistro` line in `.wslconfig` and the
-`wsl --shutdown` after it). Download it, then:
+`wsl --shutdown` after it). From a PowerShell prompt, run it straight from
+GitHub:
 
 ```powershell
+iwr https://raw.githubusercontent.com/weaselway/weaselway/main/install.ps1 -OutFile install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+Either way the script writes its scratch files to the current directory, so run
+it from somewhere on a local drive -- it needs a path the distro can reach
+under `/mnt`. A good candidate is `C:\Weaselway`.
 
 It is safe to re-run; each step checks whether it is already done. `-Distro
 <name>` picks a different distro name (default `Gnome`), `-BuildPackages`
