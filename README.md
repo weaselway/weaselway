@@ -289,6 +289,75 @@ the flag goes back to the installed setting:
 ./start-gnome-shell.sh --adapter nvidia
 ```
 
+### 8. Install the audio bridge
+
+```sh
+./install-audio.sh
+```
+
+Audio is PipeWire, end to end. There is no PulseAudio daemon anywhere: the
+system distro used to run one carrying a pair of custom RDP modules, and mutter
+spoke a bespoke socket protocol to them. It now connects to two stock
+`protocol-simple` servers over loopback TCP instead, and the whole thing is
+config rather than code. `pipewire-pulse` is still installed, because that is
+what libpulse clients -- gnome-shell's own volume control among them -- talk
+to.
+
+The script installs `pipewire`, `pipewire-pulse` and `wireplumber` (already
+present on an `ubuntu-desktop` install), drops
+`~/.config/pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf` into place, and
+restarts the three services. It ends by printing `wpctl status`, which is the
+check that matters -- see below for what it should say.
+
+The config creates two ends:
+
+| | direction | format | port |
+|---|---|---|---|
+| **Remote Desktop Audio** | desktop -> client | 44100 / stereo / S16LE | `127.0.0.1:4711` |
+| **Remote Desktop Microphone** | client -> desktop | 44100 / mono / S16LE | `127.0.0.1:4712` |
+
+Formats are fixed at load time -- this protocol has no negotiation -- and must
+match `rdp_audio_out_format` and `rdp_audio_in_format` in mutter's
+`meta-rdp-audio.c`. Both servers listen on loopback only; the user distro is the
+trust boundary, exactly as it was for the unix socket this replaced.
+
+The two are deliberately not symmetric, which is worth knowing before it looks
+like a bug:
+
+- **The speakers are permanent.** A `protocol-simple` server creates its stream
+  per *connected client*, and mutter only connects while an RDP viewer is
+  attached with audio negotiated. So the sink applications see is a separate,
+  always-present null sink, and the server drains its monitor. Disconnecting the
+  viewer just means the audio goes nowhere. Without this the default sink would
+  vanish on every disconnect and long-running applications would be stranded.
+- **The microphone is not.** `Remote Desktop Microphone` *is* the per-client
+  stream, so it appears when a viewer connects and disappears when it leaves.
+  That is the honest answer -- there is no microphone without a remote client --
+  and applications handle a mic hotplugging far better than speakers doing it.
+  (The obvious fix, a permanent virtual source, does not work: WirePlumber only
+  ever routes playback streams to an `Audio/Sink`, so feeding one needs a
+  loopback through an intermediate sink that then shows up in Settings as a
+  phantom output device.)
+
+So immediately after running the script, with no viewer attached, `wpctl status`
+should show `Remote Desktop Audio` under Sinks and starred as the default, and
+**no** source. Both ports should be listening. If the sink is missing, the
+config did not load -- `journalctl --user -u pipewire -n 50`.
+
+#### `PULSE_SERVER`
+
+WSL injects `PULSE_SERVER=/mnt/wslg/PulseServer` into the distro, pointing at
+the PulseAudio the stock WSLGd ran. Ours runs none, and libpulse clients only
+find `pipewire-pulse` when that variable is *unset* -- left set, every one of
+them tries a socket that is not there, and the failure looks like "PipeWire is
+broken" rather than anything to do with WSL.
+
+`install-units.sh` handles this, so it is not something to do by hand: the
+gnome-shell drop-in carries `UnsetEnvironment=PULSE_SERVER`, and the script also
+clears it from the running user manager. It has to be unset rather than set
+empty -- `environment.d` can only assign, and libpulse does not reliably read an
+empty value as "use the default".
+
 ### Running it (session)
 
 Then start the session:
@@ -374,6 +443,9 @@ lsmod | grep dxgdrm           # module loaded
 ls -l /dev/dri                # renderD128 present
 apt policy mutter             # the +weasel0 version is installed
 cat /mnt/wslg/mutter-rdp.env  # WSLGd published the transport
+wpctl status                  # Remote Desktop Audio present and default
+ss -ltn '( sport = :4711 or sport = :4712 )'  # both bridge ports listening
+systemctl --user show-environment | grep PULSE_SERVER  # should print nothing
 ```
 
 For the session itself:

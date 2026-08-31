@@ -120,3 +120,10 @@ systemctl --user set-environment \
 if [ ! -f "${ADAPTER_CONF}" ]; then
     systemctl --user unset-environment MESA_D3D12_DEFAULT_ADAPTER_NAME
 fi
+
+# WSL injects this, pointing at the PulseAudio the stock WSLGd ran; ours runs
+# none, and libpulse clients only find pipewire-pulse when it is unset. The
+# shell drop-in carries UnsetEnvironment=PULSE_SERVER so this survives a
+# restart -- this line is for the manager that is already running, and so for
+# anything started in this session without going through the shell unit.
+systemctl --user unset-environment PULSE_SERVER

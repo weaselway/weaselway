@@ -28,4 +28,5 @@ if [ ! -f "${BUILD_DIR}/okay" ]; then
   touch "${BUILD_DIR}/okay"
 fi
 
-sudo meson install -C "${BUILD_DIR}"
+meson compile -C "${BUILD_DIR}"
+sudo meson install --no-rebuild -C "${BUILD_DIR}"
