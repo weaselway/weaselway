@@ -2,7 +2,7 @@
 
 set -exu -o pipefail
 
-VERSION=v1.0.79-1
+VERSION=v1.0.79-2
 URL=https://github.com/weaselway/wslg/releases/download/${VERSION}/system_x64-${VERSION}.vhd.gz
 
 mkdir -p /mnt/c/Weaselway
