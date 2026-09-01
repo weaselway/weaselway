@@ -53,13 +53,19 @@ function build-packages {
             quilt import $BASE/patches/*.patch
             quilt push -a
 
+            export DEBFULLNAME="Oliver Bestmann"
+            export DEBEMAIL="oliver.bestmann@googlemail.com"
+
             if $SOURCEONLY ; then
                 # build source package only, can be uploaded to launchpad ppa
-                echo | dch --distribution resolute --release
+                echo | dch --local "+${RELEASE_SUFFIX}." "Custom build for weasel"
+                dch --release "Weasel build release"
+
+                dpkg-parsechangelog -S Version
                 dpkg-buildpackage -S -sa -d -k4A65FFE4EEFE2E93
             else
                 # build local binary packages
-                echo | dch --local "+weasel0" "Custom build for weasel"
+                echo | dch --local "+${RELEASE_SUFFIX}." "Custom build for weasel"
                 dpkg-buildpackage -us -uc -b
             fi
         popd

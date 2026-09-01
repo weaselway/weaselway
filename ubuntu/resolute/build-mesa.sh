@@ -12,6 +12,7 @@ UPSTREAMTAG=mesa-26.0.8
 EXTRA_DEPENDENCIES=""
 
 SOURCEONLY=${SOURCEONLY:-false}
+RELEASE_SUFFIX=weasel2
 
 source _build.sh
 
