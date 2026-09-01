@@ -405,9 +405,14 @@ if ($PSBoundParameters.ContainsKey('Adapter')) {
 }
 Invoke-Wsl -Description "install-units.sh" -Command "cd '$repo' && ./install-units.sh$unitsArgs"
 
-# --- 8. Browsers (optional) -------------------------------------------------
+# --- 8. Audio bridge --------------------------------------------------------
 
-Write-Step "8. Firefox and Chromium"
+Write-Step "8. Installing the audio bridge"
+Invoke-Wsl -Description "install-audio.sh" -Command "cd '$repo' && ./install-audio.sh"
+
+# --- Browsers (optional) ----------------------------------------------------
+
+Write-Step "Firefox and Chromium"
 
 if (Test-WslCommand "test -f /etc/apt/preferences.d/weaselway-xtradeb") {
     Write-Note "the xtradeb PPA is already set up"
