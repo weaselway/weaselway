@@ -9,11 +9,14 @@ PREFIX=/usr
 # (/usr/lib64 is not on the loader path)
 LIBDIR="lib/$(gcc -print-multiarch 2>/dev/null || echo x86_64-linux-gnu)"
 
+# BUILDTYPE=debugoptimized
+BUILDTYPE=release
+
 export PKG_CONFIG_PATH="${PREFIX}/${LIBDIR}/pkgconfig:${PREFIX}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 
 if [ ! -f "${BUILD_DIR}/okay" ]; then
     meson setup --reconfigure "${BUILD_DIR}" "${SOURCE_DIR}" \
-        -Dbuildtype="debugoptimized" \
+        -Dbuildtype="${BUILDTYPE}" \
         -Dprefix="${PREFIX}" \
         -Dlibdir="${LIBDIR}" \
         -Dudev_dir="${PREFIX}/lib/udev" \
