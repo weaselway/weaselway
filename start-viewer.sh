@@ -16,4 +16,6 @@ source /mnt/wslg/mutter-rdp.env
     /w:1280 \
     /kbd:layout:German \
     /log-level:warn \
+    /multitouch \
+    /audio-mode:redirect \
     "$@"
