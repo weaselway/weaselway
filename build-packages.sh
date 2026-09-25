@@ -11,7 +11,9 @@ cd "${SCRIPT_DIR}/ubuntu/resolute"
 
 cat <<EOF
 
-The packages are in ubuntu/resolute/packages. Install them with:
-  sudo apt install -y ${SCRIPT_DIR}/ubuntu/resolute/packages/*/*.deb
+The packages are in ubuntu/resolute/packages. Install them, and hold them so
+archive updates don't replace them, with:
+  sudo apt install -y --allow-downgrades ${SCRIPT_DIR}/ubuntu/resolute/packages/*/*.deb
+  for deb in ${SCRIPT_DIR}/ubuntu/resolute/packages/*/*.deb; do dpkg-deb -f "\$deb" Package; done | sort -u | xargs sudo apt-mark hold
 
 EOF

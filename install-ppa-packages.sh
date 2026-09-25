@@ -17,3 +17,16 @@ EOF
 sudo add-apt-repository -y ppa:oliver-bestmann/weaselway
 sudo apt update
 sudo apt upgrade -y
+
+# The pin only helps if the PPA actually served the packages. Check, rather
+# than find out from a session running the stock mutter.
+for pkg in mutter libegl-mesa0; do
+    version="$(dpkg-query -W -f='${Version}' "${pkg}")"
+    case "${version}" in
+        *weasel*) ;;
+        *)
+            echo "error: ${pkg} ${version} is not the weaselway build from the PPA" >&2
+            exit 1
+            ;;
+    esac
+done

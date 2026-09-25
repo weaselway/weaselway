@@ -395,7 +395,12 @@ if ($BuildPackages) {
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 cd '$repo'
-apt install -y ./ubuntu/resolute/packages/*/*.deb
+debs=(./ubuntu/resolute/packages/*/*.deb)
+# --allow-downgrades: a re-run after the archive moved ahead must still put
+# ours back. Held afterwards, or the next archive update replaces the local
+# +weaselN builds; `apt-mark unhold` them to go back to the archive.
+apt install -y --allow-downgrades "`${debs[@]}"
+for deb in "`${debs[@]}"; do dpkg-deb -f "`$deb" Package; done | sort -u | xargs apt-mark hold
 "@
 } else {
     Write-Step "5/6. Installing the patched mesa and mutter from the PPA"
