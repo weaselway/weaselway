@@ -8,9 +8,16 @@ set -eu -o pipefail
 
 source /mnt/wslg/mutter-rdp.env
 
+# Without a shared-memory share, mutter uses its codec fallback and the client
+# must not be pointed at a share.
+SHARED_MEMORY_ARGS=()
+if [ -n "${WSLG_SHARED_MEMORY_OB_DIRECTORY:-}" ]; then
+    SHARED_MEMORY_ARGS=(/wslgsharedmemorypath:"$WSLG_SHARED_MEMORY_OB_DIRECTORY")
+fi
+
 /mnt/c/Weaselway/sdl-freerdp.exe /u:dummy /d:dummy /p:dummy \
     /v:vsock://$WSLG_VM_ID:$MUTTER_RDP_VSOCK_PORT \
-    /wslgsharedmemorypath:"$WSLG_SHARED_MEMORY_OB_DIRECTORY" \
+    "${SHARED_MEMORY_ARGS[@]}" \
     /cert:ignore \
     /dynamic-resolution \
     /w:1280 \
