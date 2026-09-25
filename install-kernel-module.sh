@@ -14,11 +14,17 @@ set -euo pipefail
 
 MODULE_DIR="/usr/local/lib/weaselway/modules/$(uname -r)"
 
+# A tag, not main: the module's ioctl ABI has to match what the PPA's mesa
+# was built against (include/drm-uapi/dxgdrm_drm.h there), so it moves in
+# step with a mesa release rather than whenever main does.
+DXGDRM_REF=v1.0.0
+
 if ! [ -d repo-dxgdrm/.git ] ; then
     git clone https://github.com/weaselway/dxgdrm.git repo-dxgdrm
 fi
 
-git -C repo-dxgdrm pull origin main
+git -C repo-dxgdrm fetch --tags origin
+git -C repo-dxgdrm checkout --detach "${DXGDRM_REF}"
 
 # The build needs nothing from the host but its kernel version, which the
 # container shares, and writes only into the bind-mounted repo.
