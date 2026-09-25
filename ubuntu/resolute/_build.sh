@@ -29,17 +29,31 @@ function build-packages {
             touch repo/ok
         fi
 
-        # checkout branch for ubuntu
-        git -C repo switch $BRANCH
+        # checkout branch for ubuntu -- fetched every time, otherwise a
+        # second build would keep packaging whatever the first clone saw
+        git -C repo fetch origin
+        git -C repo switch -C $BRANCH origin/$BRANCH
 
         # export get patches
         rm -rf patches
         mkdir patches
         git -C repo format-patch -o $BASE/patches $UPSTREAMTAG..HEAD
 
-        # extract debian package source
+        # extract debian package source, pinned to the upstream version the
+        # branch is based on: after an archive bump a plain `apt source` would
+        # unpack a different version and the patches (and $PACKAGE_SOURCE)
+        # would no longer match
+        UPSTREAM_VERSION=${PACKAGE_SOURCE#"$PACKAGE"-}
+        SOURCE_VERSION=$(apt-cache showsrc $PACKAGE | sed -n 's/^Version: //p' |
+            grep "^${UPSTREAM_VERSION}-" | sort -V | tail -n 1 || true)
+        if [ -z "$SOURCE_VERSION" ] ; then
+            echo "The archive has no $PACKAGE source for $UPSTREAM_VERSION any more;" \
+                 "rebase $BRANCH and update PACKAGE_SOURCE" >&2
+            exit 1
+        fi
+
         rm -rf $PACKAGE_SOURCE
-        apt source $PACKAGE
+        apt source $PACKAGE=$SOURCE_VERSION
 
         pushd $PACKAGE_SOURCE
             if [ -f $ROOT/debian-$PACKAGE.patch ] ; then

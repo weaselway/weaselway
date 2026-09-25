@@ -31,7 +31,14 @@ for arg in "$@"; do
   break
 done
 
-DOCKER_RUN=(docker run --rm -it
+# -it only with a terminal: install.ps1 runs this with stdin piped, and
+# docker refuses -t without one.
+TTY_ARGS=()
+if [ -t 0 ] && [ -t 1 ]; then
+  TTY_ARGS=(-it)
+fi
+
+DOCKER_RUN=(docker run --rm "${TTY_ARGS[@]}"
   --user "${HOST_UID}:${HOST_GID}"
   -v "$PWD:/work"
   -w /work
