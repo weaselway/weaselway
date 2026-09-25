@@ -1,3 +1,9 @@
 # Scratch scripts install.ps1 hands to the distro. Normally removed as soon as
 # they have run; they survive only if a run is interrupted.
 .weaselway-tmp/
+
+# install-kernel-module.sh's checkout of the dxgdrm repo.
+/repo-dxgdrm/
+
+# setup-gpg.sh's keyring, which holds the package signing *secret* key.
+/ubuntu/resolute/gnupg/
