@@ -17,5 +17,7 @@ source /mnt/wslg/mutter-rdp.env
     /kbd:layout:German \
     /log-level:warn \
     /multitouch \
+    /sdl-touchpad-gestures \
     /audio-mode:redirect \
+    /microphone \
     "$@"
