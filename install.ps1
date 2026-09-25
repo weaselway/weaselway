@@ -309,19 +309,24 @@ Invoke-Wsl -Description "install-freerdp.sh" -Command "cd '$repo' && ./install-f
 
 Write-Step "2. Installing the system distro image"
 
-$vhd = Get-ChildItem -Path $WeaselDir -Filter "system_x64-*.vhd" -ErrorAction SilentlyContinue |
-       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+# The exact image this checkout wants, not just the newest one lying around:
+# after a version bump the old image is still there and would win otherwise.
+$imageVersion = Invoke-Native { & wsl.exe -d $Distro --cd $repo -- sed -n 's/^VERSION=//p' install-system-image.sh }
+if ($LASTEXITCODE -ne 0 -or -not $imageVersion) {
+    throw "could not read VERSION from $repo/install-system-image.sh."
+}
+$imageVersion = "$imageVersion".Trim()
+$vhdPath = Join-Path $WeaselDir "system_x64-$imageVersion.vhd"
 
-if ($vhd) {
-    Write-Note "already present: $($vhd.Name)"
+if (Test-Path -LiteralPath $vhdPath) {
+    Write-Note "already present: system_x64-$imageVersion.vhd"
 } else {
     Invoke-Wsl -Description "install-system-image.sh" -Command "cd '$repo' && ./install-system-image.sh"
-    $vhd = Get-ChildItem -Path $WeaselDir -Filter "system_x64-*.vhd" -ErrorAction SilentlyContinue |
-           Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $vhd) {
-        throw "install-system-image.sh did not leave a system_x64-*.vhd in $WeaselDir."
+    if (-not (Test-Path -LiteralPath $vhdPath)) {
+        throw "install-system-image.sh did not leave $vhdPath."
     }
 }
+$vhd = Get-Item -LiteralPath $vhdPath
 
 # The README's manual step: point .wslconfig at that image. The value is read
 # as an INI string, so the backslashes have to be doubled.
@@ -361,7 +366,9 @@ if ($lines -contains $wanted) {
         Copy-Item -LiteralPath $wslConfig -Destination "$wslConfig.weaselway.bak" -Force
         Write-Note "backed up the old file to $wslConfig.weaselway.bak"
     }
-    Set-Content -LiteralPath $wslConfig -Value $lines -Encoding UTF8
+    # Not Set-Content -Encoding UTF8: on Windows PowerShell 5.1 that writes a
+    # BOM, which WSL's .wslconfig parser does not skip.
+    [System.IO.File]::WriteAllLines($wslConfig, [string[]] $lines, (New-Object System.Text.UTF8Encoding $false))
     Write-Note "wrote $wslConfig"
     $configChanged = $true
 }

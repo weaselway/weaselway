@@ -5,10 +5,25 @@ set -exu -o pipefail
 VERSION=v1.0.79-2
 URL=https://github.com/weaselway/wslg/releases/download/${VERSION}/system_x64-${VERSION}.vhd.gz
 
-mkdir -p /mnt/c/Weaselway
+DIR=/mnt/c/Weaselway
+VHD="${DIR}/system_x64-${VERSION}.vhd"
 
-curl -L $URL -o /mnt/c/Weaselway/system_x64-${VERSION}.vhd.gz
-gzip -d /mnt/c/Weaselway/system_x64-${VERSION}.vhd.gz
+mkdir -p "${DIR}"
+
+# Re-runnable: gzip refuses to overwrite an existing .vhd, and there is no
+# point downloading it again. Unpack into a temporary name and rename at the
+# end, so an interrupted run never leaves a truncated image behind that the
+# check above would take for a finished one.
+if [ -e "${VHD}" ]; then
+    echo "${VHD} already present"
+else
+    GZ="$(mktemp "${DIR}/.system_x64-${VERSION}.XXXXXX.vhd.gz")"
+    trap 'rm -f "${GZ}" "${GZ%.gz}"' EXIT
+
+    curl -fL --retry 3 "${URL}" -o "${GZ}"
+    gzip -df "${GZ}"
+    mv "${GZ%.gz}" "${VHD}"
+fi
 
 cat <<EOF
 
