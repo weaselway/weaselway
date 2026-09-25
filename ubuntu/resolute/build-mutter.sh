@@ -12,7 +12,7 @@ UPSTREAMTAG=50.1
 EXTRA_DEPENDENCIES=freerdp3-dev
 
 SOURCEONLY=${SOURCEONLY:-false}
-RELEASE_SUFFIX=weasel3
+RELEASE_SUFFIX=weasel4
 
 source _build.sh
 
