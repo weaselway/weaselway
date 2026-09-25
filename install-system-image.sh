@@ -3,6 +3,8 @@
 set -exu -o pipefail
 
 VERSION=v1.0.79-2
+# Of the .vhd.gz release asset. Update together with VERSION.
+SHA256=4dd077a65e0d277a46691ba329f4fc1591f4119a8e4ec91f2798ad041c4aeb56
 URL=https://github.com/weaselway/wslg/releases/download/${VERSION}/system_x64-${VERSION}.vhd.gz
 
 DIR=/mnt/c/Weaselway
@@ -21,6 +23,7 @@ else
     trap 'rm -f "${GZ}" "${GZ%.gz}"' EXIT
 
     curl -fL --retry 3 "${URL}" -o "${GZ}"
+    echo "${SHA256}  ${GZ}" | sha256sum -c -
     gzip -df "${GZ}"
     mv "${GZ%.gz}" "${VHD}"
 fi
