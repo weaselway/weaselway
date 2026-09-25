@@ -8,13 +8,15 @@
 # accelerate or breaks outright. xtradeb builds them as ordinary packages
 # against the system libraries, and so against our mesa.
 #
-# The pin gives that PPA priority over the archive for everything it carries,
-# which is what keeps `apt upgrade` from putting the transitional packages back.
+# The pin gives that PPA priority over the archive for the browsers, which is
+# what keeps `apt upgrade` from putting the transitional packages back. Only
+# for the browsers: xtradeb/apps carries a lot else, and a 1001 pin on all of
+# it would let the PPA replace archive packages wholesale.
 
 set -xeuo pipefail
 
 sudo tee /etc/apt/preferences.d/weaselway-xtradeb > /dev/null <<'EOF'
-Package: *
+Package: firefox* chromium*
 Pin: release o=LP-PPA-xtradeb-apps
 Pin-Priority: 1001
 EOF
