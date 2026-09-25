@@ -52,15 +52,25 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-SESSION="${SESSION:-ubuntu}"
+# WEASELWAY_DEFAULT_SESSION lets a distro without an ubuntu session (the NixOS
+# image sets it to gnome) pick its own default.
+SESSION="${SESSION:-${WEASELWAY_DEFAULT_SESSION:-ubuntu}}"
 TARGET="gnome-session@${SESSION}.target"
 
 # The manager's environment outlives a session, so an --adapter from a previous
 # run is still in it. Put the configured value back when none is given, rather
 # than inheriting the last one silently.
-ADAPTER_CONF="${HOME}/.config/environment.d/20-weaselway-adapter.conf"
-if [ "${ADAPTER_SET}" -eq 0 ] && [ -f "${ADAPTER_CONF}" ]; then
-    ADAPTER="$(sed -n 's/^MESA_D3D12_DEFAULT_ADAPTER_NAME=//p' "${ADAPTER_CONF}")"
+# The user's file wins over the system one, the same order environment.d reads
+# them in; the NixOS image writes its configured adapter to /etc.
+if [ "${ADAPTER_SET}" -eq 0 ]; then
+    for ADAPTER_CONF in \
+        "${HOME}/.config/environment.d/20-weaselway-adapter.conf" \
+        /etc/environment.d/20-weaselway-adapter.conf; do
+        if [ -f "${ADAPTER_CONF}" ]; then
+            ADAPTER="$(sed -n 's/^MESA_D3D12_DEFAULT_ADAPTER_NAME=//p' "${ADAPTER_CONF}")"
+            break
+        fi
+    done
 fi
 
 if [ -n "${ADAPTER}" ]; then

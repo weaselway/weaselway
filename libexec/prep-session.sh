@@ -28,7 +28,9 @@ set -xeuo pipefail
 #
 # First, and regardless of mutter-rdp.env below: the render node is needed by
 # anything using the d3d12 driver, not only by the session.
-DXGDRM_KO="/usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko"
+# DXGDRM_KO in the environment overrides the path; the NixOS image points it
+# into the store.
+DXGDRM_KO="${DXGDRM_KO:-/usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko}"
 
 if ! grep -q '^dxgdrm ' /proc/modules; then
     if [ -e "${DXGDRM_KO}" ]; then
