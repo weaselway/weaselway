@@ -108,13 +108,15 @@ systemctl --user daemon-reload
 # environment.d is read only when the user manager starts, so nothing we just
 # installed is live yet. Push the same values in by hand, so a session can be
 # started without logging out first; the file is what makes them survive the
-# next `wsl --shutdown`. Unquoted on purpose -- the conf is KEY=VALUE lines,
-# which is exactly set-environment's argument form.
-# shellcheck disable=SC2046
-systemctl --user set-environment \
-    $(grep -hvE '^[[:space:]]*(#|$)' \
-        "${SCRIPT_DIR}/environment.d/10-weaselway.conf" \
-        $([ -f "${ADAPTER_CONF}" ] && echo "${ADAPTER_CONF}"))
+# next `wsl --shutdown`. One argument per KEY=VALUE line, which is exactly
+# set-environment's argument form -- read into an array so a value with spaces
+# (adapter names usually have them) stays one argument.
+ENV_FILES=("${SCRIPT_DIR}/environment.d/10-weaselway.conf")
+if [ -f "${ADAPTER_CONF}" ]; then
+    ENV_FILES+=("${ADAPTER_CONF}")
+fi
+mapfile -t ENV_ASSIGNMENTS < <(grep -hvE '^[[:space:]]*(#|$)' "${ENV_FILES[@]}")
+systemctl --user set-environment "${ENV_ASSIGNMENTS[@]}"
 
 # An adapter cleared just now is still in the manager's environment from before.
 if [ ! -f "${ADAPTER_CONF}" ]; then
