@@ -92,12 +92,13 @@ reproducible from a run.
 
 ## Source-only builds, for the PPA
 
-The default is a local binary build: `dch --local "+weasel0"` for the version
-suffix, then `dpkg-buildpackage -us -uc -b`. Unsigned, binaries only, ready to
+The default is a local binary build: `dch --local "+${RELEASE_SUFFIX}."` for
+the version suffix (`RELEASE_SUFFIX` is set per package in `build-*.sh`, e.g.
+`weasel3`), then `dpkg-buildpackage -us -uc -b`. Unsigned, binaries only, ready to
 `apt install`.
 
 Setting `SOURCEONLY=true` switches to a **signed source package** instead --
-`dch --distribution resolute --release` followed by `dpkg-buildpackage -S -sa -d`
+the same `dch --local`, then `dch --release`, then `dpkg-buildpackage -S -sa -d`
 -- which is the form Launchpad accepts for a PPA upload:
 
 ```sh

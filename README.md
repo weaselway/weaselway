@@ -35,7 +35,7 @@ Either way the script writes its scratch files to the current directory, so run
 it from somewhere on a local drive -- it needs a path the distro can reach
 under `/mnt`. A good candidate is `C:\Weaselway`.
 
-It is safe to re-run; each step checks whether it is already done. `-Distro
+It is safe to re-run: steps that are already done are skipped or simply redone. `-Distro
 <name>` picks a different distro name (default `Gnome`), `-BuildPackages`
 builds mesa and mutter locally instead of taking them from the PPA, and
 `-SkipDistroInstall` uses a distro you already made, and `-Adapter <name>` pins
@@ -88,7 +88,7 @@ environments. You can remove it once setup is done:
 ```sh
 sudo apt -y update
 sudo apt -y upgrade
-sudo apt -y install git unzip docker.io gnome-session ubuntu-session winpr-utils ptyxis
+sudo apt -y install git curl unzip docker.io gnome-session ubuntu-session winpr-utils ptyxis
 sudo usermod -aG docker $(whoami)
 ```
 
@@ -128,7 +128,7 @@ one:
 
 ```ini
 [wsl2]
-systemDistro=C:\\Weaselway\\system_x64-v1.0.79-1.vhd
+systemDistro=C:\\Weaselway\\system_x64-v1.0.79-2.vhd
 ```
 
 Note the doubled backslashes. Then, from Windows:
@@ -190,11 +190,14 @@ same packages already built -- see below.
 ### 6. Install the updated packages
 
 ```sh
-sudo apt install -y ./ubuntu/resolute/packages/*/*.deb
+sudo apt install -y --allow-downgrades ./ubuntu/resolute/packages/*/*.deb
+for deb in ./ubuntu/resolute/packages/*/*.deb; do dpkg-deb -f "$deb" Package; done | sort -u | xargs sudo apt-mark hold
 ```
 
-The rebuilt packages carry a `+weasel0` version suffix, so they install over the
-distro ones and `apt policy mutter` will show which is active.
+The rebuilt packages carry a `+weaselN` version suffix (`RELEASE_SUFFIX` in
+`ubuntu/resolute/build-*.sh`), so they install over the distro ones and
+`apt policy mutter` will show which is active. The hold keeps a later archive
+update from replacing them; `apt-mark unhold` them to go back.
 
 #### Alternative: install from the PPA
 
@@ -319,7 +322,12 @@ The config creates two ends:
 Formats are fixed at load time -- this protocol has no negotiation -- and must
 match `rdp_audio_out_format` and `rdp_audio_in_format` in mutter's
 `meta-rdp-audio.c`. Both servers listen on loopback only; the user distro is the
-trust boundary, exactly as it was for the unix socket this replaced.
+trust boundary, exactly as it was for the unix socket this replaced. Two
+consequences of TCP worth knowing: any user or process in the distro can
+connect to those ports -- and so listen to the desktop audio or feed the
+microphone -- and something else already using 4711/4712 stops the bridge from
+starting. Change both the config and `MUTTER_RDP_AUDIO_SINK_ADDR` /
+`MUTTER_RDP_AUDIO_SOURCE_ADDR` for mutter if you need other ports.
 
 The two are deliberately not symmetric, which is worth knowing before it looks
 like a bug:
@@ -410,8 +418,12 @@ Then connect to it:
 ```
 
 That runs `sdl-freerdp.exe` from `C:\Weaselway`, pointed at the vsock address
-and shared memory from the same env file. Edit it to taste -- the resolution
-and `/kbd:layout:German` in particular.
+and shared memory from the same env file (without shared memory, mutter falls
+back to sending the pixels over the connection). It also enables touch input
+(`/multitouch`), forwarding of 3+ finger touchpad swipes for the overview and
+workspace switching (`/sdl-touchpad-gestures`), audio playback
+(`/audio-mode:redirect`) and the microphone (`/microphone`). Edit it to taste --
+the resolution and `/kbd:layout:German` in particular.
 
 ### Browsers
 
@@ -441,7 +453,7 @@ ls /mnt/c/Weaselway           # sdl-freerdp.exe and system_x64-*.vhd
 ls /usr/local/lib/weaselway/modules/$(uname -r)/  # module built for this kernel
 lsmod | grep dxgdrm           # module loaded
 ls -l /dev/dri                # renderD128 present
-apt policy mutter             # the +weasel0 version is installed
+apt policy mutter             # the +weaselN version is installed
 cat /mnt/wslg/mutter-rdp.env  # WSLGd published the transport
 wpctl status                  # Remote Desktop Audio present and default
 ss -ltn '( sport = :4711 or sport = :4712 )'  # both bridge ports listening
