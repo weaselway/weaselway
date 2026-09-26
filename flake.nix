@@ -14,6 +14,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # The Windows viewer, sdl-freerdp.exe, cross-compiled by its own flake.
+    freerdp = {
+      url = "github:weaselway/freerdp";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # The fork branches the Ubuntu packages build too (ubuntu/resolute), picked
     # to match the mesa and mutter releases nixpkgs has. They carry no
     # flake.nix, so only their source is used. Fetched with git rather than
@@ -36,6 +42,7 @@
       nixpkgs,
       nixos-wsl,
       dxgdrm,
+      freerdp,
       mesa-src,
       mutter-src,
     }:
@@ -48,7 +55,7 @@
       wsl = self.nixosConfigurations.wsl;
     in
     {
-      overlays.default = import ./nix/overlay.nix { inherit mesa-src mutter-src; };
+      overlays.default = import ./nix/overlay.nix { inherit mesa-src mutter-src freerdp; };
 
       nixosModules.weaselway = {
         imports = [ (import ./nix/module.nix { inherit dxgdrm; }) ];
@@ -76,6 +83,7 @@
         weaselway-mesa = wsl.pkgs.weaselway-mesa;
         mutter = wsl.pkgs.mutter;
         weaselway-scripts = wsl.pkgs.weaselway-scripts;
+        weaselway-viewer = wsl.pkgs.weaselway-viewer;
         # sudo nix run .#tarballBuilder -> nixos.wsl
         tarballBuilder = wsl.config.system.build.tarballBuilder;
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.tarballBuilder;

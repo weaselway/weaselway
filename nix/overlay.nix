@@ -1,6 +1,11 @@
-# The patched mesa and mutter, and the scripts from this repo, as nixpkgs
-# packages. Takes the fork sources as arguments, see ../flake.nix.
-{ mesa-src, mutter-src }:
+# The patched mesa and mutter, the Windows viewer, and the scripts from this
+# repo, as nixpkgs packages. Takes the fork sources and the freerdp flake as
+# arguments, see ../flake.nix.
+{
+  mesa-src,
+  mutter-src,
+  freerdp,
+}:
 
 final: prev:
 let
@@ -84,6 +89,10 @@ in
     ];
   });
 
+  # sdl-freerdp.exe with its SDL DLLs, cross-compiled by the freerdp flake.
+  # Windows binaries, so whichever machine builds them is fine.
+  weaselway-viewer = freerdp.packages.${final.stdenv.buildPlatform.system}.sdl-freerdp;
+
   # The session scripts, runnable from PATH. They are the same files the
   # Ubuntu setup runs from a checkout.
   weaselway-scripts =
@@ -107,15 +116,23 @@ in
           final.gnused
           final.systemd
         ])
-        (script "start-viewer" [
-          final.gnused
-          final.systemd
-        ])
-        (script "install-freerdp" [
-          final.coreutils
-          final.curl
-          final.unzip
-        ])
+        (final.writeShellApplication {
+          name = "start-viewer";
+          runtimeInputs = [
+            final.gnused
+            final.systemd
+          ];
+          # Run the viewer from the store rather than C:\Weaselway, so it is
+          # updated with the flake. WSL interop starts it over
+          # \\wsl.localhost, and Windows loads the DLLs next to it from there.
+          text = ''
+            : "''${WEASELWAY_VIEWER:=${final.weaselway-viewer}/bin/sdl-freerdp.exe}"
+            export WEASELWAY_VIEWER
+          ''
+          + builtins.readFile ../start-viewer.sh;
+          checkPhase = "";
+          bashOptions = [ ];
+        })
         (script "install-system-image" [
           final.coreutils
           final.curl

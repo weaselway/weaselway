@@ -6,6 +6,10 @@
 
 set -eu -o pipefail
 
+# The client install-freerdp.sh puts in C:\Weaselway. The NixOS image ships its
+# own build in the store and points this at it.
+VIEWER="${WEASELWAY_VIEWER:-/mnt/c/Weaselway/sdl-freerdp.exe}"
+
 # The port mutter was started with: environment.d gives it to the user manager,
 # which is what the shell unit inherits.
 PORT="$(systemctl --user show-environment | sed -n 's/^MUTTER_RDP_VSOCK_PORT=//p')"
@@ -28,7 +32,7 @@ fi
 # (WslCoreVm::InitializeGuest in microsoft/WSL), with the ID in upper case.
 SHARED_MEMORY_PATH="WSL\\${VM_ID^^}\\wslg"
 
-/mnt/c/Weaselway/sdl-freerdp.exe /u:dummy /d:dummy /p:dummy \
+"${VIEWER}" /u:dummy /d:dummy /p:dummy \
     /v:vsock://"${VM_ID}":"${PORT}" \
     /wslgsharedmemorypath:"${SHARED_MEMORY_PATH}" \
     /cert:ignore \

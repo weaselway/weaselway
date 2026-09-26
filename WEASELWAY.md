@@ -42,8 +42,9 @@ one on top of [NixOS-WSL](https://github.com/nix-community/NixOS-WSL):
 - [nix/overlay.nix](nix/overlay.nix): `weaselway-mesa` (nixpkgs' mesa built
   from `weaselway/mesa` `mesa-26.2.1-wsl`, d3d12/dzn/llvmpipe/softpipe/zink
   only), `mutter` (from `weaselway/mutter` `50.4-wslg`, with `-Drdp=enabled`),
-  and `weaselway-scripts` (`start-gnome-shell`, `start-viewer`,
-  `install-freerdp`, `install-system-image` on PATH).
+  `weaselway-viewer` (the Windows `sdl-freerdp.exe` and its SDL DLLs, from the
+  `weaselway/freerdp` flake), and `weaselway-scripts` (`start-gnome-shell`,
+  `start-viewer`, `install-system-image` on PATH).
 - [nix/module.nix](nix/module.nix): `nixosModules.weaselway`, the NixOS version
   of what `install-units.sh` and `install-audio.sh` set up. The unit drop-in,
   `environment.d` file, prep script and PipeWire config are the same files
@@ -104,16 +105,20 @@ wsl -d Gnome
 The same first-distro rule as in the README applies: WSL only wires up
 `/run/user/1000/` for the first distro started after `wsl --shutdown`.
 
-The Windows side is still needed. Run these from inside the distro; both are
-on PATH:
+The system distro is still installed on the Windows side. From inside the
+distro:
 
 ```sh
-install-freerdp          # C:\Weaselway\sdl-freerdp.exe
 install-system-image     # C:\Weaselway\system_x64-*.vhd, prints the .wslconfig line
 ```
 
 Add the `systemDistro=` line to `.wslconfig` and `wsl --shutdown`, as in step 2
 of the README.
+
+The viewer needs nothing on the Windows side: `start-viewer` runs the
+`sdl-freerdp.exe` in the image's store, which is updated with the flake like
+everything else. Set `WEASELWAY_VIEWER` to a Windows path (for example
+`/mnt/c/Weaselway/sdl-freerdp.exe`) to use another build.
 
 ### Running
 

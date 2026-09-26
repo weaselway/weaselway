@@ -36,6 +36,26 @@
         "type": "github"
       }
     },
+    "freerdp": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790455201,
+        "narHash": "sha256-4QWRvI/H7segl8GsDUd63sjuzb4EXJ8TY8HFOJstgX4=",
+        "owner": "weaselway",
+        "repo": "freerdp",
+        "rev": "9ae76d425beb9c026827c1b41582c663cb5e6dc9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "weaselway",
+        "repo": "freerdp",
+        "type": "github"
+      }
+    },
     "mesa-src": {
       "flake": false,
       "locked": {
@@ -57,10 +77,10 @@
     "mutter-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790432131,
-        "narHash": "sha256-FNlVTl9y1B2gkNgbKxIiXvvrBosIdQxgATVkpuZidso=",
+        "lastModified": 1790452347,
+        "narHash": "sha256-qXOV+I75CG6DYJjzR8CEnYuhxkSVGlOEQ+Koe866MUg=",
         "ref": "50.4-wslg",
-        "rev": "8650b2a909f6a6f6664f8a713c31c0aa81244d8b",
+        "rev": "b55b242c4f0b48c848029fa9dadd9d15dd8b2bd3",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/mutter"
@@ -112,6 +132,7 @@
     "root": {
       "inputs": {
         "dxgdrm": "dxgdrm",
+        "freerdp": "freerdp",
         "mesa-src": "mesa-src",
         "mutter-src": "mutter-src",
         "nixos-wsl": "nixos-wsl",
