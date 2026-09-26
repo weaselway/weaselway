@@ -35,6 +35,9 @@ The Ubuntu packages ([ubuntu/resolute](ubuntu/resolute)) build the
 
 ## NixOS-WSL image
 
+The full reference -- every module setting and the WSL quirk behind it, build and
+debug recipes, what is verified and what is open -- is [NIXOS.md](NIXOS.md).
+
 Instead of Ubuntu plus the `install-*.sh` scripts, the user distro can be a
 NixOS-WSL image with everything already in it. [flake.nix](flake.nix) builds
 one on top of [NixOS-WSL](https://github.com/nix-community/NixOS-WSL):
