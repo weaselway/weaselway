@@ -75,9 +75,13 @@ in
     ''
     + old.postPatch;
 
-    # freerdp3, freerdp-server3, winpr3. The gfxredir channel is built from
-    # the tree, see src/backends/rdp/gfxredir.
-    buildInputs = old.buildInputs ++ [ final.freerdp ];
+    # freerdp3, freerdp-server3, winpr3, and libcrypto for the session's TLS
+    # certificate. The gfxredir channel is built from the tree, see
+    # src/backends/rdp/gfxredir.
+    buildInputs = old.buildInputs ++ [
+      final.freerdp
+      final.openssl
+    ];
   });
 
   # The session scripts, runnable from PATH. They are the same files the

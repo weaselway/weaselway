@@ -1,14 +1,15 @@
 --- mutter-50.1/debian/control	2026-05-28 15:00:08.000000000 +0200
 +++ mutter-deb/debian/control	2026-08-26 13:18:02.842986160 +0200
-@@ -23,6 +23,7 @@
+@@ -23,6 +23,8 @@
                 gir1.2-pangocairo-1.0-dev,
                 gir1.2-xfixes-4.0-dev,
                 gir1.2-xlib-2.0-dev,
 +               freerdp3-dev,
++               libssl-dev,
                 libglycin-2-dev (>= 2.0~beta.2),
                 gnome-control-center-data,
                 gnome-settings-daemon-common <!nocheck>,
-@@ -113,6 +114,7 @@
+@@ -113,6 +115,7 @@
           gnome-settings-daemon-common,
           gsettings-desktop-schemas (>= 40~alpha),
           mutter-common (>= 49.0),

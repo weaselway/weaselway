@@ -9,10 +9,10 @@ PACKAGE_SOURCE=mutter-50.1
 BRANCH=50.1-wslg
 UPSTREAMTAG=50.1
 
-EXTRA_DEPENDENCIES=freerdp3-dev
+EXTRA_DEPENDENCIES="freerdp3-dev libssl-dev"
 
 SOURCEONLY=${SOURCEONLY:-false}
-RELEASE_SUFFIX=weasel4
+RELEASE_SUFFIX=weasel5
 
 source _build.sh
 
