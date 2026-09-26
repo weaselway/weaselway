@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Nothing we build is in a binary cache, so every run compiles the WSL
     # kernel tree, mesa, mutter and gnome-shell from scratch.
     timeout-minutes: 360
