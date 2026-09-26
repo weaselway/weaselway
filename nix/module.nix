@@ -127,6 +127,26 @@ in
       "video"
     ];
 
+    # WSL generates a wslg-session user unit that symlinks pulse/native,
+    # wayland-0 and wayland-0.lock in $XDG_RUNTIME_DIR into /mnt/wslg, for the
+    # PulseAudio and Weston the stock system distro runs. Ours runs neither,
+    # and the pulse/native link replaces pipewire-pulse's socket, so no
+    # PulseAudio client -- GNOME's sound settings among them -- finds a server.
+    systemd.user.units."wslg-session.service".enable = false;
+
+    # WSL points every shell it starts at the stock system distro's PulseAudio.
+    # The shell unit unsets it for the session; this does the same for shells,
+    # so audio from anything started in one reaches pipewire-pulse too.
+    environment.extraInit = ''
+      unset PULSE_SERVER
+    '';
+
+    # systemd mounts its own binfmt_misc at boot, after WSL registered its
+    # handler for Windows executables, and the handler is gone. Without it
+    # start-viewer cannot run sdl-freerdp.exe. Register it again after the
+    # mount.
+    wsl.interop.register = true;
+
     # NixOS-WSL bind-mounts WSLg's X0 socket into /tmp/.X11-unix. Our mutter
     # creates its own X socket there, which weaselway-prep.service makes room
     # for; this mount would sit on top of it.
