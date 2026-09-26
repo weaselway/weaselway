@@ -1,0 +1,33 @@
+name: Release NixOS-WSL image
+
+on:
+  push:
+    tags: ['v*']
+
+# Needed to create the release and upload the asset to it.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/build-image
+
+      - name: Create the release and attach the image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="nixos-weaselway-${GITHUB_REF_NAME}.wsl"
+          mv nixos.wsl "${asset}"
+          sha256sum "${asset}" > "${asset}.sha256"
+          # Releases and their assets are immutable: if a release already
+          # exists for this tag, `gh release create` fails and the workflow
+          # fails with it rather than replacing a published artifact.
+          gh release create "${GITHUB_REF_NAME}" \
+              "${asset}" "${asset}.sha256" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes

@@ -1,0 +1,37 @@
+# Builds the NixOS-WSL image (nixos.wsl) from flake.nix, see WEASELWAY.md.
+name: Build NixOS-WSL image
+
+# Pushes to main and pull requests; other branches can be built with
+# workflow_dispatch. Tags are release-image.yml's.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Nothing we build is in a binary cache, so every run compiles the WSL
+    # kernel tree, mesa, mutter and gnome-shell from scratch.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/build-image
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nixos-wsl-${{ github.sha }}
+          path: nixos.wsl
+          retention-days: 7
+          if-no-files-found: error
+          # nixos.wsl is already a gzipped tar.
+          compression-level: 0

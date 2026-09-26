@@ -1,0 +1,38 @@
+name: Build the NixOS-WSL image
+description: >
+  Builds nixosConfigurations.wsl and packs it with NixOS-WSL's tarball
+  builder, leaving nixos.wsl in the workspace root.
+
+runs:
+  using: composite
+  steps:
+    # The closure is a whole GNOME desktop, and the builds that are not in the
+    # binary cache (dxgdrm's kernel tree, mesa, mutter, gnome-shell) need room
+    # of their own. The runner image ships far more preinstalled SDKs than it
+    # has free space.
+    - name: Free disk space
+      shell: bash
+      run: |
+        df -h /
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost
+        df -h /
+
+    - uses: cachix/install-nix-action@v31.11.1
+      with:
+        extra_nix_config: |
+          max-jobs = auto
+
+    # The builder is x86_64 like the runner, so everything is native here --
+    # unlike on aarch64 machines, see WEASELWAY.md.
+    - name: Build the system and the tarball builder
+      shell: bash
+      run: nix build --print-build-logs --out-link tarball-builder .#tarballBuilder
+
+    # nixos-install into a scratch root and tar it up, which needs root.
+    - name: Pack nixos.wsl
+      shell: bash
+      run: |
+        sudo ./tarball-builder/bin/nixos-wsl-tarball-builder nixos.wsl
+        sudo chown "$(id -u):$(id -g)" nixos.wsl
+        ls -lh nixos.wsl

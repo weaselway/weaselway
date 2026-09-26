@@ -53,33 +53,22 @@
       };
       nixosModules.default = self.nixosModules.weaselway;
 
-      # A NixOS-WSL distro running the session. See WEASELWAY.md.
+      # A NixOS-WSL distro running the session. See WEASELWAY.md. Built from
+      # the same configuration.nix the image ships in /etc/nixos, together with
+      # nix/image/flake.nix, so a nixos-rebuild inside the distro rebuilds this
+      # system rather than NixOS-WSL's generic default.
       nixosConfigurations.wsl = lib.nixosSystem {
         modules = [
           nixos-wsl.nixosModules.default
           self.nixosModules.weaselway
-          {
-            nixpkgs.hostPlatform = "x86_64-linux";
-
-            wsl.enable = true;
-            # uid 1000: WSL only wires up /run/user/1000.
-            wsl.defaultUser = "nixos";
-
-            weaselway.enable = true;
-
-            nix.settings.experimental-features = [
-              "nix-command"
-              "flakes"
-            ];
-
-            system.stateVersion = "26.05";
-          }
+          ./nix/image/configuration.nix
+          { wsl.tarball.configPath = ./nix/image; }
         ];
       };
 
       # The distro is x86_64 whatever the build machine is, so these are the
-      # x86_64 builds on every system; elsewhere they need an x86_64 builder
-      # or binfmt emulation (boot.binfmt.emulatedSystems).
+      # x86_64 builds on every system; elsewhere they need an x86_64 builder,
+      # see WEASELWAY.md.
       packages = forAllSystems (pkgs: {
         weaselway-mesa = wsl.pkgs.weaselway-mesa;
         mutter = wsl.pkgs.mutter;

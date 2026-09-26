@@ -63,6 +63,8 @@ so gnome-shell gets rebuilt against it.
 sudo nix run .#tarballBuilder       # writes nixos.wsl
 ```
 
+Or take `nixos.wsl` from a CI run or a release, see "CI" below.
+
 The inputs point at the GitHub branches. To build from local checkouts
 (unpushed commits included):
 
@@ -124,6 +126,29 @@ The "Checking each step" list in the README still applies, except the module
 path: here it is under `/nix/store/*-dxgdrm-all/lib/modules/$(uname -r)/`, and
 `systemctl status weaselway-prep` names the one it tried.
 
-To change the configuration, put the flake in `/etc/nixos`, import
-`nixosModules.weaselway` next to NixOS-WSL, and `nixos-rebuild switch` as
-usual.
+### Changing the system
+
+The image ships its own configuration in `/etc/nixos`, a copy of
+[nix/image](nix/image). `configuration.nix` there is the same file the image
+was built from, so a rebuild without changes yields the same system:
+
+```sh
+sudo -e /etc/nixos/configuration.nix        # e.g. weaselway.adapter = "nvidia";
+sudo nixos-rebuild switch                   # the hostname is "nixos", so this builds #nixos
+sudo nix flake update --flake /etc/nixos    # move to the newest weaselway
+```
+
+`/etc/nixos/flake.nix` takes nixpkgs and NixOS-WSL from weaselway's own lock.
+It has no lock of its own when the image is built, so the first rebuild locks
+against whatever weaselway `main` is at that moment. Anything not in the binary
+cache (mesa, mutter, gnome-shell, the dxgdrm kernel tree) is then built on the
+WSL machine itself, which is slow but native.
+
+### CI
+
+[build-image.yml](.github/workflows/build-image.yml) builds `nixos.wsl` on
+pushes to `main` and on pull requests, and uploads it as an artifact.
+[release-image.yml](.github/workflows/release-image.yml) does the same for a
+`v*` tag and attaches `nixos-weaselway-<tag>.wsl` to a release. Nothing is
+cached between runs, so each one compiles the kernel tree, mesa, mutter and
+gnome-shell again.
