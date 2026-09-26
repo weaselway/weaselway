@@ -2,9 +2,9 @@
 
 set -exu -o pipefail
 
-VERSION=v1.0.79-2
+VERSION=v1.0.79-3
 # Of the .vhd.gz release asset. Update together with VERSION.
-SHA256=4dd077a65e0d277a46691ba329f4fc1591f4119a8e4ec91f2798ad041c4aeb56
+SHA256=9dfc9b73298bf54a5207875482e1057447940704b3db391fdc6471aab9d8a37e
 URL=https://github.com/weaselway/wslg/releases/download/${VERSION}/system_x64-${VERSION}.vhd.gz
 
 DIR=/mnt/c/Weaselway

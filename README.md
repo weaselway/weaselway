@@ -128,7 +128,7 @@ one:
 
 ```ini
 [wsl2]
-systemDistro=C:\\Weaselway\\system_x64-v1.0.79-2.vhd
+systemDistro=C:\\Weaselway\\system_x64-v1.0.79-3.vhd
 ```
 
 Note the doubled backslashes. Then, from Windows:
