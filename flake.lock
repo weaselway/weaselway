@@ -57,10 +57,10 @@
     "mutter-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790344381,
-        "narHash": "sha256-mQnojDUyCTtN+qzIKPqIoTHogc84wh1/0w2HaUMBfF0=",
+        "lastModified": 1790432131,
+        "narHash": "sha256-FNlVTl9y1B2gkNgbKxIiXvvrBosIdQxgATVkpuZidso=",
         "ref": "50.4-wslg",
-        "rev": "a1a5066d904473e1799fb915433894a83ed769aa",
+        "rev": "8650b2a909f6a6f6664f8a713c31c0aa81244d8b",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/mutter"
