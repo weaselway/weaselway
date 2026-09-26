@@ -43,6 +43,16 @@ let
     )
   );
 
+  # Libraries the Windows GPU drivers link against by their Debian/Ubuntu
+  # names, which nothing on NixOS provides. Intel's WSL driver pulls in a
+  # libLLVM-9.so that needs libedit.so.2; without it, loading the driver fails
+  # and d3d12 cannot create a device, so mesa falls back to software. nixpkgs'
+  # libedit is the same library under its upstream soname (.0).
+  wslDriverCompat = pkgs.runCommand "weaselway-wsl-driver-compat" { } ''
+    mkdir -p $out/lib
+    ln -s ${lib.getLib pkgs.libedit}/lib/libedit.so.0 $out/lib/libedit.so.2
+  '';
+
   audioConfig = pkgs.writeTextDir "share/pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf" (
     builtins.readFile ../pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf
   );
@@ -78,13 +88,27 @@ in
       }
     ];
 
-    # Graphics: the Windows driver libraries (libd3d12, libdxcore) and the
-    # patched mesa, both through /run/opengl-driver.
+    # Graphics: the Windows driver libraries (libd3d12, libdxcore), what they
+    # need, and the patched mesa, all through /run/opengl-driver.
     wsl.useWindowsDriver = true;
     hardware.graphics = {
       enable = true;
       package = pkgs.weaselway-mesa;
+      extraPackages = [ wslDriverCompat ];
     };
+
+    # mesa dlopens libd3d12.so and libdxcore.so by name, and the Windows
+    # drivers resolve their own dependencies by name too. On Ubuntu both are
+    # found through /etc/ld.so.conf.d/ld.wsl.conf; NixOS has no such search
+    # path, so name the directory outright -- for shells here, and for the
+    # user manager the session runs under in environment.d below.
+    environment.sessionVariables.LD_LIBRARY_PATH = [ "/run/opengl-driver/lib" ];
+
+    # WSL configures the network itself. GNOME turns NetworkManager on, and
+    # with it wpa_supplicant, which fails to start in WSL and so fails every
+    # nixos-rebuild switch.
+    networking.networkmanager.enable = false;
+    networking.wireless.enable = false;
 
     # GNOME without a display manager: the session is a set of user units,
     # started by start-gnome-shell.
@@ -95,9 +119,9 @@ in
     services.udev.enable = true;
     services.udev.packages = [ dxgdrm-all ];
 
-    # dxgdrm's udev rule makes its nodes 0666, but on NixOS the render node
-    # still came up root:render 0660, so gnome-shell could not open it. Group
-    # membership works whatever the mode ends up being.
+    # dxgdrm's udev rule makes its nodes 0666, but until udev has applied it
+    # the render node is root:render 0660, and gnome-shell could not open it.
+    # Group membership works whatever the mode is.
     users.users.${config.wsl.defaultUser}.extraGroups = [
       "render"
       "video"
@@ -128,6 +152,9 @@ in
     # Environment for the user manager, read by systemd's environment.d
     # generator from /etc as well as from ~/.config.
     environment.etc = {
+      "environment.d/05-weaselway-nixos.conf".text = ''
+        LD_LIBRARY_PATH=/run/opengl-driver/lib
+      '';
       "environment.d/10-weaselway.conf".source = ../environment.d/10-weaselway.conf;
     }
     // lib.optionalAttrs (cfg.adapter != null) {
