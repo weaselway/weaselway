@@ -56,6 +56,15 @@ in
     postFixup = builtins.replaceStrings [ " $opencl/lib/libRusticlOpenCL.so" ] [ "" ] old.postFixup;
   });
 
+  # FreeRDP for mutter's RDP server. nixpkgs builds it with FFmpeg, whose DSP
+  # backend maps 16-bit PCM to FFmpeg's *unsigned* PCM codec, so every sample
+  # mutter sends to the client (and every microphone sample it receives) comes
+  # out shifted by 32768 -- unintelligible. Only mutter links this one, so
+  # nothing else rebuilds.
+  weaselway-freerdp = prev.freerdp.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./freerdp-dsp-ffmpeg-pcm-s16.patch ];
+  });
+
   # Replaced outright, so gnome-shell links the RDP-enabled build.
   mutter = prev.mutter.overrideAttrs (old: {
     version = "${old.version}-weaselway";
@@ -84,7 +93,7 @@ in
     # certificate. The gfxredir channel is built from the tree, see
     # src/backends/rdp/gfxredir.
     buildInputs = old.buildInputs ++ [
-      final.freerdp
+      final.weaselway-freerdp
       final.openssl
     ];
   });
