@@ -7,9 +7,11 @@ Four pieces have to be in place:
 - a **patched mesa and mutter** in the Ubuntu distro. mutter runs headless and
   serves the session over an RDP connection on a vsock; mesa gets the `d3d12`
   Gallium driver pointed at the GPU Windows exposes.
-- a **slimmed WSLg system distro** ([weaselway/wslg]). Its `WSLGd` does not run a
-  compositor or an RDP client of its own -- it picks the vsock port and writes
-  the connection details to `/mnt/wslg/mutter-rdp.env`, which our mutter reads.
+- a **minimal WSLg system distro** ([weaselway/wslg]). It runs no compositor,
+  RDP client or audio server of its own. It is needed only because WSL creates
+  the shared-memory share mutter hands its frames over on (gfxredir) only when a
+  system distro is configured. Without it the viewer shows a magenta error
+  frame instead of the desktop.
 - the patched **FreeRDP client** ([weaselway/freerdp]) on the Windows side, which
   connects to that vsock and shows the session.
 - a small kernel module (`dxgdrm`) giving the d3d12 driver a real
@@ -250,7 +252,8 @@ our own. Three things have to be added for those units to work here:
   read-only over that path; we have to undo that after it happens rather than
   before.
 - `~/.config/environment.d/10-weaselway.conf`, the environment the user manager
-  hands to every service in the session: the driver variables, and
+  hands to every service in the session: the driver variables, the vsock port
+  the session is served on (`MUTTER_RDP_VSOCK_PORT`), and
   `XDG_SESSION_TYPE=wayland`. That last one is not optional --
   `org.gnome.Shell@.service` carries
   `AssertEnvironment=XDG_SESSION_TYPE=wayland`, and with no display manager here
@@ -258,8 +261,7 @@ our own. Three things have to be added for those units to work here:
   assert reads the *manager's* environment, so exporting it in a shell does
   nothing.
 - a drop-in on `org.gnome.Shell@.service` replacing the stock `ExecStart=` with
-  the headless RDP one, and pulling the vsock port in from
-  `/mnt/wslg/mutter-rdp.env`. It sits in the template's drop-in directory, not
+  the headless RDP one. It sits in the template's drop-in directory, not
   an instance's, so it covers every session the distro offers rather than just
   one. The stock `--mode=%i` is kept, which is what lets a single file do that.
 
@@ -454,7 +456,7 @@ ls /usr/local/lib/weaselway/modules/$(uname -r)/  # module built for this kernel
 lsmod | grep dxgdrm           # module loaded
 ls -l /dev/dri                # renderD128 present
 apt policy mutter             # the +weaselN version is installed
-cat /mnt/wslg/mutter-rdp.env  # WSLGd published the transport
+mountpoint /mnt/wslg-shared-memory  # the system distro's share is mounted
 wpctl status                  # Remote Desktop Audio present and default
 ss -ltn '( sport = :4711 or sport = :4712 )'  # both bridge ports listening
 systemctl --user show-environment | grep PULSE_SERVER  # should print nothing
@@ -470,17 +472,20 @@ systemctl --user --failed                            # what actually broke
 journalctl --user -u org.gnome.Shell@ubuntu.service -b
 ```
 
-`Starting requested but asserts failed` on the shell means one of the three
-`Assert` lines it now carries is false: `XDG_SESSION_TYPE` missing from the
-manager environment, no `/dev/dri/renderD128`, or `/mnt/wslg-shared-memory` not
-mounted. The last two are `weaselway-prep.service`'s job. Note that a failed
+`Starting requested but asserts failed` on the shell means one of the two
+`Assert` lines it carries is false: `XDG_SESSION_TYPE` missing from the
+manager environment, or no `/dev/dri/renderD128`. The render node is
+`weaselway-prep.service`'s job. Note that a failed
 start also stops `dbus.service` on the way down, so clear the wreckage with
 `systemctl --user reset-failed` before retrying -- which is what
 `start-gnome-shell.sh` does for you.
 
-An empty or missing `mutter-rdp.env` means the system distro is not the one from
-step 2 -- check the `.wslconfig` path and that WSL was restarted. You can look
-around inside it with `wsl --system`.
+A magenta screen in the viewer is mutter saying it cannot use shared memory,
+and it names the reason. Most often the system distro is not the one from
+step 2: then `weaselway-prep.service` has failed too, because it could not
+mount the share. Check the `.wslconfig` path and that WSL was restarted.
+`cat /mnt/wslg/versions.txt` shows which system distro is running, and
+`wsl --system` opens a shell inside it.
 
 If the shell starts but Xwayland cannot bind its display, look at
 `/tmp/.X11-unix`: it should be `drwxrwxrwt` (mode 1777), on the same filesystem

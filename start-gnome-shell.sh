@@ -5,9 +5,9 @@
 #
 #   - weaselway-prep.service loads dxgdrm and mounts the shared-memory share
 #   - ~/.config/environment.d/10-weaselway.conf gives the user manager the
-#     driver and session variables, XDG_SESSION_TYPE among them
+#     driver and session variables, XDG_SESSION_TYPE and the vsock port among
+#     them
 #   - a drop-in on org.gnome.Shell@.service supplies the headless RDP arguments
-#     and reads the vsock port out of /mnt/wslg/mutter-rdp.env
 #
 # The dbus-run-session wrapper that used to be here is gone with them: the user
 # manager already owns a session bus, and the session has to share it rather

@@ -103,7 +103,10 @@ in
           final.gnused
           final.systemd
         ])
-        (script "start-viewer" [ ])
+        (script "start-viewer" [
+          final.gnused
+          final.systemd
+        ])
         (script "install-freerdp" [
           final.coreutils
           final.curl

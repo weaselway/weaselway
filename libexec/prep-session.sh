@@ -26,8 +26,8 @@ set -xeuo pipefail
 # stops the session at org.gnome.Shell's AssertPathExists, right below this
 # line in the journal.
 #
-# First, and regardless of mutter-rdp.env below: the render node is needed by
-# anything using the d3d12 driver, not only by the session.
+# First, and regardless of the system distro below: the render node is needed
+# by anything using the d3d12 driver, not only by the session.
 # DXGDRM_KO in the environment overrides the path; the NixOS image points it
 # into the store.
 DXGDRM_KO="${DXGDRM_KO:-/usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko}"
@@ -40,24 +40,6 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
     else
         echo "error: ${DXGDRM_KO} missing -- run install-kernel-module.sh" >&2
     fi
-fi
-
-# /mnt/wslg/mutter-rdp.env is what WSLGd in the system distro publishes. Without
-# it there is no shared-memory tag to act on and no vsock port for the session,
-# which means the system distro from step 2 of the README is not the one in use.
-# WSLGd writes it once it is up, which can race this unit at boot, so give it a
-# moment. If it never shows up, stay out of the way: taking /tmp/.X11-unix from
-# a stock WSLg would break its X11 apps.
-ENV_FILE=/mnt/wslg/mutter-rdp.env
-
-for _ in $(seq 1 30); do
-    [ -e "${ENV_FILE}" ] && break
-    sleep 1
-done
-
-if [ ! -e "${ENV_FILE}" ]; then
-    echo "${ENV_FILE} not found -- not the weaselway system distro, skipping session prep" >&2
-    exit 0
 fi
 
 # Take /tmp/.X11-unix back from WSL, so the socket mutter creates there (it
@@ -125,30 +107,24 @@ if [ "${MODE}" != "1777" ]; then
     exit 1
 fi
 
-# WSLGd, in the system distro, picked the vsock port and published the transport
-# details there. We only want the shared-memory tag; the port is read by the shell
-# unit itself, straight out of the same file via EnvironmentFile=. The file sits
-# on a share, and this runs as root, so parse the one key instead of sourcing it,
-# and accept only what a virtiofs tag looks like.
-VIRTIO_TAG="$(sed -n 's/^WSLG_SHARED_MEMORY_VIRTIO_TAG=//p' "${ENV_FILE}" | head -n 1)"
-
-if [ -n "${VIRTIO_TAG}" ] && ! [[ "${VIRTIO_TAG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-    echo "error: unexpected WSLG_SHARED_MEMORY_VIRTIO_TAG in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-# WSLGd mounts the shared-memory DAX share only in the system-distro mount
-# namespace (/mnt/shared_memory), which is invisible from here. If a virtiofs tag
-# was published, mount the same VM-wide share ourselves at a user-distro path.
-# The mount point is hardcoded rather than passed in: the shell drop-in has to
-# name it too, and a value in two unit files is easier to keep honest than one
-# threaded through the environment.
+# The shared-memory share gfxredir allocates its buffers on. WSL creates it,
+# as the virtiofs tag "wslg", only when GUI apps are on *and* a system distro is
+# configured -- which is why the weaselway system image has to be in
+# .wslconfig at all. Nothing in the system distro mounts it any more; the share
+# is VM-wide, and this is the only place that uses it. The mount point is
+# hardcoded rather than passed in: the shell drop-in has to name it too, and a
+# value in two unit files is easier to keep honest than one threaded through
+# the environment.
+#
+# Last, and fatal: without it mutter can only send its error frame, and this
+# unit failing is the other place that should say so.
 SHARED_MEMORY_MOUNT_POINT=/mnt/wslg-shared-memory
 
-if [ -n "${VIRTIO_TAG}" ]; then
-    if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then
-        mkdir -p "${SHARED_MEMORY_MOUNT_POINT}"
-        mount -t virtiofs -o dax "${VIRTIO_TAG}" "${SHARED_MEMORY_MOUNT_POINT}"
-        chmod 0777 "${SHARED_MEMORY_MOUNT_POINT}"
+if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then
+    mkdir -p "${SHARED_MEMORY_MOUNT_POINT}"
+    if ! mount -t virtiofs -o dax wslg "${SHARED_MEMORY_MOUNT_POINT}"; then
+        echo "error: cannot mount the WSLg shared-memory share -- is systemDistro= in .wslconfig set to the weaselway system image (README step 2), followed by wsl --shutdown?" >&2
+        exit 1
     fi
+    chmod 0777 "${SHARED_MEMORY_MOUNT_POINT}"
 fi
