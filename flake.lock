@@ -41,16 +41,17 @@
       "locked": {
         "lastModified": 1790343140,
         "narHash": "sha256-X4+1z9yPHmp73GYP67+rYaJz7ojM8lfzBBTxke1CZu0=",
-        "owner": "weaselway",
-        "repo": "mesa",
+        "ref": "mesa-26.2.1-wsl",
         "rev": "93627c42715d185b6c818ef28953f84a1f134e61",
-        "type": "github"
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/mesa"
       },
       "original": {
-        "owner": "weaselway",
         "ref": "mesa-26.2.1-wsl",
-        "repo": "mesa",
-        "type": "github"
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/mesa"
       }
     },
     "mutter-src": {
@@ -58,16 +59,17 @@
       "locked": {
         "lastModified": 1790344381,
         "narHash": "sha256-mQnojDUyCTtN+qzIKPqIoTHogc84wh1/0w2HaUMBfF0=",
-        "owner": "weaselway",
-        "repo": "mutter",
+        "ref": "50.4-wslg",
         "rev": "a1a5066d904473e1799fb915433894a83ed769aa",
-        "type": "github"
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/mutter"
       },
       "original": {
-        "owner": "weaselway",
         "ref": "50.4-wslg",
-        "repo": "mutter",
-        "type": "github"
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/mutter"
       }
     },
     "nixos-wsl": {

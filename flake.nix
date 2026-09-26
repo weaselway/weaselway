@@ -16,13 +16,16 @@
 
     # The fork branches the Ubuntu packages build too (ubuntu/resolute), picked
     # to match the mesa and mutter releases nixpkgs has. They carry no
-    # flake.nix, so only their source is used.
+    # flake.nix, so only their source is used. Fetched with git rather than
+    # as GitHub tarballs: mesa's .gitattributes has eol=crlf rules, and
+    # whether those are applied to the tarball differs between Nix versions,
+    # which breaks the locked hash.
     mesa-src = {
-      url = "github:weaselway/mesa/mesa-26.2.1-wsl";
+      url = "git+https://github.com/weaselway/mesa?ref=mesa-26.2.1-wsl&shallow=1";
       flake = false;
     };
     mutter-src = {
-      url = "github:weaselway/mutter/50.4-wslg";
+      url = "git+https://github.com/weaselway/mutter?ref=50.4-wslg&shallow=1";
       flake = false;
     };
   };
