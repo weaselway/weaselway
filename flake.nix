@@ -15,8 +15,10 @@
     };
 
     # The Windows viewer, sdl-freerdp.exe, cross-compiled by its own flake.
+    # Fetched with git for the same reason as mesa below (eol rules in
+    # .gitattributes).
     freerdp = {
-      url = "github:weaselway/freerdp";
+      url = "git+https://github.com/weaselway/freerdp?ref=main&shallow=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 

@@ -45,15 +45,17 @@
       "locked": {
         "lastModified": 1790455201,
         "narHash": "sha256-4QWRvI/H7segl8GsDUd63sjuzb4EXJ8TY8HFOJstgX4=",
-        "owner": "weaselway",
-        "repo": "freerdp",
+        "ref": "main",
         "rev": "9ae76d425beb9c026827c1b41582c663cb5e6dc9",
-        "type": "github"
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/freerdp"
       },
       "original": {
-        "owner": "weaselway",
-        "repo": "freerdp",
-        "type": "github"
+        "ref": "main",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/freerdp"
       }
     },
     "mesa-src": {
