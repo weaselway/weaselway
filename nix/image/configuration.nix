@@ -20,8 +20,10 @@
   environment.gnome.excludePackages = [ pkgs.orca ];
   services.speechd.enable = false;
 
-  # The system is a flake (/etc/nixos/flake.nix); no channels.
+  # The system is a flake (/etc/nixos/flake.nix); no channels. Its inputs
+  # include git repositories, which nix fetches with git.
   nix.channel.enable = false;
+  programs.git.enable = true;
   nix.settings.experimental-features = [
     "nix-command"
     "flakes"

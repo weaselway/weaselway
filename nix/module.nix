@@ -95,6 +95,14 @@ in
     services.udev.enable = true;
     services.udev.packages = [ dxgdrm-all ];
 
+    # dxgdrm's udev rule makes its nodes 0666, but on NixOS the render node
+    # still came up root:render 0660, so gnome-shell could not open it. Group
+    # membership works whatever the mode ends up being.
+    users.users.${config.wsl.defaultUser}.extraGroups = [
+      "render"
+      "video"
+    ];
+
     # NixOS-WSL bind-mounts WSLg's X0 socket into /tmp/.X11-unix. Our mutter
     # creates its own X socket there, which weaselway-prep.service makes room
     # for; this mount would sit on top of it.
