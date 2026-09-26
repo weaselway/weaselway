@@ -1,7 +1,7 @@
 # The weaselway NixOS-WSL system. This file is both what the image is built
 # from and what it ships in /etc/nixos, next to flake.nix: edit it there and
 # `sudo nixos-rebuild switch` to change the running system.
-{ ... }:
+{ pkgs, ... }:
 
 {
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -14,6 +14,11 @@
   # Pin the GPU d3d12 renders on, for machines with more than one. Matched
   # against a substring of the adapter description.
   # weaselway.adapter = "nvidia";
+
+  # No screen reader: orca needs speech-dispatcher, whose voices are ~650 MB of
+  # the image. To get them back, delete both lines and rebuild.
+  environment.gnome.excludePackages = [ pkgs.orca ];
+  services.speechd.enable = false;
 
   # The system is a flake (/etc/nixos/flake.nix); no channels.
   nix.channel.enable = false;
