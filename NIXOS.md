@@ -296,9 +296,15 @@ This verified both error-frame paths and the in-memory TLS certificate.
 - **The PCM fix**, end to end: it is built, but hasn't been heard through the viewer yet.
 - **PipeWire runs without realtime scheduling.** rtkit is enabled and running, but `data-loop.0` stays
   `SCHED_OTHER`.
-- **The audio graph runs at a 2048-frame quantum** (about 43 ms bursts, with the null sink as driver),
-  while mutter sends 20 ms packets. That's fine as long as the client buffers enough. If playback
-  stutters, try `node.latency = "882/44100"` on the capture stream in the PipeWire conf.
+- **PipeWire delivers audio to mutter in quantum-sized bursts**, while mutter sends 20 ms packets.
+  protocol-simple has no chunk size of its own: each graph cycle's output is written to the TCP
+  socket as-is, and mutter cuts the byte stream into 882-frame packets, so bursts only matter if the
+  client buffers too little. Nothing in our config sets the quantum. The stock default is 1024
+  frames (~23 ms at 44.1 kHz), and the stock `pipewire.conf` raises the minimum to 1024 inside a VM.
+  It grows up to the 2048-frame max (~43 ms at 48 kHz) when a client asks for high latency; that is
+  what was observed here. If playback stutters, check `pw-top` while audio plays. A smaller quantum
+  needs `default.clock.min-quantum` lowered as well as `node.latency` on the capture stream,
+  because the VM rule clamps anything below 1024.
 - **Running the viewer from `\\wsl.localhost`** hasn't been confirmed yet.
 - **WSL may not like the minimal WSLGd (v1.0.79-4)** idling as the system distro's only process. The
   test machine was still on an older system image (`49a4cc0`).
