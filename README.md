@@ -1,512 +1,215 @@
 # Weaselway
 
-Scripts to get a GPU-accelerated GNOME session running on Ubuntu under WSL2.
+A GPU-accelerated GNOME session on WSL2, shipped as a NixOS-WSL image.
 
-Four pieces have to be in place:
+mutter runs headless inside the distro and serves the session over RDP on a
+vsock. mesa's `d3d12` driver renders on the GPU Windows exposes. A patched
+FreeRDP client on the Windows side shows the result. Everything is in the
+image: the patched mesa and mutter, the `dxgdrm` kernel module, the PipeWire
+audio bridge, and the Windows viewer itself.
 
-- a **patched mesa and mutter** in the Ubuntu distro. mutter runs headless and
-  serves the session over an RDP connection on a vsock; mesa gets the `d3d12`
-  Gallium driver pointed at the GPU Windows exposes.
-- a **minimal WSLg system distro** ([weaselway/wslg]). It runs no compositor,
-  RDP client or audio server of its own. It is needed only because WSL creates
-  the shared-memory share mutter hands its frames over on (gfxredir) only when a
-  system distro is configured. Without it the viewer shows a magenta error
-  frame instead of the desktop.
-- the patched **FreeRDP client** ([weaselway/freerdp]) on the Windows side, which
-  connects to that vsock and shows the session.
-- a small kernel module (`dxgdrm`) giving the d3d12 driver a real
-  `/dev/dri/renderD128` to find.
+The one piece outside the image is a minimal WSLg **system distro**
+([weaselway/wslg](https://github.com/weaselway/wslg)). WSL only creates the
+shared memory mutter hands its frames over on when a system distro is
+configured. Without it, the viewer shows a magenta error frame instead of the
+desktop.
+
+The older Ubuntu setup (patched packages plus the `install-*.sh` scripts) is
+in [README-ubuntu.md](README-ubuntu.md). How the NixOS side works, and how to
+debug it, is in [NIXOS.md](NIXOS.md).
 
 ## Installation
 
-### The scripted way
+### 1. Get the image
 
-`install.ps1` does everything below from a Windows PowerShell prompt -- creates
-the distro, installs the dependencies, clones this repo inside it and runs each
-of the `install-*.sh` scripts, including the two Windows-side steps the manual
-walkthrough leaves to you (the `systemDistro` line in `.wslconfig` and the
-`wsl --shutdown` after it). From a PowerShell prompt, run it straight from
-GitHub:
+Download `nixos-weaselway-<version>.wsl` from the
+[releases](https://github.com/weaselway/weaselway/releases). Every CI run also
+uploads one as the artifact `nixos-wsl-<commit>`. To build it yourself, see
+"Building" in [NIXOS.md](NIXOS.md). The image is x86_64 only.
 
-```powershell
-iwr https://raw.githubusercontent.com/weaselway/weaselway/main/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
+### 2. Import it
 
-Either way the script writes its scratch files to the current directory, so run
-it from somewhere on a local drive -- it needs a path the distro can reach
-under `/mnt`. A good candidate is `C:\Weaselway`.
-
-It is safe to re-run: steps that are already done are skipped or simply redone. `-Distro
-<name>` picks a different distro name (default `Gnome`), `-BuildPackages`
-builds mesa and mutter locally instead of taking them from the PPA, and
-`-SkipDistroInstall` uses a distro you already made, and `-Adapter <name>` pins
-the GPU (see step 7). Creating the distro opens Ubuntu's first-run setup for a
-username and password.
-
-At the end it offers to install Firefox and Chromium from the xtradeb PPA,
-defaulting to yes; `-Browsers` and `-Browsers:$false` answer that up front. See
-"Browsers" below for why they do not come from the archive.
-
-Early on it offers to enable passwordless sudo. Most of the `install-*.sh`
-scripts call `sudo` themselves, so saying yes is what makes the rest of the run
-unattended; saying no just means a password prompt at each of those steps. It
-writes `/etc/sudoers.d/weaselway`, which is a lasting change to the distro --
-delete that file to undo it. `-PasswordlessSudo` and `-PasswordlessSudo:$false`
-answer it up front, which is also what a non-interactive run needs.
-
-The rest of this section is the same thing by hand.
-
-### By hand
-
-First make sure WSL itself is current, from Windows:
+In PowerShell:
 
 ```powershell
-wsl --update
-wsl --version
-```
-
-`wsl --version` should report a `WSL version:` of at least `2.7`.
-
-Create the distro:
-
-```powershell
-wsl --install Ubuntu-26.04 --name Gnome
-```
-
-It must be either the only WSL distro you have, or the first one started
-after `wsl --shutdown` -- WSL only wires up `/run/user/1000/` for the distro
-that starts first, and everything here depends on that directory being
-non-empty. If in doubt, run `wsl --shutdown` and then start this distro
-before any other.
-
-```powershell
+wsl --install --from-file nixos-weaselway-<version>.wsl --name Gnome
 wsl -d Gnome
 ```
 
-Install a few dependencies. This repository uses docker to get isolated build
-environments. You can remove it once setup is done:
+This opens a shell as the user `nixos`. There is no password yet. Set one
+first, because `sudo` needs it:
 
 ```sh
-sudo apt -y update
-sudo apt -y upgrade
-sudo apt -y install git curl unzip docker.io gnome-session ubuntu-session winpr-utils ptyxis
-sudo usermod -aG docker $(whoami)
+passwd
 ```
 
-`usermod` does not affect your current login session -- open a new shell (or
-`su - $(whoami)`) for the new group membership to take effect.
+### 3. Install the system distro
+
+Inside the distro:
 
 ```sh
-cd $HOME
-git clone https://github.com/weaselway/weaselway.git
-cd weaselway
+install-system-image
 ```
 
-Run every step from the repo root. The paths matter: the container mounts the
-current directory, so running a script from elsewhere gives it the wrong tree.
-
-### 1. Install FreeRDP
-
-```sh
-./install-freerdp.sh
-```
-
-Downloads the client release and unpacks it into `C:\Weaselway`
-(`/mnt/c/Weaselway`), creating the directory if it does not exist. The piece you
-will use is `sdl-freerdp.exe`.
-
-### 2. Install the system distro image
-
-```sh
-./install-system-image.sh
-```
-
-Downloads and unpacks `system_x64-<version>.vhd` into `C:\Weaselway`. Pointing
-WSL at it is a manual step -- the script only prints the stanza below when it is
-done. Add it to `.wslconfig` in your Windows home directory
-(`C:\Users\<you>\.wslconfig`), under the existing `[wsl2]` section if there is
-one:
+This downloads the system image to `C:\Weaselway\system_x64-<version>.vhd` and
+prints the line to add to `%USERPROFILE%\.wslconfig`:
 
 ```ini
 [wsl2]
-systemDistro=C:\\Weaselway\\system_x64-v1.0.79-4.vhd
+systemDistro=C:\\Weaselway\\system_x64-<version>.vhd
 ```
 
-Note the doubled backslashes. Then, from Windows:
+If `.wslconfig` already has a `[wsl2]` section, put the line under that one.
+Then restart WSL from PowerShell:
 
 ```powershell
 wsl --shutdown
 ```
 
-Nothing picks up the new image until WSL is restarted.
+### 4. Start the session
 
-### 3. Build the dxgdrm kernel module
+```powershell
+wsl -d Gnome
+```
 
 ```sh
-./install-kernel-module.sh
+start-gnome-shell
+start-viewer
 ```
 
-WSL runs Microsoft's kernel, for which no `linux-headers` package exists, so
-this clones the matching kernel source and builds enough of it to compile an
-out-of-tree module against. It takes a while -- most of it is that kernel build,
-which is what produces the symbol versions the module is checked against.
+`start-gnome-shell` starts GNOME under the user's systemd manager and returns
+once it is up. `start-viewer` opens the session in a window on Windows. It runs
+the `sdl-freerdp.exe` inside the image, so nothing needs installing on the
+Windows side.
 
-The module lands in `/usr/local/lib/weaselway/modules/$(uname -r)/`, and the
-udev rules that open up permissions on the render node in `/etc/udev/rules.d`.
-Not `/lib/modules`: WSL mounts that as an overlay of its own and throws the
-contents away at every `wsl --shutdown`, so a module installed there is gone by
-the time anything wants to load it.
+**This has to be the first distro started after `wsl --shutdown`.** WSL only
+sets up `/run/user/1000` for the first distro it starts. If another distro got
+there first, run `wsl --shutdown` and start this one first.
 
-The result is tied to the running kernel (`uname -r`). After a WSL kernel update,
-run it again.
-
-### 4. Load the module (optional)
-
-`weaselway-prep.service`, installed in step 7, loads the module by this same
-path at every boot, so there is nothing to do here in normal use. This step
-is only for confirming, right after building it, that the module from step 3
-actually loads before you go any further:
-
-```sh
-sudo modprobe /usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko
-sudo udevadm trigger --subsystem-match=drm
-sudo udevadm settle
-```
-
-### 5. Build the patched mesa and mutter packages
-
-```sh
-./build-packages.sh
-```
-
-Rebuilds Ubuntu's own `mesa` and `mutter` source packages with the fork's
-patches on top, inside a container, and drops the `.deb`s in
-`ubuntu/resolute/packages/`. See
-[ubuntu/resolute/README.md](ubuntu/resolute/README.md) for what it does and how
-to add a package.
-
-Building locally takes a while. If you would rather skip it, a PPA carries the
-same packages already built -- see below.
-
-### 6. Install the updated packages
-
-```sh
-sudo apt install -y --allow-downgrades ./ubuntu/resolute/packages/*/*.deb
-for deb in ./ubuntu/resolute/packages/*/*.deb; do dpkg-deb -f "$deb" Package; done | sort -u | xargs sudo apt-mark hold
-```
-
-The rebuilt packages carry a `+weaselN` version suffix (`RELEASE_SUFFIX` in
-`ubuntu/resolute/build-*.sh`), so they install over the distro ones and
-`apt policy mutter` will show which is active. The hold keeps a later archive
-update from replacing them; `apt-mark unhold` them to go back.
-
-#### Alternative: install from the PPA
-
-Instead of steps 5 and 6, pull the same packages from a PPA:
-
-```sh
-./install-ppa-packages.sh
-```
-
-This writes `/etc/apt/preferences.d/weaselway`, pinning that PPA above every
-other source (including a later distro update) so `apt upgrade` does not
-silently revert `mesa` or `mutter` back to the unpatched build:
-
-```
-Package: *
-Pin: release o=LP-PPA-oliver-bestmann-weaselway
-Pin-Priority: 1001
-```
-
-Then it adds the PPA and upgrades:
-
-```sh
-sudo add-apt-repository ppa:oliver-bestmann/weaselway
-sudo apt update
-sudo apt upgrade
-```
-
-Sanity check that the installed `mutter` actually came from the PPA rather
-than the distro:
-
-```sh
-apt info mutter | grep APT-Sources
-```
-
-The output should mention `oliver-bestmann/weaselway`.
-
-### 7. Install the session units
-
-```sh
-./install-units.sh
-```
-
-The session runs as the units GNOME already ships, rather than as a script of
-our own. Three things have to be added for those units to work here:
-
-- `weaselway-prep.service`, a system unit doing the root-side setup once per
-  boot -- loading `dxgdrm`, taking `/tmp/.X11-unix` back from WSL so mutter can
-  create its X socket there, and mounting the shared-memory share. It is ordered
-  `After=wslg.service`, the unit WSL generates to bind `/mnt/wslg/.X11-unix`
-  read-only over that path; we have to undo that after it happens rather than
-  before.
-- `~/.config/environment.d/10-weaselway.conf`, the environment the user manager
-  hands to every service in the session: the driver variables, the vsock port
-  the session is served on (`MUTTER_RDP_VSOCK_PORT`), and
-  `XDG_SESSION_TYPE=wayland`. That last one is not optional --
-  `org.gnome.Shell@.service` carries
-  `AssertEnvironment=XDG_SESSION_TYPE=wayland`, and with no display manager here
-  to establish a graphical logind session, nothing else would ever set it. The
-  assert reads the *manager's* environment, so exporting it in a shell does
-  nothing.
-- a drop-in on `org.gnome.Shell@.service` replacing the stock `ExecStart=` with
-  the headless RDP one. It sits in the template's drop-in directory, not
-  an instance's, so it covers every session the distro offers rather than just
-  one. The stock `--mode=%i` is kept, which is what lets a single file do that.
-
-The script refuses to run if `~/.config/systemd/user/org.gnome.Shell@.service`
-exists: a file of that name shadows the distro unit outright, and the drop-in
-would then be layered onto the copy instead of the real one.
-
-#### Picking a GPU
-
-By default nothing is pinned: `d3d12` takes whatever adapter Windows lists
-first, which is the right answer on a machine with one GPU. On a hybrid laptop
-it may not be, and `--adapter` says which to use:
-
-```sh
-./install-units.sh --adapter intel
-```
-
-The name is matched against a substring of the adapter description, so `intel`
-or `nvidia` is enough. It goes to
-`~/.config/environment.d/20-weaselway-adapter.conf`, read after
-`10-weaselway.conf` and so winning over it. `--adapter ''` clears the choice
-again; a plain re-run of `install-units.sh` leaves whatever is already set
-alone.
-
-To try another GPU without committing to it, pass the same flag to the start
-script instead -- it applies to that session only, and the next start without
-the flag goes back to the installed setting:
-
-```sh
-./start-gnome-shell.sh --adapter nvidia
-```
-
-### 8. Install the audio bridge
-
-```sh
-./install-audio.sh
-```
-
-Audio is PipeWire, end to end. There is no PulseAudio daemon anywhere: the
-system distro used to run one carrying a pair of custom RDP modules, and mutter
-spoke a bespoke socket protocol to them. It now connects to two stock
-`protocol-simple` servers over loopback TCP instead, and the whole thing is
-config rather than code. `pipewire-pulse` is still installed, because that is
-what libpulse clients -- gnome-shell's own volume control among them -- talk
-to.
-
-The script installs `pipewire`, `pipewire-pulse` and `wireplumber` (already
-present on an `ubuntu-desktop` install), drops
-`~/.config/pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf` into place, and
-restarts the three services. It ends by printing `wpctl status`, which is the
-check that matters -- see below for what it should say.
-
-The config creates two ends:
-
-| | direction | format | port |
-|---|---|---|---|
-| **Remote Desktop Audio** | desktop -> client | 44100 / stereo / S16LE | `127.0.0.1:4711` |
-| **Remote Desktop Microphone** | client -> desktop | 44100 / mono / S16LE | `127.0.0.1:4712` |
-
-Formats are fixed at load time -- this protocol has no negotiation -- and must
-match `rdp_audio_out_format` and `rdp_audio_in_format` in mutter's
-`meta-rdp-audio.c`. Both servers listen on loopback only; the user distro is the
-trust boundary, exactly as it was for the unix socket this replaced. Two
-consequences of TCP worth knowing: any user or process in the distro can
-connect to those ports -- and so listen to the desktop audio or feed the
-microphone -- and something else already using 4711/4712 stops the bridge from
-starting. Change both the config and `MUTTER_RDP_AUDIO_SINK_ADDR` /
-`MUTTER_RDP_AUDIO_SOURCE_ADDR` for mutter if you need other ports.
-
-The two are deliberately not symmetric, which is worth knowing before it looks
-like a bug:
-
-- **The speakers are permanent.** A `protocol-simple` server creates its stream
-  per *connected client*, and mutter only connects while an RDP viewer is
-  attached with audio negotiated. So the sink applications see is a separate,
-  always-present null sink, and the server drains its monitor. Disconnecting the
-  viewer just means the audio goes nowhere. Without this the default sink would
-  vanish on every disconnect and long-running applications would be stranded.
-- **The microphone is not.** `Remote Desktop Microphone` *is* the per-client
-  stream, so it appears when a viewer connects and disappears when it leaves.
-  That is the honest answer -- there is no microphone without a remote client --
-  and applications handle a mic hotplugging far better than speakers doing it.
-  (The obvious fix, a permanent virtual source, does not work: WirePlumber only
-  ever routes playback streams to an `Audio/Sink`, so feeding one needs a
-  loopback through an intermediate sink that then shows up in Settings as a
-  phantom output device.)
-
-So immediately after running the script, with no viewer attached, `wpctl status`
-should show `Remote Desktop Audio` under Sinks and starred as the default, and
-**no** source. Both ports should be listening. If the sink is missing, the
-config did not load -- `journalctl --user -u pipewire -n 50`.
-
-#### `PULSE_SERVER`
-
-WSL injects `PULSE_SERVER=/mnt/wslg/PulseServer` into the distro, pointing at
-the PulseAudio the stock WSLGd ran. Ours runs none, and libpulse clients only
-find `pipewire-pulse` when that variable is *unset* -- left set, every one of
-them tries a socket that is not there, and the failure looks like "PipeWire is
-broken" rather than anything to do with WSL.
-
-`install-units.sh` handles this, so it is not something to do by hand: the
-gnome-shell drop-in carries `UnsetEnvironment=PULSE_SERVER`, and the script also
-clears it from the running user manager. It has to be unset rather than set
-empty -- `environment.d` can only assign, and libpulse does not reliably read an
-empty value as "use the default".
-
-### Running it (session)
-
-Then start the session:
-
-```sh
-./start-gnome-shell.sh
-```
-
-That is a thin wrapper now -- `systemctl --user start gnome-session@ubuntu.target`
-is the whole of it, plus clearing failed state from any previous attempt. The
-target brings up the shell on the `wayland-0` display, and with it the settings
-daemons, the portals and the rest of the session.
-
-Any session the distro ships works; pass its name to get it:
-
-```sh
-./start-gnome-shell.sh gnome
-```
-
-It also takes `--adapter <name>`, which overrides the pinned GPU for that one
-session; see "Picking a GPU" above.
-
-`ls /usr/share/gnome-session/sessions/` lists them -- `ubuntu`, `gnome` and
-`gnome-login` on 26.04, with `ubuntu` the default here.
-
-The shell unit's instance is the `gnome-shell --mode`, which is *not* the
-session name: `gnome.session` requires `org.gnome.Shell@user.service` and
-`gnome-login.session` requires `@gdm`. The drop-in covers all of them because it
-is installed template-wide; the script asks the target which shell unit it wants
-rather than assuming, which is why it can report on the right one.
-
-The script returns once the session is up rather than staying in the foreground,
-so Ctrl-C is no longer how you end it. To stop:
+To stop the session:
 
 ```sh
 systemctl --user start gnome-session-shutdown.target
 ```
 
-Not `systemctl --user stop gnome-session@ubuntu.target` -- the target carries
-`RefuseManualStop=on` and will tell you so. Shutting down takes the session bus
-with it, which is why the start wrapper puts `dbus.service` back before trying
-again.
+## Using the viewer
 
-### Connect to it
-
-Then connect to it:
+`start-viewer` passes any extra arguments on to `sdl-freerdp.exe`, after its
+own. So FreeRDP options can be added or overridden per run. The keyboard layout
+is `/kbd:layout:German` unless you pass another:
 
 ```sh
-./start-viewer.sh
+start-viewer /kbd:layout:"United States - English"
+start-viewer /kbd:layout:0x409        # the same layout, by its Windows ID
 ```
 
-That runs `sdl-freerdp.exe` from `C:\Weaselway`, pointed at the vsock address
-and shared memory from the same env file (without shared memory, mutter falls
-back to sending the pixels over the connection). It also enables touch input
-(`/multitouch`), forwarding of 3+ finger touchpad swipes for the overview and
-workspace switching (`/sdl-touchpad-gestures`), audio playback
-(`/audio-mode:redirect`) and the microphone (`/microphone`). Edit it to taste --
-the resolution and `/kbd:layout:German` in particular.
+The names are FreeRDP's layout names, not country names (`German`, `French`,
+`Swiss German`, `United Kingdom`, ...). An unknown name makes the viewer exit
+with "Could not identify keyboard layout".
 
-### Browsers
-
-Do not install Firefox or Chromium via snap: a browser snap bundles its own
-mesa, which is not the patched one and will either fail to accelerate or break
-outright. The packages of those names in the Ubuntu archive are transitional
-and pull in exactly that snap, so they are no help either. Take them from the
-xtradeb PPA, which builds both as ordinary `.deb`s against the system
-libraries -- and so against our mesa:
+Two options help with debugging:
 
 ```sh
-./install-xtradeb.sh
+start-viewer /sdl-show-stats:2      # frame and bandwidth counter overlay, text at 2x
+start-viewer /sdl-show-damage       # tint the regions updated in each frame
 ```
 
-Like `install-ppa-packages.sh`, this writes a pin
-(`/etc/apt/preferences.d/weaselway-xtradeb`) putting that PPA above the
-archive, so `apt upgrade` does not swap the real packages back for the
-transitional ones. It prints `apt policy firefox chromium` at the end; both
-should name xtradeb.
+The value after `/sdl-show-stats` is the text scale and can be left out. The
+options combine.
 
-## Checking each step
-
-If something does not come up, this is roughly where to look:
+The viewer also enables touch input, touchpad swipes of 3+ fingers (overview
+and workspace switching), audio playback and the microphone. To use a different
+build of the viewer, point `WEASELWAY_VIEWER` at it:
 
 ```sh
-ls /mnt/c/Weaselway           # sdl-freerdp.exe and system_x64-*.vhd
-ls /usr/local/lib/weaselway/modules/$(uname -r)/  # module built for this kernel
-lsmod | grep dxgdrm           # module loaded
-ls -l /dev/dri                # renderD128 present
-apt policy mutter             # the +weaselN version is installed
-mountpoint /mnt/wslg-shared-memory  # the system distro's share is mounted
-wpctl status                  # Remote Desktop Audio present and default
-ss -ltn '( sport = :4711 or sport = :4712 )'  # both bridge ports listening
-systemctl --user show-environment | grep PULSE_SERVER  # should print nothing
+WEASELWAY_VIEWER=/mnt/c/Weaselway/sdl-freerdp.exe start-viewer
 ```
 
-For the session itself:
+## Configuration
+
+The system is configured by the NixOS flake in `/etc/nixos`, which the image
+ships:
+
+- `flake.nix` pulls in weaselway (`github:weaselway/weaselway`), and through it
+  the matching nixpkgs and NixOS-WSL.
+- `configuration.nix` is the system itself, the same file the image was built
+  from ([nix/image/configuration.nix](nix/image/configuration.nix)).
+
+To change something, edit `configuration.nix` and rebuild:
 
 ```sh
-systemctl status weaselway-prep.service              # root-side setup ran
-systemctl --user show-environment | grep XDG_SESSION # must say wayland
-systemctl --user cat org.gnome.Shell@ubuntu.service  # drop-in applied?
-systemctl --user --failed                            # what actually broke
-journalctl --user -u org.gnome.Shell@ubuntu.service -b
+sudo -e /etc/nixos/configuration.nix
+sudo nixos-rebuild switch
 ```
 
-`Starting requested but asserts failed` on the shell means one of the two
-`Assert` lines it carries is false: `XDG_SESSION_TYPE` missing from the
-manager environment, or no `/dev/dri/renderD128`. The render node is
-`weaselway-prep.service`'s job. Note that a failed
-start also stops `dbus.service` on the way down, so clear the wreckage with
-`systemctl --user reset-failed` before retrying -- which is what
-`start-gnome-shell.sh` does for you.
+The hostname is `nixos`, so `nixos-rebuild` picks `nixosConfigurations.nixos`
+from that flake without a `#name`.
 
-A magenta screen in the viewer is mutter saying it cannot use shared memory,
-and it names the reason. Most often the system distro is not the one from
-step 2: then `weaselway-prep.service` has failed too, because it could not
-mount the share. Check the `.wslconfig` path and that WSL was restarted.
-`cat /mnt/wslg/versions.txt` shows which system distro is running, and
-`wsl --system` opens a shell inside it.
+These are the weaselway options:
 
-If the shell starts but Xwayland cannot bind its display, look at
-`/tmp/.X11-unix`: it should be `drwxrwxrwt` (mode 1777), on the same filesystem
-as `/tmp`. A root-owned `drwxr-xr-x` there means `weaselway-prep.service` did
-not get its turn, and `sudo systemctl restart weaselway-prep.service` fixes it.
+| Option | Default | What it does |
+|---|---|---|
+| `weaselway.enable` | `false` (the image sets `true`) | The whole session: mesa, mutter, dxgdrm, audio, the scripts. |
+| `weaselway.adapter` | `null` | GPU to render on, matched against a substring of its name (`"nvidia"`, `"Intel"`). Null takes the first adapter Windows lists. |
+| `weaselway.session` | `"gnome"` | gnome-session that `start-gnome-shell` starts when given none. |
 
-That directory is worth understanding, because the obvious diagnostics lie about
-it. WSL generates `wslg.service` to bind `/mnt/wslg/.X11-unix` read-only over
-`/tmp/.X11-unix`, and `X-mount.mkdir` creates the mountpoint as a root-owned
-`0755` directory on the way in. systemd's `tmp.mount` then covers `/tmp` with a
-fresh tmpfs, leaving WSL's bind *shadowed* -- still listed in
-`/proc/self/mountinfo`, mounted over, affecting nothing. So `mountpoint` calls
-the path a mountpoint while `umount` calls it "not mounted", and only `umount`
-is right. Comparing `stat -c %d` against `/tmp` is the honest check, which is
-what the prep script does.
+`start-gnome-shell --adapter <name>` overrides the adapter for a single session
+without rebuilding.
 
-There is no way to move the socket somewhere WSL does not touch:
-`/tmp/.X11-unix` is a compile-time constant on both sides, baked into
-`libmutter` (which creates the socket and hands Xwayland the fd via
-`-listenfd`) and into `libxcb` (which every X client uses to find it). No
-environment variable overrides either.
+Everything else is plain NixOS: add packages to `environment.systemPackages`,
+set `time.timeZone`, and so on. Some things the image sets that you may want to
+change:
 
-[weaselway/wslg]: https://github.com/weaselway/wslg
-[weaselway/freerdp]: https://github.com/weaselway/freerdp
+- **sshd is off.** Uncomment `services.openssh.enable` to SSH in, and set a
+  password with `passwd` or add a key first. It is reachable from the LAN when
+  WSL networking is mirrored.
+- **The screen reader is left out** to keep the image small (orca's voices are
+  about 650 MB). Delete the two lines that say so to get it back.
+
+## Updating
+
+`/etc/nixos` has no `flake.lock` until the first rebuild. The first
+`nixos-rebuild` pins whatever weaselway is current at that moment. After that,
+updating means moving the lock forward and rebuilding:
+
+```sh
+sudo nix flake update --flake /etc/nixos
+sudo nixos-rebuild switch
+```
+
+This updates weaselway, and with it nixpkgs, NixOS-WSL, mesa, mutter, the
+kernel module and the viewer, all to versions that were tested together.
+
+**Rebuilds compile locally.** The binary cache doesn't have the patched mesa,
+mutter, gnome-shell (which links mutter) or dxgdrm's kernel tree. An update
+that touches them takes a while and needs a few GB of disk. Everything else
+comes from the cache.
+
+After a rebuild, restart the session so it runs the new mutter and mesa: stop
+it as above, then `start-gnome-shell` again. If the kernel module changed,
+`wsl --shutdown` is simpler.
+
+If an update breaks something, go back to the previous generation:
+
+```sh
+sudo nixos-rebuild switch --rollback
+```
+
+The system distro VHD lives on the Windows side, so a rebuild doesn't replace
+it. `install-system-image` pins a version, and an update can move that pin. Run
+`install-system-image` again after updating: if it downloads a new image,
+change the `systemDistro=` line to the one it prints and run `wsl --shutdown`.
+
+## When something doesn't work
+
+- **Magenta screen in the viewer:** the shared memory is missing. Check that
+  `systemDistro=` is in `.wslconfig`, that you ran `wsl --shutdown` afterwards,
+  and that this distro was the first one started.
+  `systemctl status weaselway-prep` reports why.
+- **Everything renders in software (llvmpipe):** the Windows GPU driver didn't
+  load. The graphics part of "What the module does" in [NIXOS.md](NIXOS.md)
+  lists the known causes.
+- **No audio devices in GNOME:** `wpctl status` should list "Remote Desktop
+  Audio", and `/run/user/1000/pulse/native` should be a socket, not a symlink.
+
+"Debugging" in [NIXOS.md](NIXOS.md) has the full list of checks.

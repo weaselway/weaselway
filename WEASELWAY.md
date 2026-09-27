@@ -105,7 +105,7 @@ wsl --install --from-file nixos.wsl --name Gnome
 wsl -d Gnome
 ```
 
-The same first-distro rule as in the README applies: WSL only wires up
+The same first-distro rule as in [README-ubuntu.md](README-ubuntu.md) applies: WSL only wires up
 `/run/user/1000/` for the first distro started after `wsl --shutdown`.
 
 The system distro is still installed on the Windows side. From inside the
@@ -116,7 +116,7 @@ install-system-image     # C:\Weaselway\system_x64-*.vhd, prints the .wslconfig 
 ```
 
 Add the `systemDistro=` line to `.wslconfig` and `wsl --shutdown`, as in step 2
-of the README.
+of [README-ubuntu.md](README-ubuntu.md).
 
 The viewer needs nothing on the Windows side: `start-viewer` runs the
 `sdl-freerdp.exe` in the image's store, which is updated with the flake like
@@ -130,7 +130,7 @@ start-gnome-shell        # gnome-session@gnome.target
 start-viewer
 ```
 
-The "Checking each step" list in the README still applies, except the module
+The "Checking each step" list in [README-ubuntu.md](README-ubuntu.md) still applies, except the module
 path: here it is under `/nix/store/*-dxgdrm-all/lib/modules/$(uname -r)/`, and
 `systemctl status weaselway-prep` names the one it tried.
 

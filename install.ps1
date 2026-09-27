@@ -3,9 +3,9 @@
     Sets up a GPU-accelerated GNOME session under WSL2, end to end, from Windows.
 
 .DESCRIPTION
-    Runs every step of the README from a Windows shell: creates the Ubuntu
+    Runs every step of README-ubuntu.md from a Windows shell: creates the Ubuntu
     distro, installs the build dependencies, clones this repo inside it, and
-    drives the install-*.sh scripts. The Windows-side pieces the README leaves
+    drives the install-*.sh scripts. The Windows-side pieces README-ubuntu.md leaves
     manual -- the `systemDistro` line in .wslconfig and the `wsl --shutdown`
     after it -- are done here too.
 
@@ -15,7 +15,7 @@
     Name of the WSL distro to create/use. Default "Gnome".
 
 .PARAMETER BuildPackages
-    Build the patched mesa and mutter locally (README step 5) instead of
+    Build the patched mesa and mutter locally (README-ubuntu.md step 5) instead of
     pulling them from the PPA. Takes hours; the PPA carries the same packages.
 
 .PARAMETER Adapter
@@ -328,7 +328,7 @@ if (Test-Path -LiteralPath $vhdPath) {
 }
 $vhd = Get-Item -LiteralPath $vhdPath
 
-# The README's manual step: point .wslconfig at that image. The value is read
+# README-ubuntu.md's manual step: point .wslconfig at that image. The value is read
 # as an INI string, so the backslashes have to be doubled.
 Write-Step "Pointing .wslconfig at $($vhd.Name)"
 

@@ -2,7 +2,8 @@
 
 This is the reference for the NixOS side of weaselway. It records how things fit together, why they are
 the way they are, what has been checked on a real machine, and how to debug. [WEASELWAY.md](WEASELWAY.md)
-has the short user-facing version ("NixOS-WSL image"). The Ubuntu setup is in the [README](README.md).
+has the short user-facing version ("NixOS-WSL image"). Installing and updating the image is in the
+[README](README.md). The Ubuntu setup is in [README-ubuntu.md](README-ubuntu.md).
 
 ## The pieces
 
@@ -159,8 +160,9 @@ found on a real WSL install.
 - orca and speech-dispatcher are excluded; their voices are about 650 MB. The comment says how to
   restore them.
 - Flakes on, no channels, git installed (the flake has git inputs).
-- **sshd is on, for debugging.** No password ships in the image, so run `passwd` first. It's reachable
-  on the LAN when WSL networking is mirrored. Remove it once things are stable.
+- **sshd is off.** The line is commented out in `configuration.nix`; uncomment it to debug over SSH. No
+  password ships in the image, so run `passwd` first. It's reachable on the LAN when WSL networking is
+  mirrored.
 
 ## Building
 
@@ -230,8 +232,9 @@ run `ssh-keygen -R <ip>` first.
      `sudo <toplevel>/bin/switch-to-configuration switch`.
 - **Only switch to a toplevel built from the same config as the machine's `/etc/nixos`.** Once, a build
   from the repo config was switched onto a machine whose `/etc/nixos` had sshd and the repo's didn't.
-  sshd was removed and access was lost. Since sshd moved into the image config, the two match. Diff
-  them first anyway.
+  sshd was removed and access was lost. The image config no longer enables sshd, so a machine that
+  turned it on in its own `/etc/nixos` loses it the same way when switched to a repo build. Diff them
+  first.
 
 **Checks that have been useful:**
 

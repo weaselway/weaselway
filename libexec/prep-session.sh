@@ -123,7 +123,7 @@ SHARED_MEMORY_MOUNT_POINT=/mnt/wslg-shared-memory
 if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then
     mkdir -p "${SHARED_MEMORY_MOUNT_POINT}"
     if ! mount -t virtiofs -o dax wslg "${SHARED_MEMORY_MOUNT_POINT}"; then
-        echo "error: cannot mount the WSLg shared-memory share -- is systemDistro= in .wslconfig set to the weaselway system image (README step 2), followed by wsl --shutdown?" >&2
+        echo "error: cannot mount the WSLg shared-memory share -- is systemDistro= in .wslconfig set to the weaselway system image (see the README), followed by wsl --shutdown?" >&2
         exit 1
     fi
     chmod 0777 "${SHARED_MEMORY_MOUNT_POINT}"

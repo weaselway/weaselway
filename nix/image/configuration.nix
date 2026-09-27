@@ -22,7 +22,7 @@
 
   # SSH in, for debugging. There is no password in the image: set one with
   # `passwd` first, or add a key to users.users.nixos.openssh.authorizedKeys.
-  services.openssh.enable = true;
+  # services.openssh.enable = true;
 
   # The system is a flake (/etc/nixos/flake.nix); no channels. Its inputs
   # include git repositories, which nix fetches with git.
