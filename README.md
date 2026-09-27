@@ -180,10 +180,12 @@ sudo nixos-rebuild switch
 This updates weaselway, and with it nixpkgs, NixOS-WSL, mesa, mutter, the
 kernel module and the viewer, all to versions that were tested together.
 
-**Rebuilds compile locally.** The binary cache doesn't have the patched mesa,
-mutter, gnome-shell (which links mutter) or dxgdrm's kernel tree. An update
-that touches them takes a while and needs a few GB of disk. Everything else
-comes from the cache.
+The patched mesa, mutter, gnome-shell (which links mutter) and dxgdrm's kernel
+tree aren't on cache.nixos.org. CI pushes them to
+[weaselway.cachix.org](https://weaselway.cachix.org), and the image already
+has that cache configured, so an update downloads them. A config change that
+alters one of them (a different mesa, say) still compiles it locally, which
+takes a while and needs a few GB of disk.
 
 After a rebuild, restart the session so it runs the new mutter and mesa: stop
 it as above, then `start-gnome-shell` again. If the kernel module changed,

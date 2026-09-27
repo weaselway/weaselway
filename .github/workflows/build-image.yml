@@ -19,13 +19,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-26.04
-    # Nothing we build is in a binary cache, so every run compiles the WSL
-    # kernel tree, mesa, mutter and gnome-shell from scratch.
+    # A run whose mesa/mutter/kernel inputs changed compiles them again; the
+    # rest comes from weaselway.cachix.org.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/build-image
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - uses: actions/upload-artifact@v7
         with:

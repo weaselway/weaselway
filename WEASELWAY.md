@@ -94,7 +94,9 @@ sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarball-builder
 
 Or add the machine to `nix.buildMachines` and build normally. Everything
 except dxgdrm's kernel tree, mesa, mutter and whatever links mutter
-(gnome-shell and friends) comes from the binary cache.
+(gnome-shell and friends) comes from cache.nixos.org. Those come from
+weaselway.cachix.org once CI has built the same commit, if the building machine
+has it as a substituter.
 
 ### Installing
 
@@ -149,15 +151,17 @@ sudo nix flake update --flake /etc/nixos    # move to the newest weaselway
 `/etc/nixos/flake.nix` takes nixpkgs and NixOS-WSL from weaselway's own lock.
 Its own `flake.lock` pins weaselway to the commit the image was built from. The
 first boot writes that lock ([nix/image-lock.nix](nix/image-lock.nix)), so a
-rebuild stays on that commit until `nix flake update`. Anything not in the
-binary cache (mesa, mutter, gnome-shell, the dxgdrm kernel tree) is then built
-on the WSL machine itself, which is slow but native.
+rebuild stays on that commit until `nix flake update`. mesa, mutter,
+gnome-shell and the dxgdrm kernel tree come from weaselway.cachix.org, which the
+module adds as a substituter. Anything CI hasn't built is compiled on the WSL
+machine itself, which is slow but native.
 
 ### CI
 
 [build-image.yml](.github/workflows/build-image.yml) builds `nixos.wsl` on
 pushes to `main` and on pull requests, and uploads it as an artifact.
 [release-image.yml](.github/workflows/release-image.yml) does the same for a
-`v*` tag and attaches `nixos-weaselway-<tag>.wsl` to a release. Nothing is
-cached between runs, so each one compiles the kernel tree, mesa, mutter and
-gnome-shell again.
+`v*` tag and attaches `nixos-weaselway-<tag>.wsl` to a release. Both push
+everything they build to weaselway.cachix.org (token in the
+`CACHIX_AUTH_TOKEN` secret), so a run only compiles what changed since the
+last one. Pull requests from forks get no secrets and only read the cache.

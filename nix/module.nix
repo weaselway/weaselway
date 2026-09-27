@@ -196,6 +196,15 @@ in
       configPackages = [ audioConfig ];
     };
 
+    # CI pushes everything it builds here: dxgdrm's kernel tree, mesa, mutter,
+    # gnome-shell and the viewer, none of which cache.nixos.org has. Without
+    # it, every nixos-rebuild after an update compiles them on the WSL machine.
+    # cache.nixos.org stays; NixOS adds it to whatever is listed.
+    nix.settings = {
+      substituters = [ "https://weaselway.cachix.org" ];
+      trusted-public-keys = [ "weaselway.cachix.org-1:aN6jpdbl2M5QNsR3U8zx1G/R0jHIkYkvX15G9jxPiHU=" ];
+    };
+
     environment.systemPackages = [ pkgs.weaselway-scripts ];
     environment.sessionVariables.WEASELWAY_DEFAULT_SESSION = cfg.session;
   };

@@ -189,8 +189,10 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 
 - To test unpushed fork commits, add `--override-input mutter-src 'git+file:../mutter?ref=50.4-wslg'`
   (similarly `mesa-src`, `freerdp`, `dxgdrm`).
-- Not in the binary cache, so they take time: the dxgdrm kernel tree, mesa, mutter, and gnome-shell,
-  which relinks against mutter. The patched FreeRDP builds quickly, and so does the Windows viewer (the
+- Not on cache.nixos.org, so they take time: the dxgdrm kernel tree, mesa, mutter, and gnome-shell,
+  which relinks against mutter. CI pushes them to weaselway.cachix.org; a builder that has it as a
+  substituter (`extra-substituters`, key in [nix/module.nix](nix/module.nix)) gets them from there for
+  any commit CI has built. The patched FreeRDP builds quickly, and so does the Windows viewer (the
   mingw gcc is cached on x86_64).
 - The remote login shell is fish, so wrap remote scripts in `bash -s`.
 
@@ -200,7 +202,16 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 on the `ubuntu-26.04` runner. actionlint doesn't know that label yet; it exists.
 - The image is about 1.4 GiB, under GitHub's 2 GiB release-asset limit. Watch the closure: the kernel
   tree, kgcc or orca's voices sneaking back in each cost hundreds of MB.
-- Nothing is cached between runs; each run takes about 45 minutes.
+- Both push every path they build to weaselway.cachix.org (`cachix/cachix-action`, token in the
+  `CACHIX_AUTH_TOKEN` secret, passed into the composite action as an input because composite actions
+  can't read secrets). A run from scratch took about 45 minutes; with the cache warm, only what changed
+  is compiled. Pull requests from forks get no secrets and only read.
+- The module adds the same cache as a substituter, so `nixos-rebuild` on a WSL machine downloads those
+  paths too. Installs from before that change get it with their first rebuild after updating; that one
+  rebuild still compiles unless it's run with
+  `--option extra-substituters https://weaselway.cachix.org --option extra-trusted-public-keys <key>`.
+- Cachix's free tier has limited storage and evicts the least recently used paths. The kernel tree is
+  the biggest item.
 
 ## Installing and running
 
