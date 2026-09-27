@@ -140,8 +140,9 @@ found on a real WSL install.
     sets `MUTTER_RDP=1`, the headless virtual-monitor `ExecStart`, and
     `WSL2_SHARED_MEMORY_MOUNT_POINT`, and it unsets `PULSE_SERVER`.
   - `/etc/environment.d/10-weaselway.conf` is the same file Ubuntu installs: `XDG_SESSION_TYPE`,
-    `GALLIUM_DRIVER=d3d12`, `GSK_RENDERER=gl` and the vsock port. systemd's environment.d generator reads
-    `/etc/environment.d`.
+    `GALLIUM_DRIVER=d3d12`, `GSK_RENDERER=gl`, `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` and the vsock
+    port. systemd's environment.d generator reads `/etc/environment.d`. WebKit's sandbox doesn't bind
+    `/dev/dxg`, so its web process can't create an EGL display and crashes; the file has the details.
 - **WSL quirks**
   - **`wslg-session.service` is masked** (`systemd.user.units."wslg-session.service".enable = false`).
     WSL's user generator creates it. It symlinks `$XDG_RUNTIME_DIR/pulse/native`, `wayland-0` and
