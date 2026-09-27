@@ -65,6 +65,13 @@
       };
       nixosModules.default = self.nixosModules.weaselway;
 
+      # Gives the image's /etc/nixos a flake.lock that pins weaselway to the
+      # commit the system was built from, so the first nixos-rebuild stays on
+      # it rather than jumping to whatever main is by then. Imported by both
+      # nixosConfigurations.wsl and nix/image/flake.nix, so the two still build
+      # the same system.
+      nixosModules.image = import ./nix/image-lock.nix { inherit self; };
+
       # A NixOS-WSL distro running the session. See WEASELWAY.md. Built from
       # the same configuration.nix the image ships in /etc/nixos, together with
       # nix/image/flake.nix, so a nixos-rebuild inside the distro rebuilds this
@@ -73,6 +80,7 @@
         modules = [
           nixos-wsl.nixosModules.default
           self.nixosModules.weaselway
+          self.nixosModules.image
           ./nix/image/configuration.nix
           { wsl.tarball.configPath = ./nix/image; }
         ];

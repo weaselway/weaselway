@@ -15,6 +15,7 @@
         modules = [
           weaselway.inputs.nixos-wsl.nixosModules.default
           weaselway.nixosModules.weaselway
+          weaselway.nixosModules.image
           ./configuration.nix
         ];
       };

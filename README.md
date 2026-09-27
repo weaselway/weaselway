@@ -168,9 +168,9 @@ change:
 
 ## Updating
 
-`/etc/nixos` has no `flake.lock` until the first rebuild. The first
-`nixos-rebuild` pins whatever weaselway is current at that moment. After that,
-updating means moving the lock forward and rebuilding:
+`/etc/nixos/flake.lock` pins weaselway to the commit the image was built from,
+so rebuilding after a config change doesn't pull in anything new. Updating means
+moving the lock forward and rebuilding:
 
 ```sh
 sudo nix flake update --flake /etc/nixos

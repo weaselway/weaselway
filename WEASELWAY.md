@@ -147,10 +147,11 @@ sudo nix flake update --flake /etc/nixos    # move to the newest weaselway
 ```
 
 `/etc/nixos/flake.nix` takes nixpkgs and NixOS-WSL from weaselway's own lock.
-It has no lock of its own when the image is built, so the first rebuild locks
-against whatever weaselway `main` is at that moment. Anything not in the binary
-cache (mesa, mutter, gnome-shell, the dxgdrm kernel tree) is then built on the
-WSL machine itself, which is slow but native.
+Its own `flake.lock` pins weaselway to the commit the image was built from. The
+first boot writes that lock ([nix/image-lock.nix](nix/image-lock.nix)), so a
+rebuild stays on that commit until `nix flake update`. Anything not in the
+binary cache (mesa, mutter, gnome-shell, the dxgdrm kernel tree) is then built
+on the WSL machine itself, which is slow but native.
 
 ### CI
 

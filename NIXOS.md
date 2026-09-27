@@ -90,6 +90,15 @@ gone.
 - [nix/image/](nix/image): `configuration.nix` and `flake.nix`, which the image also ships as its
   `/etc/nixos`. The image flake takes nixpkgs and NixOS-WSL from weaselway's lock and builds the same
   toplevel as `nixosConfigurations.wsl`. The hostname is `nixos`, so `nixos-rebuild` builds `#nixos`.
+- [nix/image-lock.nix](nix/image-lock.nix): `nixosModules.image`, imported by both of those. On
+  activation it writes `/etc/nixos/flake.lock` if there is none, pinning `github:weaselway/weaselway` to
+  the commit being built (`self.rev`, `self.narHash`) with weaselway's own lock nested under it. The
+  result is identical to what `nix flake lock` writes for that commit (checked against `5d8b960`).
+  - It can't go into the tarball: `wsl.tarball.configPath` goes through `lib.cleanSource`, and a
+    generated directory there is an import-from-derivation.
+  - A build from a dirty tree has no `self.rev` and ships without a lock, as before.
+  - A git checkout's `narHash` equals GitHub's tarball's only because weaselway has no
+    `.gitattributes`. Adding `eol=`/`export-ignore` rules would break this (see `inputs` above).
 - `packages.<sys>`: `weaselway-mesa`, `mutter`, `weaselway-scripts`, `weaselway-viewer`,
   `tarballBuilder` (`default`).
 
@@ -215,7 +224,8 @@ build.
 
 Change the system with `sudo -e /etc/nixos/configuration.nix` followed by
 `sudo nixos-rebuild switch`. `sudo nix flake update --flake /etc/nixos` moves it to the newest
-weaselway. `/etc/nixos` has no lock until the first rebuild.
+weaselway. `/etc/nixos/flake.lock` pins the commit the image was built from (see
+"Flake layout").
 
 ## Debugging
 
