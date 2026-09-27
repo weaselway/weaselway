@@ -43,10 +43,11 @@ gone.
 
 - **weaselway** (this repo): the flake, the NixOS module, the overlay, the image config, and the shell
   scripts shared with Ubuntu.
-- **mutter**: `main` and `50.4-wslg` are the same tree (50.4). `50.1-wslg` is the same RDP backend on
-  50.1, which the Ubuntu packages build. All three carry the dev shell (`flake.nix`,
-  `weaselway-build.sh`). Commit changes to `main` and cherry-pick them onto both release branches. The
-  NixOS image builds `50.4-wslg`.
+- **mutter**: the same commit series on several upstream tags. The NixOS image builds `50.4-wslg`,
+  which matches nixpkgs' mutter. The Ubuntu packages build `50.1-wslg`. `main` is the development
+  branch on the newest 50.x (now the same as `50.5-wslg`), and `51.0-wslg` is the GNOME 51 port,
+  which doesn't build yet. Commit changes to `main` and cherry-pick them onto every release branch
+  something still builds. The branch rules are in mutter's `WEASELWAY.md`.
 - **mesa**: the NixOS image builds `mesa-26.2.1-wsl`, which matches nixpkgs' mesa release. Ubuntu
   builds `mesa-26.0.8-wsl`.
 - **freerdp**: `main`. The flake has a Windows cross dev shell and `packages.sdl-freerdp`, which runs
