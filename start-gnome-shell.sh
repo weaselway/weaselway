@@ -79,6 +79,15 @@ else
     systemctl --user unset-environment MESA_D3D12_DEFAULT_ADAPTER_NAME
 fi
 
+# X11 programs started from inside the session -- from a terminal there, or as
+# a service -- need DISPLAY, and nothing puts it in the user manager's
+# environment: WSL sets DISPLAY=:0 only for the shells it starts itself, and
+# mutter exports XAUTHORITY for its Xwayland but not the display. :0 is what
+# that Xwayland takes: the first free number, with no other X server in the VM
+# before it. Set here rather than in environment.d because stopping a session
+# removes it from the manager again.
+systemctl --user set-environment DISPLAY=:0
+
 # The shell's instance name is the gnome-shell *mode*, which is not the session
 # name: ubuntu.session wants org.gnome.Shell@ubuntu.service, but gnome.session
 # wants @user and gnome-login.session wants @gdm. Ask the target which one it
