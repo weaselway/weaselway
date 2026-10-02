@@ -43,10 +43,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1790873334,
-        "narHash": "sha256-iw/MmLeV0Kb+P32zV9tyX+QL+gRtJBluZmRtSdfeYA0=",
+        "lastModified": 1790932980,
+        "narHash": "sha256-DibtLKtMe8SNggIHfj8W67LMxHUn/vRhsmxU0kdg7Mw=",
         "ref": "main",
-        "rev": "83173727e8ef6b7964b1c6ec789160cbf355ec5d",
+        "rev": "12420abe5992c57b75d43fdc8bea3638c724f815",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/freerdp"
@@ -79,10 +79,10 @@
     "mutter-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790504570,
-        "narHash": "sha256-qlAvQjRxd7fN30dH+718372ejYo6p//3Cc4O+W/pwQk=",
+        "lastModified": 1790932995,
+        "narHash": "sha256-fQIIFsKM/PoUOy2CtsaJNO6PesaHZ3VL5cAhXB+mTlE=",
         "ref": "50.4-wslg",
-        "rev": "05aee82fc811a64d6c27513b7c63a8ab6c6fd694",
+        "rev": "b73a627b69091b6e04ca6d88178c30641e8f5d9c",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/mutter"
