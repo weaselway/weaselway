@@ -2,10 +2,10 @@
 
 set -exu -o pipefail
 
-VERSION=v1.1.0
+VERSION=v1.1.1
 # Of the release zip. Update together with VERSION; empty skips the check
 # (with a warning) until the release exists to take it from.
-SHA256=61e8df497bae000064541890e4a7ae77b7f414f02c339d300be1fea44bfad75b
+SHA256=74419ee20e420a964e91543dab2264261f41e21dba24c5ab4f28cc7c0aa6b589
 URL=https://github.com/weaselway/freerdp/releases/download/${VERSION}/freerdp-${VERSION}.zip
 
 mkdir -p /mnt/c/Weaselway
