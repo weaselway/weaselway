@@ -20,9 +20,17 @@
   environment.gnome.excludePackages = [ pkgs.orca ];
   services.speechd.enable = false;
 
-  # SSH in, for debugging. There is no password in the image: set one with
-  # `passwd` first, or add a key to users.users.nixos.openssh.authorizedKeys.
-  # services.openssh.enable = true;
+  # kms-wsl spike: SSH in, for debugging. Key only -- there is no password in
+  # the image. Port 2222, so that it does not collide with a Windows sshd on
+  # 22 when WSL networking is mirrored.
+  services.openssh = {
+    enable = true;
+    ports = [ 2222 ];
+    settings.PasswordAuthentication = false;
+  };
+  users.users.nixos.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB/+VkvUQMgDlmfgBgQGhpspJoOuq4RFPTUzGf3z7ACb oliver@m1pro"
+  ];
 
   # The system is a flake (/etc/nixos/flake.nix); no channels. Its inputs
   # include git repositories, which nix fetches with git.
