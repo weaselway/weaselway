@@ -10,3 +10,4 @@
 
 # Built by presenter/Makefile.
 /presenter/weaselway-presenter
+/presenter/weaselway-presenter-asan
