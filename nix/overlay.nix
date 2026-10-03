@@ -122,6 +122,11 @@ in
     ];
   };
 
+  # kms-wsl spike: gnome-shell as nixpkgs builds it, against unpatched mutter.
+  # The KMS session runs this one, so what it proves holds for stock GNOME.
+  # Same derivation as nixpkgs', so it comes from cache.nixos.org.
+  weaselway-stock-gnome-shell = prev.gnome-shell.override { mutter = prev.mutter; };
+
   # sdl-freerdp.exe with its SDL DLLs, cross-compiled by the freerdp flake.
   # Windows binaries, so whichever machine builds them is fine.
   weaselway-viewer = freerdp.packages.${final.stdenv.buildPlatform.system}.sdl-freerdp;
@@ -166,11 +171,21 @@ in
           checkPhase = "";
           bashOptions = [ ];
         })
-        (script "start-kms-session" [
-          final.coreutils
-          final.gnugrep
-          final.systemd
-        ])
+        (final.writeShellApplication {
+          name = "start-kms-session";
+          runtimeInputs = [
+            final.coreutils
+            final.gnugrep
+            final.systemd
+          ];
+          text = ''
+            : "''${WEASELWAY_KMS_GNOME_SHELL:=${final.weaselway-stock-gnome-shell}/bin/gnome-shell}"
+            export WEASELWAY_KMS_GNOME_SHELL
+          ''
+          + builtins.readFile ../start-kms-session.sh;
+          checkPhase = "";
+          bashOptions = [ ];
+        })
         (script "install-system-image" [
           final.coreutils
           final.curl

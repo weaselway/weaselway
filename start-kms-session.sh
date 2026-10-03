@@ -36,7 +36,11 @@ case "${SESSION}" in
         # --display-server rather than letting it guess: WSL puts
         # WAYLAND_DISPLAY and DISPLAY into every shell, and with those set
         # mutter would try to run nested.
-        COMMAND=(gnome-shell --wayland --display-server "$@")
+        #
+        # WEASELWAY_KMS_GNOME_SHELL picks the gnome-shell to run. The NixOS
+        # image points it at nixpkgs' own build, linked against unpatched
+        # mutter, because that is the claim under test.
+        COMMAND=("${WEASELWAY_KMS_GNOME_SHELL:-gnome-shell}" --wayland --display-server "$@")
         DESKTOP=GNOME
         ;;
     kwin)
