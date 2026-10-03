@@ -1,0 +1,54 @@
+# The uapi header lives in the dxgdrm repo; point DXGDRM_INCLUDE at a checkout.
+DXGDRM_INCLUDE ?= ../../dxgdrm
+
+PKGS    := egl glesv2 gbm libdrm libjpeg
+CFLAGS  ?= -O2 -g
+CFLAGS  += -std=gnu11 -Wall -Wextra -Wno-unused-parameter -pthread \
+           -I$(DXGDRM_INCLUDE) $(shell pkg-config --cflags $(PKGS))
+LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
+
+# Hardening. None of this makes C memory-safe; it turns the common mistakes
+# into a crash instead of something exploitable.
+#   _FORTIFY_SOURCE=3          bounds-checked memcpy/snprintf/read where the size is known
+#   stack-protector-strong     canaries on functions with arrays or address-taken locals
+#   stack-clash-protection     no jumping over the guard page with a large frame
+#   trivial-auto-var-init      uninitialized locals read as zero, not as stack leftovers
+#   wrapv, no-strict-aliasing  signed overflow and type punning are defined, so the
+#                              optimizer cannot delete the checks that guard against them
+#   PIE + relro + now          ASLR for the binary, read-only GOT
+HARDEN  := -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+           -fstack-clash-protection -ftrivial-auto-var-init=zero \
+           -fwrapv -fno-strict-aliasing -fPIE \
+           -Wformat=2 -Werror=format-security -Wshadow -Wvla
+# Control-flow integrity for indirect branches and returns, per architecture.
+ifeq ($(shell $(CC) -dumpmachine | cut -d- -f1),x86_64)
+HARDEN  += -fcf-protection=full
+else ifeq ($(shell $(CC) -dumpmachine | cut -d- -f1),aarch64)
+HARDEN  += -mbranch-protection=standard
+endif
+CFLAGS  += $(HARDEN)
+LDFLAGS += -pie -Wl,-z,relro,-z,now,-z,noexecstack
+
+PREFIX  ?= /usr/local
+
+weaselway-presenter: presenter.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
+
+# For development: every out-of-bounds access, use-after-free and undefined
+# operation aborts with a report. Slow; not for the image.
+asan: presenter.c
+	$(CC) $(CFLAGS) -O1 -fno-omit-frame-pointer -fsanitize=address,undefined \
+		$(LDFLAGS) -o weaselway-presenter-asan $< $(LDLIBS)
+
+# GCC's static analyzer; reports leaks, double frees and NULL dereferences on
+# paths it can prove.
+analyze: presenter.c
+	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $<
+
+install: weaselway-presenter
+	install -D -m 0755 weaselway-presenter $(DESTDIR)$(PREFIX)/bin/weaselway-presenter
+
+clean:
+	rm -f weaselway-presenter weaselway-presenter-asan
+
+.PHONY: install clean asan analyze

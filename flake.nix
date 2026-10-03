@@ -57,7 +57,14 @@
       wsl = self.nixosConfigurations.wsl;
     in
     {
-      overlays.default = import ./nix/overlay.nix { inherit mesa-src mutter-src freerdp; };
+      overlays.default = import ./nix/overlay.nix {
+        inherit
+          mesa-src
+          mutter-src
+          freerdp
+          dxgdrm
+          ;
+      };
 
       nixosModules.weaselway = {
         imports = [ (import ./nix/module.nix { inherit dxgdrm; }) ];
