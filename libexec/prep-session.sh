@@ -42,6 +42,25 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
     fi
 fi
 
+# kms-wsl spike: input reaches the compositor as ordinary evdev devices that
+# weaselway-presenter creates through uinput. Both are modules in the WSL kernel
+# (CONFIG_INPUT_EVDEV=m, CONFIG_INPUT_UINPUT=m), and nothing loads them. They
+# come from WSL's own /lib/modules, by path for the same reason as dxgdrm above
+# and because NixOS' modprobe does not search there. Neither depends on another
+# module. A warning only: the session works without them, just without input.
+for MODULE in evdev uinput; do
+    if grep -q "^${MODULE} " /proc/modules; then
+        continue
+    fi
+    MODULE_KO="$(find "/lib/modules/$(uname -r)" "/usr/lib/modules/$(uname -r)" \
+        -name "${MODULE}.ko*" 2>/dev/null | head -n 1 || true)"
+    if [ -n "${MODULE_KO}" ]; then
+        modprobe "${MODULE_KO}" || echo "warning: loading ${MODULE_KO} failed" >&2
+    else
+        echo "warning: no ${MODULE}.ko under /lib/modules/$(uname -r) -- no simulated input" >&2
+    fi
+done
+
 # Take /tmp/.X11-unix back from WSL, so the socket mutter creates there (it
 # binds the socket itself and hands Xwayland the fd with -listenfd) is not
 # landing in something read-only or unwritable.

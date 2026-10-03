@@ -21,6 +21,7 @@ let
     name = "weaselway-prep-session";
     runtimeInputs = with pkgs; [
       coreutils
+      findutils
       gnugrep
       gnused
       kmod
@@ -125,7 +126,15 @@ in
     users.users.${config.wsl.defaultUser}.extraGroups = [
       "render"
       "video"
+      "input"
     ];
+
+    # kms-wsl spike: weaselway-presenter creates its simulated pointer through
+    # uinput, as the user. The compositor needs no such rule: logind hands it
+    # the evdev devices and the KMS node.
+    services.udev.extraRules = ''
+      KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660"
+    '';
 
     # WSL generates a wslg-session user unit that symlinks pulse/native,
     # wayland-0 and wayland-0.lock in $XDG_RUNTIME_DIR into /mnt/wslg, for the
@@ -205,7 +214,14 @@ in
       trusted-public-keys = [ "weaselway.cachix.org-1:aN6jpdbl2M5QNsR3U8zx1G/R0jHIkYkvX15G9jxPiHU=" ];
     };
 
-    environment.systemPackages = [ pkgs.weaselway-scripts ];
+    # kwin and konsole are only here for the kms-wsl spike
+    # (`start-kms-session kwin`); both come from cache.nixos.org.
+    environment.systemPackages = [
+      pkgs.weaselway-scripts
+      pkgs.weaselway-presenter
+      pkgs.kdePackages.kwin
+      pkgs.kdePackages.konsole
+    ];
     environment.sessionVariables.WEASELWAY_DEFAULT_SESSION = cfg.session;
   };
 }

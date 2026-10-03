@@ -5,6 +5,7 @@
   mesa-src,
   mutter-src,
   freerdp,
+  dxgdrm,
 }:
 
 final: prev:
@@ -98,6 +99,29 @@ in
     ];
   });
 
+  # kms-wsl spike: the userspace half of dxgdrm's virtual display. Built
+  # against nixpkgs' libglvnd and libgbm; at run time those load the patched
+  # mesa from /run/opengl-driver like everything else.
+  weaselway-presenter = final.stdenv.mkDerivation {
+    pname = "weaselway-presenter";
+    version = "0-spike";
+    src = ../presenter;
+
+    nativeBuildInputs = [ final.pkg-config ];
+    buildInputs = [
+      final.libglvnd
+      final.libgbm
+      final.libdrm
+      final.libjpeg
+    ];
+
+    # dxgdrm_drm.h, the uapi header, lives with the module.
+    makeFlags = [
+      "DXGDRM_INCLUDE=${dxgdrm}"
+      "PREFIX=${placeholder "out"}"
+    ];
+  };
+
   # sdl-freerdp.exe with its SDL DLLs, cross-compiled by the freerdp flake.
   # Windows binaries, so whichever machine builds them is fine.
   weaselway-viewer = freerdp.packages.${final.stdenv.buildPlatform.system}.sdl-freerdp;
@@ -142,6 +166,11 @@ in
           checkPhase = "";
           bashOptions = [ ];
         })
+        (script "start-kms-session" [
+          final.coreutils
+          final.gnugrep
+          final.systemd
+        ])
         (script "install-system-image" [
           final.coreutils
           final.curl

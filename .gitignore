@@ -7,3 +7,6 @@
 
 # setup-gpg.sh's keyring, which holds the package signing *secret* key.
 /ubuntu/resolute/gnupg/
+
+# Built by presenter/Makefile.
+/presenter/weaselway-presenter

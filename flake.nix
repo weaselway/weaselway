@@ -57,7 +57,14 @@
       wsl = self.nixosConfigurations.wsl;
     in
     {
-      overlays.default = import ./nix/overlay.nix { inherit mesa-src mutter-src freerdp; };
+      overlays.default = import ./nix/overlay.nix {
+        inherit
+          mesa-src
+          mutter-src
+          freerdp
+          dxgdrm
+          ;
+      };
 
       nixosModules.weaselway = {
         imports = [ (import ./nix/module.nix { inherit dxgdrm; }) ];
@@ -94,6 +101,7 @@
         mutter = wsl.pkgs.mutter;
         weaselway-scripts = wsl.pkgs.weaselway-scripts;
         weaselway-viewer = wsl.pkgs.weaselway-viewer;
+        weaselway-presenter = wsl.pkgs.weaselway-presenter;
         # sudo nix run .#tarballBuilder -> nixos.wsl
         tarballBuilder = wsl.config.system.build.tarballBuilder;
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.tarballBuilder;
