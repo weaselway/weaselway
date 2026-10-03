@@ -108,6 +108,7 @@ in
     cargoLock.lockFile = ../presenter/Cargo.lock;
 
     # libEGL and libgbm are linked; GL itself is loaded through EGL.
+    nativeBuildInputs = [ final.pkg-config ];
     buildInputs = [
       final.libglvnd
       final.libgbm
