@@ -1,0 +1,17 @@
+[package]
+name = "weaselway-presenter"
+version = "0.1.0"
+edition = "2021"
+description = "Userspace half of dxgdrm's virtual display (kms-wsl spike)"
+license = "MIT"
+
+[dependencies]
+evdev = "0.13"
+glow = "0.16"
+jpeg-encoder = "0.6"
+khronos-egl = { version = "6", features = ["static"] }
+libc = "0.2"
+
+[profile.release]
+# Integer overflow is a bug here, not something to wrap silently.
+overflow-checks = true

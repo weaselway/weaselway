@@ -5,7 +5,6 @@
   mesa-src,
   mutter-src,
   freerdp,
-  dxgdrm,
 }:
 
 final: prev:
@@ -102,23 +101,16 @@ in
   # kms-wsl spike: the userspace half of dxgdrm's virtual display. Built
   # against nixpkgs' libglvnd and libgbm; at run time those load the patched
   # mesa from /run/opengl-driver like everything else.
-  weaselway-presenter = final.stdenv.mkDerivation {
+  weaselway-presenter = final.rustPlatform.buildRustPackage {
     pname = "weaselway-presenter";
-    version = "0-spike";
+    version = "0.1.0";
     src = ../presenter;
+    cargoLock.lockFile = ../presenter/Cargo.lock;
 
-    nativeBuildInputs = [ final.pkg-config ];
+    # libEGL and libgbm are linked; GL itself is loaded through EGL.
     buildInputs = [
       final.libglvnd
       final.libgbm
-      final.libdrm
-      final.libjpeg
-    ];
-
-    # dxgdrm_drm.h, the uapi header, lives with the module.
-    makeFlags = [
-      "DXGDRM_INCLUDE=${dxgdrm}"
-      "PREFIX=${placeholder "out"}"
     ];
   };
 
