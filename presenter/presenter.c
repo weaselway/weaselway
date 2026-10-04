@@ -82,8 +82,6 @@ struct presenter {
      * the last one cost, for the frame line. */
     GLuint pbo;
     size_t pbo_size;
-    bool sync_readback;
-    bool always_full;
     double issue_ms, wait_ms, copy_ms;
 
     const char *out_dir;
@@ -291,53 +289,10 @@ resize_shadow(struct presenter *p, uint32_t width, uint32_t height)
     return p->shadow && p->compose;
 }
 
-/* Read the damaged part of a shared-handle frame into the shadow copy.
- * Returns the number of pixels read, or -1. */
-static long
-read_shared(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
-{
-    struct drm_dxgdrm_rect full = { 0, 0, (int32_t)frame->width, (int32_t)frame->height };
-    const struct drm_dxgdrm_rect *rects = frame->damage;
-    unsigned num_rects = frame->num_damage;
-    long pixels = 0;
-
-    if (!get_import(p, frame))
-        return -1;
-
-    if (frame->flags & DXGDRM_FRAME_DAMAGE_FULL) {
-        rects = &full;
-        num_rects = 1;
-    }
-
-    /* A dma-buf's first row is the top one, and GL calls the first row y = 0,
-     * so nothing is flipped: rows land in the shadow copy top down. */
-    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)frame->width);
-
-    for (unsigned i = 0; i < num_rects; i++) {
-        int x1 = rects[i].x1 < 0 ? 0 : rects[i].x1;
-        int y1 = rects[i].y1 < 0 ? 0 : rects[i].y1;
-        int x2 = rects[i].x2 > (int)frame->width ? (int)frame->width : rects[i].x2;
-        int y2 = rects[i].y2 > (int)frame->height ? (int)frame->height : rects[i].y2;
-
-        if (x2 <= x1 || y2 <= y1)
-            continue;
-
-        glReadPixels(x1, y1, x2 - x1, y2 - y1, GL_RGBA, GL_UNSIGNED_BYTE,
-                     p->shadow + ((size_t)y1 * frame->width + x1) * 4);
-        pixels += (long)(x2 - x1) * (y2 - y1);
-    }
-
-    if (glGetError() != GL_NO_ERROR) {
-        fprintf(stderr, "presenter: glReadPixels failed\n");
-        return -1;
-    }
-
-    return pixels;
-}
-
 /*
- * The same, without the presenter's thread ever waiting inside glReadPixels.
+ * Read the damaged part of a shared-handle frame into the shadow copy, without
+ * the presenter's thread ever waiting inside glReadPixels. Returns the number
+ * of pixels read, or -1.
  *
  * Reading into a client pointer makes the driver copy to a staging buffer,
  * wait for the GPU, map and memcpy before it returns. Reading into a pixel
@@ -356,7 +311,7 @@ read_shared(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
  * poll() on the fence, next to its sockets, instead of inside the driver.
  */
 static long
-read_shared_async(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+read_shared(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
 {
     int width = (int)frame->width, height = (int)frame->height;
     int x1 = width, y1 = height, x2 = 0, y2 = 0, w, h;
@@ -694,15 +649,13 @@ usage(const char *argv0)
 {
     fprintf(stderr,
             "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--no-cursor]\n"
-            "       [--sync] [--full]\n"
             "  --out DIR       where the JPEGs go (default /tmp/weaselway-frames)\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
             "  --no-pointer    do not create the circling uinput pointer\n"
             "  --no-cursor     leave the cursor plane out of the JPEGs: the frame as the\n"
-            "                  compositor rendered it\n"
-            "  --sync          read back with a blocking glReadPixels per damage rect\n"
-            "  --full          ignore the damage and read the whole frame every time\n",
+            "                  compositor rendered it\n",
+
             argv0);
 }
 
@@ -734,10 +687,7 @@ main(int argc, char **argv)
             pointer = false;
         } else if (!strcmp(argv[i], "--no-cursor")) {
             p.draw_cursor = false;
-        } else if (!strcmp(argv[i], "--sync")) {
-            p.sync_readback = true;
-        } else if (!strcmp(argv[i], "--full")) {
-            p.always_full = true;
+
         } else {
             usage(argv[0]);
             return 2;
@@ -812,15 +762,13 @@ main(int argc, char **argv)
         p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
         if (primary_changed) {
             /* The shadow copy starts out empty, whatever the damage says. */
-            if (!have_frame || p.always_full)
+            if (!have_frame)
                 frame.flags |= DXGDRM_FRAME_DAMAGE_FULL;
 
             if (!(frame.flags & DXGDRM_FRAME_SHARED))
                 pixels = read_dumb(&p, &frame);
-            else if (p.sync_readback)
-                pixels = read_shared(&p, &frame);
             else
-                pixels = read_shared_async(&p, &frame);
+                pixels = read_shared(&p, &frame);
         }
         if (frame.fd >= 0)
             close(frame.fd);
