@@ -984,6 +984,7 @@ main(int argc, char **argv)
     if (!p.have_frame)
         fprintf(stderr, "presenter: waiting for the compositor's first commit\n");
     p.stat_since = now_ms();
+    p.stat_primary_seq = p.primary_seq;
 
     while (!quit) {
         struct pollfd fds[1 + 80];
