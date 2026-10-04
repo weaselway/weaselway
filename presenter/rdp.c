@@ -3,9 +3,9 @@
  * comments there say more about why the FreeRDP calls are in the order they
  * are in.
  *
- * Not ported yet: the pointer shape, display control (the client asking for a
- * size), the clipboard, audio, touch gestures, and the error frame -- a client
- * that cannot do gfxredir is disconnected, with the reason in the log.
+ * Not ported yet: the pointer shape, the clipboard, audio, touch gestures, the
+ * client's scale factor, and the error frame -- a client that cannot do
+ * gfxredir is disconnected, with the reason in the log.
  */
 
 #include "rdp.h"
@@ -37,6 +37,7 @@
 
 #include <freerdp/freerdp.h>
 #include <freerdp/channels/channels.h>
+#include <freerdp/channels/disp.h>
 #include <freerdp/channels/drdynvc.h>
 #include <freerdp/channels/wtsvc.h>
 #include <freerdp/crypto/certificate.h>
@@ -45,6 +46,7 @@
 #include <freerdp/listener.h>
 #include <freerdp/locale/keyboard.h>
 #include <freerdp/peer.h>
+#include <freerdp/server/disp.h>
 #include <freerdp/server/drdynvc.h>
 #include <freerdp/server/gfxredir.h>
 #include <freerdp/update.h>
@@ -74,6 +76,10 @@
 #define GFXREDIR_CAPS_TIMEOUT_MS 5000
 #define DRDYNVC_TIMEOUT_MS 30000
 #define DRDYNVC_POLL_MS 10
+
+/* How long the screen gets to take the size the client asked for, before the
+ * client is resized to the screen instead. */
+#define SIZE_REQUEST_TIMEOUT_MS 3000
 
 /*
  * One buffer in the pool. @stale is what it is missing relative to the most
@@ -118,9 +124,15 @@ struct peer_context {
     atomic_bool gfxredir_activated;
     double gfxredir_caps_deadline; /* 0 for none */
 
-    /* The channel's callbacks run on its own reader thread. They only record
-     * what happened here and wake the main loop. */
+    /* MS-RDPEDISP: the client says what size its window has. */
+    DispServerContext *disp;
+
+    /* The gfxredir and disp callbacks run on the channels' own reader
+     * threads. They only record what happened here, under this lock, and wake
+     * the main loop. */
     pthread_mutex_t gfxredir_lock;
+    bool disp_requested;
+    int disp_width, disp_height;
     bool gfxredir_present_requested;
     const char *gfxredir_caps_error;
     uint64_t gfxredir_acked[N_BUFFERS];
@@ -161,6 +173,12 @@ struct rdp_server {
 
     int screen_width, screen_height;
     bool full_requested;
+
+    /* The size the client asked for, and until when the screen may take to
+     * get there. */
+    int wanted_width, wanted_height;
+    double wanted_deadline;
+    bool size_request_pending;
     /* Bumped whenever a pool goes away, which ends any frame begun on it. */
     uint64_t generation;
 
@@ -809,6 +827,99 @@ setup_gfxredir(struct peer_context *peer_ctx)
 }
 
 /* ------------------------------------------------------------------ */
+/* The client's size                                                  */
+/* ------------------------------------------------------------------ */
+
+static void
+request_size(struct rdp_server *server, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return;
+
+    rdp_log("the client wants %dx%d", width, height);
+    server->wanted_width = width;
+    server->wanted_height = height;
+    server->wanted_deadline = now_ms() + SIZE_REQUEST_TIMEOUT_MS;
+    server->size_request_pending = true;
+}
+
+/* Channel thread. */
+static UINT
+disp_monitor_layout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU *pdu)
+{
+    struct peer_context *peer_ctx = context->custom;
+    const DISPLAY_CONTROL_MONITOR_LAYOUT *primary = NULL;
+
+    if (pdu->NumMonitors == 0)
+        return CHANNEL_RC_OK;
+
+    /* One screen: the primary monitor, or the first if none is flagged. */
+    for (UINT32 i = 0; i < pdu->NumMonitors; i++) {
+        if (pdu->Monitors[i].Flags & DISPLAY_CONTROL_MONITOR_PRIMARY) {
+            primary = &pdu->Monitors[i];
+            break;
+        }
+    }
+    if (!primary)
+        primary = &pdu->Monitors[0];
+
+    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    peer_ctx->disp_requested = true;
+    peer_ctx->disp_width = (int)primary->Width;
+    peer_ctx->disp_height = (int)primary->Height;
+    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    wake(peer_ctx->server);
+    return CHANNEL_RC_OK;
+}
+
+/* The main-loop half. */
+static void
+disp_dispatch(struct peer_context *peer_ctx)
+{
+    bool requested;
+    int width, height;
+
+    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    requested = peer_ctx->disp_requested;
+    peer_ctx->disp_requested = false;
+    width = peer_ctx->disp_width;
+    height = peer_ctx->disp_height;
+    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+
+    /* No DesktopResize from here: that goes out once the screen has the new
+     * size, see peer_sync_desktop_size(). */
+    if (requested)
+        request_size(peer_ctx->server, width, height);
+}
+
+/* Without the channel the size is whatever the client connected with. */
+static void
+setup_disp(struct peer_context *peer_ctx)
+{
+    DispServerContext *disp = disp_server_context_new(peer_ctx->vcm);
+
+    if (!disp)
+        return;
+
+    disp->custom = peer_ctx;
+    disp->MaxNumMonitors = 1;
+    disp->MaxMonitorAreaFactorA = DISPLAY_CONTROL_MAX_MONITOR_WIDTH;
+    disp->MaxMonitorAreaFactorB = DISPLAY_CONTROL_MAX_MONITOR_HEIGHT;
+    disp->DispMonitorLayout = disp_monitor_layout;
+
+    if (disp->Open(disp) != CHANNEL_RC_OK) {
+        disp_server_context_free(disp);
+        return;
+    }
+    if (disp->DisplayControlCaps(disp) != CHANNEL_RC_OK) {
+        disp->Close(disp);
+        disp_server_context_free(disp);
+        return;
+    }
+    peer_ctx->disp = disp;
+}
+
+/* ------------------------------------------------------------------ */
 /* Input                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -960,7 +1071,15 @@ peer_finish_activation(freerdp_peer *client)
     peer_ctx->activated = true;
     rdp_log("client activated");
 
-    /* The first frame goes out once the client has confirmed gfxredir caps. */
+    /* The client dictates the size: the screen is asked to take the one it
+     * connected with. */
+    request_size(peer_ctx->server,
+                 (int)freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopWidth),
+                 (int)freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopHeight));
+
+    /* Before gfxredir, as Weston does. The first frame goes out once the
+     * client has confirmed gfxredir caps. */
+    setup_disp(peer_ctx);
     setup_gfxredir(peer_ctx);
     return TRUE;
 }
@@ -1085,6 +1204,13 @@ peer_sync_desktop_size(struct peer_context *peer_ctx)
         (int)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight) == height)
         return false;
 
+    /* The screen is still on its way to the size the client asked for. If
+     * it is the client that is on that size already, this is all there is to
+     * wait for; if not, the client follows once the screen is there. */
+    if ((width != server->wanted_width || height != server->wanted_height) &&
+        now_ms() < server->wanted_deadline)
+        return true;
+
     if (!freerdp_settings_get_bool(settings, FreeRDP_DesktopResize)) {
         peer_fail(peer_ctx, "The client cannot be resized to the screen's size.");
         return true;
@@ -1134,6 +1260,12 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         /* Also when no pool was ever made: a frame begun on this peer must
          * not match the next one. */
         peer_ctx->server->generation++;
+    }
+
+    if (peer_ctx->disp) {
+        peer_ctx->disp->Close(peer_ctx->disp);
+        disp_server_context_free(peer_ctx->disp);
+        peer_ctx->disp = NULL;
     }
 
     if (peer_ctx->gfxredir) {
@@ -1495,6 +1627,9 @@ rdp_server_timeout_ms(struct rdp_server *server)
 
         return left > 0 ? (int)left + 1 : 0;
     }
+    /* A screen that does not follow is noticed by the clock alone. */
+    if (server->wanted_deadline > now_ms())
+        return (int)(server->wanted_deadline - now_ms()) + 1;
     return -1;
 }
 
@@ -1529,6 +1664,7 @@ rdp_server_dispatch(struct rdp_server *server, const struct pollfd *fds, int n)
         if (alive && peer_ctx->drdynvc_waiting)
             alive = peer_drdynvc_wait(peer_ctx);
         if (alive) {
+            disp_dispatch(peer_ctx);
             gfxredir_dispatch(peer_ctx);
             alive = !peer_ctx->failed;
         }
@@ -1557,14 +1693,25 @@ rdp_server_state(struct rdp_server *server)
     if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed)
         return RDP_NO_CLIENT;
     if (server->screen_width <= 0 || server->screen_height <= 0)
-        return RDP_BUSY;
+        return RDP_CONNECTING;
     if (!atomic_load(&peer_ctx->gfxredir_activated))
-        return RDP_BUSY;
+        return RDP_CONNECTING;
     if (peer_sync_desktop_size(peer_ctx))
-        return RDP_BUSY;
+        return RDP_CONNECTING;
     if (peer_ctx->writing >= 0 || peer_ctx->n_presents_inflight >= N_BUFFERS)
         return RDP_BUSY;
     return RDP_READY;
+}
+
+bool
+rdp_server_take_size_request(struct rdp_server *server, int *width, int *height)
+{
+    bool requested = server->size_request_pending;
+
+    server->size_request_pending = false;
+    *width = server->wanted_width;
+    *height = server->wanted_height;
+    return requested;
 }
 
 bool

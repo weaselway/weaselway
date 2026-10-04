@@ -93,6 +93,8 @@ struct presenter {
 
     /* What is on the screen, as DXGDRM_GET_FRAME last described it. */
     uint64_t seq, primary_seq, cursor_seq;
+    /* The frame the compositor has last been told we have taken. */
+    uint64_t acked_seq;
     bool have_frame, have_cursor, owned;
     uint64_t buffer_id;
     bool dumb;
@@ -706,6 +708,47 @@ fetch_frame(struct presenter *p)
 }
 
 /*
+ * Tell the compositor that the frame on screen has been taken, which is what
+ * lets its page flip complete and the next frame start (see
+ * DXGDRM_ACK_FRAME). Withheld while damage is owed that cannot be read back
+ * yet -- the previous readback has not landed, or the client holds every
+ * buffer -- so a compositor faster than that waits. Not withheld for a client
+ * that is still connecting: there is nothing to keep pace with.
+ */
+static void
+ack_frame(struct presenter *p)
+{
+    struct drm_dxgdrm_ack_frame ack = { .primary_seq = p->primary_seq };
+
+    if (!p->have_frame || p->acked_seq == p->primary_seq)
+        return;
+    if (p->pending &&
+        (p->readback.active || (p->rdp && rdp_server_state(p->rdp) == RDP_BUSY)))
+        return;
+
+    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_ACK_FRAME, &ack))
+        fprintf(stderr, "presenter: DXGDRM_ACK_FRAME failed: %s\n", strerror(errno));
+    p->acked_seq = p->primary_seq;
+}
+
+/* The client's window has a size; ask for a screen of it. The compositor
+ * switches to the new mode, and the frames that follow have that size. */
+static void
+apply_size_request(struct presenter *p)
+{
+    struct drm_dxgdrm_set_mode mode;
+    int width, height;
+
+    if (!p->rdp || !rdp_server_take_size_request(p->rdp, &width, &height))
+        return;
+
+    mode.width = (uint32_t)width;
+    mode.height = (uint32_t)height;
+    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SET_MODE, &mode))
+        fprintf(stderr, "presenter: cannot set a %dx%d mode: %s\n", width, height, strerror(errno));
+}
+
+/*
  * Start on the damage that is owed, if there is somewhere to put it.
  *
  * One readback covers the bounding box of the damage, as mutter's RDP backend
@@ -727,7 +770,7 @@ try_present(struct presenter *p)
     if (p->rdp && rdp_server_take_full_request(p->rdp))
         add_full_damage(p);
 
-    if (state == RDP_BUSY || !p->pending)
+    if (state == RDP_BUSY || state == RDP_CONNECTING || !p->pending)
         return;
 
     /* Nobody to show it to. A client that connects gets the whole screen. */
@@ -974,9 +1017,11 @@ main(int argc, char **argv)
 
         if (p.rdp)
             rdp_server_dispatch(p.rdp, &fds[1], rdp_n);
+        apply_size_request(&p);
 
         readback_poll(&p);
         try_present(&p);
+        ack_frame(&p);
 
         if (now_ms() - p.stat_since >= 5000.0) {
             if (p.stat_frames && !p.verbose)

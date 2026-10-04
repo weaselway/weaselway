@@ -44,8 +44,12 @@ struct rdp_frame {
 enum rdp_state {
     /* Nobody to present to. */
     RDP_NO_CLIENT,
-    /* A client is there but cannot take a frame right now: still connecting,
-     * being resized, or holding every buffer. Damage has to be kept. */
+    /* A client is there but not ready for frames yet: still connecting, or
+     * being resized. Damage has to be kept. */
+    RDP_CONNECTING,
+    /* The client cannot take a frame right now: it holds every buffer, or one
+     * is being written. Damage has to be kept, and the compositor should
+     * wait. */
     RDP_BUSY,
     RDP_READY,
 };
@@ -60,9 +64,14 @@ int rdp_server_timeout_ms(struct rdp_server *server);
 /* Call after every poll(), with the array rdp_server_get_fds() filled. */
 void rdp_server_dispatch(struct rdp_server *server, const struct pollfd *fds, int n);
 
-/* The size of the screen being presented; 0x0 while there is none. A client
- * whose desktop has another size is resized to it. */
+/* The size of the screen being presented; 0x0 while there is none. */
 void rdp_server_set_screen_size(struct rdp_server *server, int width, int height);
+
+/* True, once, when the client wants the screen to have another size: the one
+ * it connected with, or the one its window was resized to. The screen is
+ * given a few seconds to follow; a client whose desktop still differs from it
+ * after that is resized to the screen instead. */
+bool rdp_server_take_size_request(struct rdp_server *server, int *width, int *height);
 
 enum rdp_state rdp_server_state(struct rdp_server *server);
 
