@@ -77,6 +77,10 @@ void rdp_server_set_screen_size(struct rdp_server *server, int width, int height
  * after that is resized to the screen instead. */
 bool rdp_server_take_size_request(struct rdp_server *server, int *width, int *height);
 
+/* The size the connected client wants its screen to have; false while there is
+ * no client yet. For a screen the compositor does not give a size to. */
+bool rdp_server_client_size(struct rdp_server *server, int *width, int *height);
+
 enum rdp_state rdp_server_state(struct rdp_server *server);
 
 /* True, once, when the client needs the whole screen rather than the damage:

@@ -9,11 +9,11 @@ CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread
            -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
-SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c selection.c formats.c log.c
+SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c selection.c formats.c placeholder.c log.c
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
-HEADERS := rdp.h input.h audio.h clipboard.h selection.h formats.h log.h $(wildcard gfxredir/*.h)
+HEADERS := rdp.h input.h audio.h clipboard.h selection.h formats.h placeholder.h log.h $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes

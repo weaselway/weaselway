@@ -2005,6 +2005,20 @@ rdp_server_set_screen_size(struct rdp_server *server, int width, int height)
     server->screen_height = height;
 }
 
+bool
+rdp_server_client_size(struct rdp_server *server, int *width, int *height)
+{
+    struct peer_context *peer_ctx = server->peer;
+
+    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed || server->wanted_width <= 0 ||
+        server->wanted_height <= 0)
+        return false;
+
+    *width = server->wanted_width;
+    *height = server->wanted_height;
+    return true;
+}
+
 enum rdp_state
 rdp_server_state(struct rdp_server *server)
 {

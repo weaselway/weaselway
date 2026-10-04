@@ -43,6 +43,7 @@
 #include "dxgdrm_drm.h"
 #include "input.h"
 #include "log.h"
+#include "placeholder.h"
 #include "rdp.h"
 #include "selection.h"
 
@@ -99,6 +100,13 @@ struct weaselwayd {
     uint64_t buffer_id;
     bool dumb;
     int width, height;
+
+    /* While no compositor owns the display the client gets placeholder.c's
+     * screen, as large as the window it asked for. @placeholder_owed: it has
+     * to be drawn (again). @placeholder_up: the client may be showing it, so
+     * the compositor's screen has to be sent whole when one is back. */
+    bool placeholder_owed, placeholder_up;
+    int screen_width, screen_height;
 
     /* The part of the screen that changed and has not been read back. */
     bool pending;
@@ -668,6 +676,11 @@ fetch_frame(struct weaselwayd *p, GError **error)
         p->owned = !p->owned;
         g_message(p->owned ? "a compositor took over the display"
                            : "no compositor owns the display any more");
+        if (!p->owned) {
+            /* What it left on the screen is nobody's; the client is told so. */
+            p->pending = false;
+            p->placeholder_owed = true;
+        }
     }
 
     if (!(frame.flags & DXGDRM_FRAME_PRIMARY)) {
@@ -708,6 +721,13 @@ fetch_frame(struct weaselwayd *p, GError **error)
     }
     p->primary_seq = frame.primary_seq;
     p->have_frame = true;
+
+    /* The client may still be showing the placeholder, which the damage of the
+     * next commit does not cover. */
+    if (p->owned && p->placeholder_up) {
+        p->placeholder_up = p->placeholder_owed = false;
+        add_full_damage(p);
+    }
     return true;
 }
 
@@ -752,6 +772,53 @@ apply_size_request(struct weaselwayd *p)
         g_warning("cannot set a %dx%d mode: %s", width, height, g_strerror(errno));
 }
 
+/* The size of the client's screen: the compositor's, or without one the
+ * window the client asked for. */
+static void
+sync_screen_size(struct weaselwayd *p)
+{
+    int width = p->width, height = p->height;
+
+    if (!p->owned)
+        rdp_server_client_size(p->rdp, &width, &height);
+    if (width == p->screen_width && height == p->screen_height)
+        return;
+
+    p->screen_width = width;
+    p->screen_height = height;
+    p->placeholder_owed = true;
+    rdp_server_set_screen_size(p->rdp, width, height);
+}
+
+/* "No compositor running", in one frame and only when the client has not got
+ * it yet: nothing changes on the screen until a compositor is back. */
+static void
+present_placeholder(struct weaselwayd *p)
+{
+    struct rdp_rect rect = { 0, 0, p->screen_width, p->screen_height };
+    struct rdp_frame frame;
+    uint8_t *pixels;
+
+    if (rdp_server_take_full_request(p->rdp))
+        p->placeholder_owed = true;
+    if (!p->placeholder_owed || rdp_server_state(p->rdp) != RDP_READY)
+        return;
+
+    if (!rdp_server_begin_frame(p->rdp, &rect, &frame))
+        return;
+    pixels = rdp_server_frame_pixels(p->rdp, &frame);
+    if (!pixels) {
+        rdp_server_cancel_frame(p->rdp, &frame);
+        return;
+    }
+
+    placeholder_draw(pixels, rect.width, rect.height);
+    rdp_server_end_frame(p->rdp, &frame, &rect);
+    p->placeholder_owed = false;
+    p->placeholder_up = true;
+    g_debug("no compositor: placeholder sent at %dx%d", rect.width, rect.height);
+}
+
 /*
  * Start on the damage that is owed, if there is somewhere to put it.
  *
@@ -768,7 +835,15 @@ try_present(struct weaselwayd *p)
     struct rdp_rect rect;
     uint8_t *pixels;
 
-    if (!p->have_frame || rb->active)
+    if (rb->active)
+        return;
+
+    if (!p->owned) {
+        present_placeholder(p);
+        return;
+    }
+
+    if (!p->have_frame)
         return;
 
     if (rdp_server_take_full_request(p->rdp))
@@ -826,6 +901,7 @@ static void
 pump(struct weaselwayd *p)
 {
     apply_size_request(p);
+    sync_screen_size(p);
     readback_poll(p);
     try_present(p);
     ack_frame(p);
@@ -914,7 +990,7 @@ on_signal(gpointer data)
 int
 main(int argc, char **argv)
 {
-    struct weaselwayd p = { .drm_fd = -1 };
+    struct weaselwayd p = { .drm_fd = -1, .placeholder_owed = true };
     struct rdp_config rdp_config = {
         .vsock_port = 3389,
         .changed = on_rdp_changed,
