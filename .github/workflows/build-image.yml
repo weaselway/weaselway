@@ -1,4 +1,4 @@
-# Builds the NixOS-WSL image (nixos.wsl) from flake.nix, see WEASELWAY.md.
+# Builds the NixOS-WSL image (nixos.wsl) from flake.nix, see NIXOS.md.
 name: Build NixOS-WSL image
 
 # Pushes to main and pull requests; other branches can be built with

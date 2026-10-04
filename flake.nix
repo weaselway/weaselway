@@ -1,5 +1,5 @@
 {
-  description = "weaselway: GPU-accelerated GNOME on WSL2, and a NixOS-WSL image of it";
+  description = "weaselway: a GPU-accelerated GNOME or Plasma desktop on WSL2, as a NixOS-WSL image";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -22,18 +22,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # The fork branches the Ubuntu packages build too (ubuntu/resolute), picked
-    # to match the mesa and mutter releases nixpkgs has. They carry no
-    # flake.nix, so only their source is used. Fetched with git rather than
-    # as GitHub tarballs: mesa's .gitattributes has eol=crlf rules, and
-    # whether those are applied to the tarball differs between Nix versions,
-    # which breaks the locked hash.
+    # The mesa fork, on the branch that matches the mesa release nixpkgs has.
+    # It carries no flake.nix, so only its source is used. Fetched with git
+    # rather than as a GitHub tarball: mesa's .gitattributes has eol=crlf
+    # rules, and whether those are applied to the tarball differs between Nix
+    # versions, which breaks the locked hash.
     mesa-src = {
       url = "git+https://github.com/weaselway/mesa?ref=mesa-26.2.1-wsl&shallow=1";
-      flake = false;
-    };
-    mutter-src = {
-      url = "git+https://github.com/weaselway/mutter?ref=50.4-wslg&shallow=1";
       flake = false;
     };
   };
@@ -46,7 +41,6 @@
       dxgdrm,
       freerdp,
       mesa-src,
-      mutter-src,
     }:
     let
       inherit (nixpkgs) lib;
@@ -60,7 +54,6 @@
       overlays.default = import ./nix/overlay.nix {
         inherit
           mesa-src
-          mutter-src
           freerdp
           dxgdrm
           ;
@@ -79,7 +72,7 @@
       # the same system.
       nixosModules.image = import ./nix/image-lock.nix { inherit self; };
 
-      # A NixOS-WSL distro running the session. See WEASELWAY.md. Built from
+      # A NixOS-WSL distro running the session. See NIXOS.md. Built from
       # the same configuration.nix the image ships in /etc/nixos, together with
       # nix/image/flake.nix, so a nixos-rebuild inside the distro rebuilds this
       # system rather than NixOS-WSL's generic default.
@@ -95,7 +88,7 @@
 
       # The distro is x86_64 whatever the build machine is, so these are the
       # x86_64 builds on every system; elsewhere they need an x86_64 builder,
-      # see WEASELWAY.md.
+      # see NIXOS.md.
       packages = forAllSystems (pkgs: {
         weaselway-mesa = wsl.pkgs.weaselway-mesa;
         mutter = wsl.pkgs.mutter;

@@ -1,36 +1,30 @@
 #!/usr/bin/env bash
 
-# Root-side preparation for the GNOME session, run once per boot out of
-# weaselway-prep.service. All of this used to sit inline in start-gnome-shell.sh
-# behind a sudo; it moved here because the session itself is now a set of units
-# under the user manager, which has no business calling sudo.
+# Root-side preparation for the session, run once per boot out of
+# weaselway-prep.service.
 
 set -xeuo pipefail
 
-# The d3d12 driver needs the render node that dxgdrm provides, and nothing loads
-# the module at boot. Read /proc/modules directly rather than piping lsmod, so
+# dxgdrm provides the DRM nodes: the render node d3d12 clients need, and the
+# KMS node with the virtual display the compositor drives. Nothing loads the
+# module at boot. Read /proc/modules directly rather than piping lsmod, so
 # pipefail has nothing to trip over. The udevadm calls are what turn the module
-# into /dev/dri/renderD128, which is what the shell drop-in asserts on.
+# into /dev/dri/card0 and renderD128 with their permissions.
 #
-# The module is loaded by path, from where install-kernel-module.sh put it, not by
-# name: /lib/modules is an overlay WSL mounts itself and empties on every
-# `wsl --shutdown`, so the directory `modprobe dxgdrm` would search is exactly
-# the one that never has it. A path with a slash in it makes modprobe load that
-# file instead. That skips modules.dep, which costs nothing here -- dxgdrm links
-# only against DRM core, and CONFIG_DRM=y.
+# The module is loaded by path, not by name: /lib/modules is an overlay WSL
+# mounts itself, and the module lives in the Nix store. A path with a slash in
+# it makes modprobe load that file. That skips modules.dep, which costs
+# nothing here -- dxgdrm links only against DRM core, and CONFIG_DRM=y.
 #
 # The path carries the kernel release, so after a WSL kernel update the module
 # built for the old one is not silently picked up and rejected -- it is just not
-# there, and the message says what to do. Only a warning: the rest of this
-# script has nothing to do with the module, and a missing render node already
-# stops the session at org.gnome.Shell's AssertPathExists, right below this
-# line in the journal.
+# there, and the message says so. Only a warning: the rest of this script has
+# nothing to do with the module, and start-session.sh refuses to start without
+# the KMS node.
 #
 # First, and regardless of the system distro below: the render node is needed
 # by anything using the d3d12 driver, not only by the session.
-# DXGDRM_KO in the environment overrides the path; the NixOS image points it
-# into the store.
-DXGDRM_KO="${DXGDRM_KO:-/usr/local/lib/weaselway/modules/$(uname -r)/dxgdrm.ko}"
+: "${DXGDRM_KO:?set by weaselway-prep.service}"
 
 if ! grep -q '^dxgdrm ' /proc/modules; then
     if [ -e "${DXGDRM_KO}" ]; then
@@ -38,12 +32,12 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
         udevadm trigger --subsystem-match=drm
         udevadm settle
     else
-        echo "error: ${DXGDRM_KO} missing -- run install-kernel-module.sh" >&2
+        echo "error: ${DXGDRM_KO} missing -- the dxgdrm flake has no module for this WSL kernel yet" >&2
     fi
 fi
 
-# kms-wsl spike: input reaches the compositor as ordinary evdev devices that
-# weaselwayd creates through uinput. Both are modules in the WSL kernel
+# Input reaches the compositor as ordinary evdev devices that weaselwayd
+# creates through uinput. Both are modules in the WSL kernel
 # (CONFIG_INPUT_EVDEV=m, CONFIG_INPUT_UINPUT=m), and nothing loads them. They
 # come from WSL's own /lib/modules, by path for the same reason as dxgdrm above
 # and because NixOS' modprobe does not search there. Neither depends on another
@@ -57,13 +51,13 @@ for MODULE in evdev uinput; do
     if [ -n "${MODULE_KO}" ]; then
         modprobe "${MODULE_KO}" || echo "warning: loading ${MODULE_KO} failed" >&2
     else
-        echo "warning: no ${MODULE}.ko under /lib/modules/$(uname -r) -- no simulated input" >&2
+        echo "warning: no ${MODULE}.ko under /lib/modules/$(uname -r) -- no input from the viewer" >&2
     fi
 done
 
-# Take /tmp/.X11-unix back from WSL, so the socket mutter creates there (it
-# binds the socket itself and hands Xwayland the fd with -listenfd) is not
-# landing in something read-only or unwritable.
+# Take /tmp/.X11-unix back from WSL, so the socket the compositor creates there
+# (it binds the socket itself and hands Xwayland the fd) is not landing in
+# something read-only or unwritable.
 #
 # WSL generates wslg.service for this path, ordered After=tmp.mount, whose whole
 # body is:
@@ -73,7 +67,7 @@ done
 # Two things there matter. The mount is read-only, and X-mount.mkdir creates the
 # mountpoint first -- as root, mode 0755. So undoing the mount is not enough:
 # the directory it made stays behind, owned by root and writable by nobody else,
-# and mutter running as the user cannot create its socket in it.
+# and a compositor running as the user cannot create its socket in it.
 #
 # Hence rm -rf rather than umount alone, and a fresh 1777 directory after it --
 # sticky and world-writable, which is what /usr/lib/tmpfiles.d/x11.conf asks for
@@ -98,9 +92,8 @@ rm -rf /tmp/.X11-unix
 mkdir -m 1777 /tmp/.X11-unix
 
 # Prove the takeover worked, because the failure is otherwise silent until much
-# later: Xwayland cannot bind its socket, and MUTTER_X11_MANDATORY=1 takes the
-# whole session down with it. Nothing else checks this -- the shell drop-in
-# asserts on the render node and the shared-memory mount, not on this path.
+# later: Xwayland cannot bind its socket, and X11 applications do not start.
+# Nothing else checks this.
 #
 # Note this cannot be a `touch` probe: that runs as root, which can write into a
 # root-owned 0755 directory perfectly well, and so passes in exactly the broken
@@ -131,12 +124,10 @@ fi
 # configured -- which is why the weaselway system image has to be in
 # .wslconfig at all. Nothing in the system distro mounts it any more; the share
 # is VM-wide, and this is the only place that uses it. The mount point is
-# hardcoded rather than passed in: the shell drop-in has to name it too, and a
-# value in two unit files is easier to keep honest than one threaded through
-# the environment.
+# weaselwayd's default (--shm).
 #
-# Last, and fatal: without it mutter can only send its error frame, and this
-# unit failing is the other place that should say so.
+# Last, and fatal: without it weaselwayd has nowhere to put the frames, and
+# this unit failing is the place that says why.
 SHARED_MEMORY_MOUNT_POINT=/mnt/wslg-shared-memory
 
 if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then

@@ -1,9 +1,8 @@
-# The patched mesa and mutter, the Windows viewer, and the scripts from this
-# repo, as nixpkgs packages. Takes the fork sources and the freerdp flake as
-# arguments, see ../flake.nix.
+# The patched mesa, weaselwayd, the compositors' patches, the Windows viewer,
+# and the scripts from this repo, as nixpkgs packages. Takes the mesa fork's
+# source and the freerdp and dxgdrm flakes as arguments, see ../flake.nix.
 {
   mesa-src,
-  mutter-src,
   freerdp,
   dxgdrm,
 }:
@@ -16,7 +15,7 @@ let
   # replaced below.
   mesaDrivers = {
     # d3d12 is the one that matters, llvmpipe the fallback when no GPU is
-    # exposed. softpipe matches the Ubuntu build, zink comes nearly free.
+    # exposed. softpipe and zink come nearly free.
     galliumDrivers = [
       "d3d12"
       "llvmpipe"
@@ -57,60 +56,41 @@ in
     postFixup = builtins.replaceStrings [ " $opencl/lib/libRusticlOpenCL.so" ] [ "" ] old.postFixup;
   });
 
-  # FreeRDP for mutter's RDP server. nixpkgs builds it with FFmpeg, whose DSP
-  # backend maps 16-bit PCM to FFmpeg's *unsigned* PCM codec, so every sample
-  # mutter sends to the client (and every microphone sample it receives) comes
-  # out shifted by 32768 -- unintelligible. Only mutter and weaselwayd link
-  # this one, so nothing else rebuilds.
+  # FreeRDP for weaselwayd's RDP server. nixpkgs builds it with FFmpeg, whose
+  # DSP backend maps 16-bit PCM to FFmpeg's *unsigned* PCM codec, so every
+  # sample sent to the client (and every microphone sample received) comes
+  # out shifted by 32768 -- unintelligible. Only weaselwayd links this one, so
+  # nothing else rebuilds.
   weaselway-freerdp = prev.freerdp.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [ ./freerdp-dsp-ffmpeg-pcm-s16.patch ];
   });
 
-  # Replaced outright, so gnome-shell links the RDP-enabled build.
+  # nixpkgs' mutter with one fix, which is on main of github.com/weaselway/mutter:
+  # the overview keeps its old size when the stage is resized, which the
+  # viewer's window does to it all the time. Replaced outright, so gnome-shell
+  # and whatever else links mutter are rebuilt against it.
   mutter = prev.mutter.overrideAttrs (old: {
-    version = "${old.version}-weaselway";
-    src = mutter-src;
-
-    mesonFlags = old.mesonFlags ++ [
-      (lib.mesonEnable "rdp" true)
-    ];
-
-    # The release tarball nixpkgs builds vendors gvdb; a git checkout only
-    # has the wrap for it. Same revision as subprojects/gvdb.wrap.
-    postPatch = ''
-      cp -r --no-preserve=mode ${
-        final.fetchFromGitLab {
-          domain = "gitlab.gnome.org";
-          owner = "GNOME";
-          repo = "gvdb";
-          rev = "b54bc5da25127ef416858a3ad92e57159ff565b3";
-          hash = "sha256-c56yOepnKPEYFcU1B1TrDl8ydU0JU+z6R8siAQP4d2A=";
-        }
-      } subprojects/gvdb
-    ''
-    + old.postPatch;
-
-    # freerdp3, freerdp-server3, winpr3, and libcrypto for the session's TLS
-    # certificate. The gfxredir channel is built from the tree, see
-    # src/backends/rdp/gfxredir.
-    buildInputs = old.buildInputs ++ [
-      final.weaselway-freerdp
-      final.openssl
+    # builtins.path, so that the patch is a store path of its own: as ./file
+    # it would be a path into this flake's source, and every change to the
+    # repo would rebuild mutter and gnome-shell.
+    patches = (old.patches or [ ]) ++ [
+      (builtins.path {
+        name = "mutter-stage-relayout.patch";
+        path = ./mutter-stage-relayout.patch;
+      })
     ];
   });
 
-  # kms-wsl spike: KWin that tells the kernel what changed in a frame
-  # (FB_DAMAGE_CLIPS), so weaselwayd does not read back the whole screen
-  # for every frame. The patches are backports (branches weaselway-6.6.6 and
-  # weaselway-6.7.5) of the commit on master of github.com/weaselway/kde-kwin;
-  # which one depends on the Plasma release in nixpkgs. Replaced in the scope,
-  # so Plasma runs it; what links KWin is rebuilt.
+  # KWin that tells the kernel what changed in a frame (FB_DAMAGE_CLIPS), so
+  # weaselwayd does not read back the whole screen for every frame. The
+  # patches are backports (branches weaselway-6.6.6 and weaselway-6.7.5) of
+  # the commit on master of github.com/weaselway/kde-kwin; which one depends
+  # on the Plasma release in nixpkgs. Replaced in the scope, so Plasma runs
+  # it; what links KWin is rebuilt. Only built with weaselway.plasma.enable.
   kdePackages = prev.kdePackages.overrideScope (
     kfinal: kprev: {
       kwin = kprev.kwin.overrideAttrs (old: {
-        # builtins.path, so that the patch is a store path of its own: as
-        # ./file it would be a path into this flake's source, and every
-        # change to the repo would rebuild KWin and Plasma.
+        # builtins.path for the same reason as mutter's patch above.
         patches = (old.patches or [ ]) ++ [
           (builtins.path {
             name = "kwin-fb-damage-clips.patch";
@@ -125,12 +105,12 @@ in
     }
   );
 
-  # kms-wsl spike: the userspace half of dxgdrm's virtual display. Built
+  # The userspace half of dxgdrm's virtual display. Built
   # against nixpkgs' libglvnd and libgbm; at run time those load the patched
   # mesa from /run/opengl-driver like everything else.
   weaselwayd = final.stdenv.mkDerivation {
     pname = "weaselwayd";
-    version = "0-spike";
+    version = "0";
     src = ../weaselwayd;
 
     nativeBuildInputs = [ final.pkg-config ];
@@ -152,29 +132,11 @@ in
     ];
   };
 
-  # kms-wsl spike: nixpkgs' mutter, without the RDP backend, for the KMS
-  # session. The one patch is a fix that has nothing to do with RDP: the
-  # overview keeps its old size when the stage is resized, which the viewer's
-  # window does to it all the time. builtins.path for the same reason as
-  # KWin's patch above.
-  weaselway-kms-mutter = prev.mutter.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ [
-      (builtins.path {
-        name = "mutter-stage-relayout.patch";
-        path = ./mutter-stage-relayout.patch;
-      })
-    ];
-  });
-
-  # gnome-shell as nixpkgs builds it, against that mutter.
-  weaselway-kms-gnome-shell = prev.gnome-shell.override { mutter = final.weaselway-kms-mutter; };
-
   # sdl-freerdp.exe with its SDL DLLs, cross-compiled by the freerdp flake.
   # Windows binaries, so whichever machine builds them is fine.
   weaselway-viewer = freerdp.packages.${final.stdenv.buildPlatform.system}.sdl-freerdp;
 
-  # The session scripts, runnable from PATH. They are the same files the
-  # Ubuntu setup runs from a checkout.
+  # The session scripts, runnable from PATH.
   weaselway-scripts =
     let
       script =
@@ -190,10 +152,9 @@ in
     final.symlinkJoin {
       name = "weaselway-scripts";
       paths = [
-        (script "start-gnome-shell" [
+        (script "start-session" [
           final.coreutils
           final.gnugrep
-          final.gnused
           final.systemd
         ])
         (final.writeShellApplication {
@@ -210,21 +171,6 @@ in
             export WEASELWAY_VIEWER
           ''
           + builtins.readFile ../start-viewer.sh;
-          checkPhase = "";
-          bashOptions = [ ];
-        })
-        (final.writeShellApplication {
-          name = "start-kms-session";
-          runtimeInputs = [
-            final.coreutils
-            final.gnugrep
-            final.systemd
-          ];
-          text = ''
-            : "''${WEASELWAY_KMS_GNOME_SHELL:=${final.weaselway-kms-gnome-shell}/bin/gnome-shell}"
-            export WEASELWAY_KMS_GNOME_SHELL
-          ''
-          + builtins.readFile ../start-kms-session.sh;
           checkPhase = "";
           bashOptions = [ ];
         })

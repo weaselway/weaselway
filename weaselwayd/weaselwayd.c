@@ -850,7 +850,7 @@ usage(const char *argv0)
     fprintf(stderr,
             "usage: %s [options]\n"
             "  --port N        vsock port the RDP server listens on (default\n"
-            "                  $MUTTER_RDP_VSOCK_PORT, or 3389)\n"
+            "                  $WEASELWAY_VSOCK_PORT, or 3389)\n"
             "  --tcp N         listen on 127.0.0.1:N instead of the vsock (debugging)\n"
             "  --shm DIR       the shared-memory share the client maps the frames from\n"
             "                  (default $WSL2_SHARED_MEMORY_MOUNT_POINT, or\n"
@@ -872,7 +872,7 @@ main(int argc, char **argv)
     bool use_input = true;
     const char *env;
 
-    if ((env = getenv("MUTTER_RDP_VSOCK_PORT")) && atoi(env) > 0)
+    if ((env = getenv("WEASELWAY_VSOCK_PORT")) && atoi(env) > 0)
         rdp_config.vsock_port = atoi(env);
     if ((env = getenv("WSL2_SHARED_MEMORY_MOUNT_POINT")) && *env)
         rdp_config.shm_dir = env;

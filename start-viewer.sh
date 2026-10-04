@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 
-# Connect to the running session. start-gnome-shell.sh must be up first: it is
-# mutter that binds the vsock port, and this is the FreeRDP client on the
-# Windows side that displays what it serves.
+# Show the session on Windows. weaselwayd binds the vsock port, and this is
+# the FreeRDP client on the Windows side that displays what it serves. It can
+# be started before start-session.sh: the window stays empty until a
+# compositor is up.
 
 set -eu -o pipefail
 
-# The client install-freerdp.sh puts in C:\Weaselway. The NixOS image ships its
-# own build in the store and points this at it.
+# The NixOS image ships the client in the store and points this at it.
 VIEWER="${WEASELWAY_VIEWER:-/mnt/c/Weaselway/sdl-freerdp.exe}"
 
-# The port mutter was started with: environment.d gives it to the user manager,
-# which is what the shell unit inherits.
-PORT="$(systemctl --user show-environment | sed -n 's/^MUTTER_RDP_VSOCK_PORT=//p')"
+# The port weaselwayd listens on: environment.d gives it to the user manager,
+# which is what weaselwayd's unit inherits.
+PORT="$(systemctl --user show-environment | sed -n 's/^WEASELWAY_VSOCK_PORT=//p')"
 if [ -z "${PORT}" ]; then
-    echo "error: MUTTER_RDP_VSOCK_PORT is not in the user manager's environment -- is environment.d/10-weaselway.conf installed?" >&2
+    echo "error: WEASELWAY_VSOCK_PORT is not in the user manager's environment -- is environment.d/10-weaselway.conf installed?" >&2
     exit 1
 fi
 
@@ -28,7 +28,7 @@ else
 fi
 
 # The NT object directory behind the "wslg" shared-memory share, which the
-# client maps to read the frames mutter writes there. WSL names it after the VM
+# client maps to read the frames weaselwayd writes there. WSL names it after the VM
 # (WslCoreVm::InitializeGuest in microsoft/WSL), with the ID in upper case.
 SHARED_MEMORY_PATH="WSL\\${VM_ID^^}\\wslg"
 
@@ -38,7 +38,6 @@ SHARED_MEMORY_PATH="WSL\\${VM_ID^^}\\wslg"
     /cert:ignore \
     /dynamic-resolution \
     /w:1280 \
-    /kbd:layout:German \
     /log-level:warn \
     /multitouch \
     /sdl-touchpad-gestures \

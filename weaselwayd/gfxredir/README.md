@@ -1,11 +1,11 @@
 # Vendored gfxredir server channel
 
-The same four files mutter's RDP backend carries in
-`src/backends/rdp/gfxredir`, copied from there unchanged. They come from FreeRDP
-**3.30.0** (`channels/gfxredir/`), with the mechanical changes listed in that
-directory's README.
+Four files from FreeRDP **3.30.0** (`channels/gfxredir/`). They were copied
+unchanged from the RDP backend mutter used to carry (`src/backends/rdp/gfxredir`
+on the `*-wslg` branches of weaselway/mutter); the README there lists the
+mechanical changes against FreeRDP's own.
 
-They are here for the same reason: distributions build FreeRDP with the channel
+They are here because distributions build FreeRDP with the channel
 off, so `freerdp/server/gfxredir.h` is installed but `libfreerdp-server3`
 exports none of its symbols. The channel only needs the public WTS
 virtual-channel API, so compiling it into weaselwayd is enough.

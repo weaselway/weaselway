@@ -42,7 +42,7 @@ runs:
         authToken: ${{ inputs.cachix-auth-token }}
 
     # The builder is x86_64 like the runner, so everything is native here --
-    # unlike on aarch64 machines, see WEASELWAY.md.
+    # unlike on aarch64 machines, see NIXOS.md.
     - name: Build the system and the tarball builder
       shell: bash
       run: nix build --print-build-logs --out-link tarball-builder .#tarballBuilder

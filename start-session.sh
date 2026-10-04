@@ -1,27 +1,51 @@
 #!/usr/bin/env bash
 
-# kms-wsl spike: start an unmodified compositor on dxgdrm's virtual display.
+# Start a desktop on dxgdrm's virtual display.
 #
-# This is the other way to run a session, next to start-gnome-shell.sh. There,
-# mutter runs headless and serves RDP itself. Here, the compositor uses its
-# normal native backend: it takes the dxgdrm KMS node and the input devices
-# from logind, page-flips like on real hardware, and knows nothing about
-# Windows. weaselwayd is what picks the frames up.
+# The compositor is an ordinary one on its native backend: it takes the dxgdrm
+# KMS node and the input devices from logind, page-flips like on real
+# hardware, and knows nothing about Windows. weaselwayd picks the frames up
+# and serves them to the viewer (start-viewer).
 #
 # The native backend wants what a display manager normally provides: a logind
-# session on seat0 that owns the devices. So the compositor runs in a transient
-# system unit with a PAM session, not under the user manager.
+# session on seat0 that owns the devices. So the session runs in a transient
+# system unit with a PAM session, not under the user manager, and starting it
+# takes sudo.
 #
-# Usage: start-kms-session.sh [gnome|plasma|kwin|stop] [-- compositor arguments]
+# Usage: start-session.sh [--adapter NAME] [SESSION] [-- arguments]
+#        start-session.sh stop
 #
-# Do not run this next to start-gnome-shell.sh: both shells want the same
-# session bus names and the same Wayland socket.
+#   gnome        the GNOME desktop (gnome-session)
+#   gnome-shell  the bare shell, without the session's services
+#   plasma       the Plasma desktop, if the system has it
+#   kwin         bare KWin with a terminal in it
+#
+# Without SESSION it is $WEASELWAY_DEFAULT_SESSION, or gnome.
 
 set -euo pipefail
 
-UNIT=weaselway-kms
-SESSION="${1:-gnome}"
-[ $# -gt 0 ] && shift
+UNIT=weaselway-session
+
+usage() {
+    cat >&2 <<USAGE
+usage: start-session [--adapter NAME] [gnome|gnome-shell|plasma|kwin] [-- arguments]
+       start-session stop
+USAGE
+    exit 1
+}
+
+if [ "${1:-}" = "--adapter" ]; then
+    [ $# -ge 2 ] || usage
+    # Matched by d3d12 against a substring of the adapter description.
+    export MESA_D3D12_DEFAULT_ADAPTER_NAME="$2"
+    shift 2
+fi
+
+SESSION="${WEASELWAY_DEFAULT_SESSION:-gnome}"
+if [ $# -gt 0 ] && [ "$1" != "--" ]; then
+    SESSION="$1"
+    shift
+fi
 [ "${1:-}" = "--" ] && shift
 
 if [ "${SESSION}" = "stop" ]; then
@@ -33,34 +57,39 @@ SESSION_UID="$(id -u)"
 
 case "${SESSION}" in
     gnome)
+        # The whole desktop, as a display manager would start it. The shell
+        # and the session's services run as units of the user manager; the
+        # shell finds the logind session through XDG_SESSION_ID, which
+        # gnome-session hands on.
+        COMMAND=(gnome-session "$@")
+        DESKTOP=GNOME
+        ;;
+    gnome-shell)
         # --display-server rather than letting it guess: WSL puts
         # WAYLAND_DISPLAY and DISPLAY into every shell, and with those set
         # mutter would try to run nested.
-        #
-        # WEASELWAY_KMS_GNOME_SHELL picks the gnome-shell to run. The NixOS
-        # image points it at nixpkgs' own build, linked against unpatched
-        # mutter, because that is the claim under test.
-        COMMAND=("${WEASELWAY_KMS_GNOME_SHELL:-gnome-shell}" --wayland --display-server "$@")
+        COMMAND=(gnome-shell --wayland --display-server "$@")
         DESKTOP=GNOME
         ;;
     plasma)
-        # The whole desktop, as a display manager would start it. KWin and
-        # the shell run as units of the user manager; KWin finds the logind
-        # session through XDG_SESSION_ID, which startplasma hands on.
+        # As above: KWin and the shell run as units of the user manager.
         COMMAND=(startplasma-wayland "$@")
         DESKTOP=KDE
         ;;
     kwin)
-        # A bare compositor with a terminal in it; enough to see it render
-        # and take input.
+        # Enough to see it render and take input.
         COMMAND=(kwin_wayland --drm --xwayland "$@" konsole)
         DESKTOP=KDE
         ;;
     *)
-        echo "usage: $0 [gnome|plasma|kwin|stop] [-- compositor arguments]" >&2
-        exit 1
+        usage
         ;;
 esac
+
+if systemctl --quiet is-active "${UNIT}.service"; then
+    echo "error: a session is running already; stop it with: start-session stop" >&2
+    exit 1
+fi
 
 if [ ! -e /dev/dri/card0 ]; then
     echo "error: no /dev/dri/card0 -- did weaselway-prep load dxgdrm? (systemctl status weaselway-prep)" >&2
@@ -68,13 +97,20 @@ if [ ! -e /dev/dri/card0 ]; then
 fi
 
 # A compositor leaves its sockets' names in the user manager's environment when
-# it goes. Plasma's KWin is started by the user manager and would take them to
+# it goes. The next one is started by the user manager and would take them to
 # mean that it is to run nested, in a compositor that is no longer there.
 systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY GNOME_SETUP_DISPLAY \
     XDG_CURRENT_DESKTOP 2>/dev/null || true
 
-# The unit starts with a clean environment, so resolve the compositor here,
-# where PATH is the user's.
+# The unit starts with a clean environment, so resolve the command here, where
+# PATH is the user's.
+if ! command -v "${COMMAND[0]}" > /dev/null; then
+    echo "error: ${COMMAND[0]} is not installed" >&2
+    if [ "${DESKTOP}" = "KDE" ]; then
+        echo "Plasma is off by default; set weaselway.plasma.enable = true in /etc/nixos/configuration.nix and rebuild." >&2
+    fi
+    exit 1
+fi
 COMMAND[0]="$(command -v "${COMMAND[0]}")"
 
 # The session gets the user's PATH without the Windows directories WSL appends
@@ -109,9 +145,9 @@ if [ "${SESSION}" = "kwin" ]; then
     # Plasma's own theme is not installed; GNOME's is.
     PROPERTIES+=(--property=Environment=XCURSOR_THEME=Adwaita)
 fi
-# Extra variables for the compositor, space separated, for debugging:
-#   WEASELWAY_KMS_ENV="QT_LOGGING_RULES=kwin_*.debug=true" start-kms-session kwin
-for ASSIGNMENT in ${WEASELWAY_KMS_ENV:-}; do
+# Extra variables for the session, space separated, for debugging:
+#   WEASELWAY_SESSION_ENV="QT_LOGGING_RULES=kwin_*.debug=true" start-session kwin
+for ASSIGNMENT in ${WEASELWAY_SESSION_ENV:-}; do
     PROPERTIES+=(--property="Environment=${ASSIGNMENT}")
 done
 if [ -n "${LD_LIBRARY_PATH:-}" ]; then
@@ -122,10 +158,9 @@ if [ -n "${MESA_D3D12_DEFAULT_ADAPTER_NAME:-}" ]; then
 fi
 
 # logind wants a VT number for a session on a seat that has VTs, and refuses
-# one on a seat that has none. Whether the WSL kernel's CONFIG_VT=y results in
-# usable VTs is one of the things this spike finds out, so handle both.
+# one on a seat that has none. The WSL kernel has them (CONFIG_VT=y); a custom
+# kernel may not.
 if [ -e /dev/tty0 ] && [ -e /dev/tty1 ]; then
-    echo "seat0 has VTs: running the session on tty1"
     PROPERTIES+=(
         --property=TTYPath=/dev/tty1
         --property=TTYReset=yes
@@ -137,25 +172,30 @@ if [ -e /dev/tty0 ] && [ -e /dev/tty1 ]; then
         --property=UtmpMode=user
         --property=Environment=XDG_VTNR=1
     )
-else
-    echo "seat0 has no VTs: running the session without one"
 fi
 
 # A previous run that failed leaves the unit behind in failed state.
 sudo systemctl reset-failed "${UNIT}.service" 2>/dev/null || true
 
 sudo systemd-run --unit="${UNIT}" --collect \
-    --description="${DESKTOP} on the dxgdrm KMS display (kms-wsl spike)" \
+    --quiet --description="Weaselway session (${SESSION})" \
     "${PROPERTIES[@]}" \
     -- "${COMMAND[@]}"
 
+# weaselwayd is enabled for the user manager; this is for the case that it was
+# stopped by hand.
+systemctl --user start weaselwayd.service || true
+
 sleep 3
-systemctl --no-pager status "${UNIT}.service" || true
+if ! systemctl --quiet is-active "${UNIT}.service"; then
+    systemctl --no-pager status "${UNIT}.service" || true
+    exit 1
+fi
 
 cat <<MSG
+The ${SESSION} session is up. Show it on Windows with: start-viewer
 
-Follow the compositor:   journalctl -fu ${UNIT}
-Session and seat:        loginctl; loginctl seat-status seat0
-Serve it to the viewer:  weaselwayd      (then start-viewer)
-Stop:                    start-kms-session stop
+Follow the session:   journalctl -fu ${UNIT}
+Follow weaselwayd:    journalctl --user -fu weaselwayd
+Stop:                 start-session stop
 MSG

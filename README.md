@@ -1,22 +1,24 @@
 # Weaselway
 
-A GPU-accelerated GNOME session on WSL2, shipped as a NixOS-WSL image.
+A GPU-accelerated GNOME desktop on WSL2, shipped as a NixOS-WSL image.
 
-mutter runs headless inside the distro and serves the session over RDP on a
-vsock. mesa's `d3d12` driver renders on the GPU Windows exposes. A patched
-FreeRDP client on the Windows side shows the result. Everything is in the
-image: the patched mesa and mutter, the `dxgdrm` kernel module, the PipeWire
-audio bridge, and the Windows viewer itself.
+The compositor is the stock one. The `dxgdrm` kernel module gives it a virtual
+display to drive, the same way it would drive a monitor, and mesa's `d3d12`
+driver renders on the GPU Windows exposes. A small daemon, `weaselwayd`, picks
+up each frame and hands it to a FreeRDP client on the Windows side through
+shared memory; the client's keyboard, mouse, touchpad and audio come back the
+same way. Everything is in the image: the patched mesa, the kernel module,
+weaselwayd, the PipeWire audio bridge, and the Windows viewer itself.
+
+Because the compositor needs nothing special, Plasma works the same way. It is
+not in the image, but one option turns it on (see "Configuration").
 
 The one piece outside the image is a minimal WSLg **system distro**
 ([weaselway/wslg](https://github.com/weaselway/wslg)). WSL only creates the
-shared memory mutter hands its frames over on when a system distro is
-configured. Without it, the viewer shows a magenta error frame instead of the
-desktop.
+shared memory the frames are handed over on when a system distro is
+configured. Without it, the viewer cannot show the desktop.
 
-The older Ubuntu setup (patched packages plus the `install-*.sh` scripts) is
-in [README-ubuntu.md](README-ubuntu.md). How the NixOS side works, and how to
-debug it, is in [NIXOS.md](NIXOS.md).
+How the pieces work, and how to debug them, is in [NIXOS.md](NIXOS.md).
 
 ## Installation
 
@@ -36,12 +38,8 @@ wsl --install --from-file nixos-weaselway-<version>.wsl --name Gnome
 wsl -d Gnome
 ```
 
-This opens a shell as the user `nixos`. There is no password yet. Set one
-first, because `sudo` needs it:
-
-```sh
-passwd
-```
+This opens a shell as the user `nixos`. There is no password, and `sudo` does
+not ask for one.
 
 ### 3. Install the system distro
 
@@ -73,14 +71,15 @@ wsl -d Gnome
 ```
 
 ```sh
-start-gnome-shell
+start-session
 start-viewer
 ```
 
-`start-gnome-shell` starts GNOME under the user's systemd manager and returns
-once it is up. `start-viewer` opens the session in a window on Windows. It runs
-the `sdl-freerdp.exe` inside the image, so nothing needs installing on the
-Windows side.
+`start-session` starts GNOME on the virtual display and returns once it is up.
+`start-viewer` opens the session in a window on Windows. It runs the
+`sdl-freerdp.exe` inside the image, so nothing needs installing on the Windows
+side. Closing the window leaves the session running; `start-viewer` shows it
+again.
 
 **This has to be the first distro started after `wsl --shutdown`.** WSL only
 sets up `/run/user/1000` for the first distro it starts. If another distro got
@@ -89,23 +88,21 @@ there first, run `wsl --shutdown` and start this one first.
 To stop the session:
 
 ```sh
-systemctl --user start gnome-session-shutdown.target
+start-session stop
 ```
+
+`start-session` takes the session to start: `gnome` (the default),
+`gnome-shell` for the bare shell without the desktop's services, and `plasma`
+or `kwin` if Plasma is enabled.
 
 ## Using the viewer
 
 `start-viewer` passes any extra arguments on to `sdl-freerdp.exe`, after its
-own. So FreeRDP options can be added or overridden per run. The keyboard layout
-is `/kbd:layout:German` unless you pass another:
+own. So FreeRDP options can be added or overridden per run.
 
-```sh
-start-viewer /kbd:layout:"United States - English"
-start-viewer /kbd:layout:0x409        # the same layout, by its Windows ID
-```
-
-The names are FreeRDP's layout names, not country names (`German`, `French`,
-`Swiss German`, `United Kingdom`, ...). An unknown name makes the viewer exit
-with "Could not identify keyboard layout".
+The keyboard arrives in the session as an ordinary keyboard, so its layout is
+set in the desktop's own settings (GNOME: Settings, Keyboard, Input Sources),
+not on the viewer.
 
 Two options help with debugging:
 
@@ -117,8 +114,9 @@ start-viewer /sdl-show-damage       # tint the regions updated in each frame
 The value after `/sdl-show-stats` is the text scale and can be left out. The
 options combine.
 
-The viewer also enables touch input, touchpad swipes of 3+ fingers (overview
-and workspace switching), audio playback and the microphone. To use a different
+The viewer also forwards touchpad gestures of 3+ fingers (the session sees a
+touchpad of its own, so the desktop's swipes and pinches work), audio playback
+and the microphone. To use a different
 build of the viewer, point `WEASELWAY_VIEWER` at it:
 
 ```sh
@@ -149,12 +147,17 @@ These are the weaselway options:
 
 | Option | Default | What it does |
 |---|---|---|
-| `weaselway.enable` | `false` (the image sets `true`) | The whole session: mesa, mutter, dxgdrm, audio, the scripts. |
+| `weaselway.enable` | `false` (the image sets `true`) | The whole session: mesa, dxgdrm, weaselwayd, audio, the scripts. |
 | `weaselway.adapter` | `null` | GPU to render on, matched against a substring of its name (`"nvidia"`, `"Intel"`). Null takes the first adapter Windows lists. |
-| `weaselway.session` | `"gnome"` | gnome-session that `start-gnome-shell` starts when given none. |
+| `weaselway.session` | `"gnome"` | Session that `start-session` starts when given none. |
+| `weaselway.plasma.enable` | `false` | Installs Plasma next to GNOME, for `start-session plasma`. |
 
-`start-gnome-shell --adapter <name>` overrides the adapter for a single session
+`start-session --adapter <name>` overrides the adapter for a single session
 without rebuilding.
+
+Plasma's KWin carries a patch, so enabling it downloads KWin and what links it
+from weaselway.cachix.org, or compiles them if CI has not built that
+combination.
 
 Everything else is plain NixOS: add packages to `environment.systemPackages`,
 set `time.timeZone`, and so on. Some things the image sets that you may want to
@@ -177,18 +180,18 @@ sudo nix flake update --flake /etc/nixos
 sudo nixos-rebuild switch
 ```
 
-This updates weaselway, and with it nixpkgs, NixOS-WSL, mesa, mutter, the
-kernel module and the viewer, all to versions that were tested together.
+This updates weaselway, and with it nixpkgs, NixOS-WSL, mesa, the kernel
+module, weaselwayd and the viewer, all to versions that were tested together.
 
-The patched mesa, mutter, gnome-shell (which links mutter) and dxgdrm's kernel
-tree aren't on cache.nixos.org. CI pushes them to
+The patched mesa, mutter (nixpkgs' with one fix), gnome-shell (which links
+mutter), weaselwayd and dxgdrm's kernel tree aren't on cache.nixos.org. CI pushes them to
 [weaselway.cachix.org](https://weaselway.cachix.org), and the image already
 has that cache configured, so an update downloads them. A config change that
 alters one of them (a different mesa, say) still compiles it locally, which
 takes a while and needs a few GB of disk.
 
-After a rebuild, restart the session so it runs the new mutter and mesa: stop
-it as above, then `start-gnome-shell` again. If the kernel module changed,
+After a rebuild, restart the session so it runs the new mesa: stop it as
+above, then `start-session` again. If the kernel module changed,
 `wsl --shutdown` is simpler.
 
 If an update breaks something, go back to the previous generation:
@@ -202,16 +205,32 @@ it. `install-system-image` pins a version, and an update can move that pin. Run
 `install-system-image` again after updating: if it downloads a new image,
 change the `systemDistro=` line to the one it prints and run `wsl --shutdown`.
 
+## What doesn't work yet
+
+- **The clipboard is not shared with Windows.** Copy and paste works inside
+  the session, not between it and Windows.
+- **The scale factor of the Windows display is not passed on.** Set the scale
+  in the desktop's display settings.
+- **Audio from browsers can crackle.** Other players are fine.
+- **Touchscreens are not forwarded.** Touchpad gestures are.
+
 ## When something doesn't work
 
-- **Magenta screen in the viewer:** the shared memory is missing. Check that
-  `systemDistro=` is in `.wslconfig`, that you ran `wsl --shutdown` afterwards,
-  and that this distro was the first one started.
-  `systemctl status weaselway-prep` reports why.
+- **The viewer's window stays empty, or it exits right away:**
+  - `journalctl --user -u weaselwayd` says what weaselwayd saw. "waiting for
+    the compositor's first commit" means no session is running: run
+    `start-session`.
+  - If the shared memory is missing, weaselwayd does not start. Check that
+    `systemDistro=` is in `.wslconfig`, that you ran `wsl --shutdown`
+    afterwards, and that this distro was the first one started.
+    `systemctl status weaselway-prep` reports why.
+- **`start-session` fails:** `journalctl -u weaselway-session` has the
+  compositor's output.
 - **Everything renders in software (llvmpipe):** the Windows GPU driver didn't
   load. The graphics part of "What the module does" in [NIXOS.md](NIXOS.md)
   lists the known causes.
-- **No audio devices in GNOME:** `wpctl status` should list "Remote Desktop
-  Audio", and `/run/user/1000/pulse/native` should be a socket, not a symlink.
+- **No audio devices in the desktop:** `wpctl status` should list "Remote
+  Desktop Audio", and `/run/user/1000/pulse/native` should be a socket, not a
+  symlink.
 
 "Debugging" in [NIXOS.md](NIXOS.md) has the full list of checks.
