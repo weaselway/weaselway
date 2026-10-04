@@ -80,6 +80,15 @@ enum rdp_state rdp_server_state(struct rdp_server *server);
 bool rdp_server_take_full_request(struct rdp_server *server);
 
 /*
+ * What the client's mouse pointer looks like: @width x @height pixels, B G R A
+ * premultiplied, top row first, @stride bytes a row, with the hotspot inside.
+ * NULL @pixels hides it. The client draws it at its own mouse position, so
+ * moves need nothing from here. Kept for a client that connects later.
+ */
+void rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int stride,
+                            int width, int height, int hot_x, int hot_y);
+
+/*
  * Writing a frame, in three steps so that the pixels can arrive later:
  *
  *   begin   picks a buffer the client is not reading and brings it up to date

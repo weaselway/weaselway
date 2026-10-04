@@ -95,7 +95,7 @@ struct presenter {
     uint64_t seq, primary_seq, cursor_seq;
     /* The frame the compositor has last been told we have taken. */
     uint64_t acked_seq;
-    bool have_frame, have_cursor, owned;
+    bool have_frame, have_cursor, cursor_sent, owned;
     uint64_t buffer_id;
     bool dumb;
     int width, height;
@@ -622,6 +622,150 @@ read_dumb(struct presenter *p, uint8_t *pixels)
 }
 
 /*
+ * The image on the cursor plane, tightly packed B G R A. mutter draws its
+ * cursor into a dumb buffer, KWin renders it on the GPU like any other layer.
+ * Small and only read when the image changes, so this one waits for the
+ * pixels.
+ */
+static uint8_t *
+read_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+{
+    int width = (int)frame->cursor_width, height = (int)frame->cursor_height;
+    uint8_t *pixels = malloc((size_t)width * (size_t)height * 4);
+
+    if (!pixels)
+        return NULL;
+
+    if (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) {
+        if (!get_import_buffer(p, frame->cursor_buffer_id, frame->cursor_fd, frame->cursor_width,
+                               frame->cursor_height, frame->cursor_format, frame->cursor_pitch))
+            goto fail;
+
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glReadPixels(0, 0, width, height, p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE,
+                     pixels);
+        if (glGetError() != GL_NO_ERROR)
+            goto fail;
+        if (!p->read_bgra) {
+            for (uint8_t *px = pixels, *end = pixels + (size_t)width * (size_t)height * 4;
+                 px < end; px += 4) {
+                uint8_t r = px[0];
+
+                px[0] = px[2];
+                px[2] = r;
+            }
+        }
+    } else {
+        struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_CURSOR };
+        size_t size = (size_t)frame->cursor_pitch * (size_t)height;
+        uint8_t *data = malloc(size);
+
+        if (!data)
+            goto fail;
+        read.size = (uint32_t)size;
+        read.data = (uintptr_t)data;
+
+        /* The plane may have moved on to another buffer since the frame was
+         * fetched; the next fetch then says so. */
+        if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read) ||
+            (int)read.width != width || (int)read.height != height ||
+            read.pitch < read.width * 4) {
+            free(data);
+            goto fail;
+        }
+        for (int y = 0; y < height; y++)
+            memcpy(pixels + (size_t)y * (size_t)width * 4, data + (size_t)y * read.pitch,
+                   (size_t)width * 4);
+        free(data);
+    }
+    return pixels;
+
+fail:
+    free(pixels);
+    return NULL;
+}
+
+/*
+ * The cursor plane is the client's to draw: its image becomes the client's
+ * mouse pointer, and no plane means no pointer. Only the image is sent. The
+ * client moves the pointer itself, so a commit that only moves the plane is
+ * nothing to it.
+ *
+ * A compositor makes the plane's buffer as large as the plane can be (256
+ * square) and draws a much smaller cursor into its corner, so the image is cut
+ * down to what is not transparent, with the hotspot kept inside.
+ */
+static void
+update_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+{
+    int width = (int)frame->cursor_width, height = (int)frame->cursor_height;
+    int hot_x = frame->cursor_hot_x, hot_y = frame->cursor_hot_y;
+    int x1, y1, x2, y2;
+    uint8_t *pixels;
+
+    if (!(frame->flags & DXGDRM_FRAME_CURSOR)) {
+        if (p->have_cursor || !p->cursor_sent) {
+            if (p->verbose)
+                fprintf(stderr, "presenter: cursor hidden\n");
+            if (p->rdp)
+                rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
+        }
+        p->have_cursor = false;
+        p->cursor_sent = true;
+        return;
+    }
+    if (p->have_cursor && p->cursor_sent && frame->cursor_seq == p->cursor_seq)
+        return;
+    p->have_cursor = true;
+    p->cursor_sent = true;
+    p->cursor_seq = frame->cursor_seq;
+
+    pixels = frame->cursor_format == DRM_FORMAT_ARGB8888 ? read_cursor(p, frame) : NULL;
+    if (!pixels) {
+        fprintf(stderr, "presenter: cannot read the %dx%d cursor; hiding it\n", width, height);
+        if (p->rdp)
+            rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
+        return;
+    }
+
+    hot_x = hot_x < 0 ? 0 : hot_x >= width ? width - 1 : hot_x;
+    hot_y = hot_y < 0 ? 0 : hot_y >= height ? height - 1 : hot_y;
+    x1 = hot_x;
+    y1 = hot_y;
+    x2 = hot_x + 1;
+    y2 = hot_y + 1;
+    for (int y = 0; y < height; y++) {
+        const uint8_t *row = pixels + (size_t)y * (size_t)width * 4;
+
+        for (int x = 0; x < width; x++) {
+            if (!row[x * 4 + 3])
+                continue;
+            if (x < x1)
+                x1 = x;
+            if (x >= x2)
+                x2 = x + 1;
+            if (y < y1)
+                y1 = y;
+            if (y >= y2)
+                y2 = y + 1;
+        }
+    }
+
+    if (p->verbose)
+        fprintf(stderr, "presenter: cursor updated: %dx%d %s buffer %llu, hotspot %d,%d; "
+                        "sent as %dx%d+%d+%d\n",
+                width, height, (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
+                (unsigned long long)frame->cursor_buffer_id, hot_x, hot_y, x2 - x1, y2 - y1, x1,
+                y1);
+    if (p->rdp)
+        rdp_server_set_pointer(p->rdp, pixels + ((size_t)y1 * (size_t)width + (size_t)x1) * 4,
+                               width * 4, x2 - x1, y2 - y1, hot_x - x1, hot_y - y1);
+    free(pixels);
+}
+
+/*
  * Fetch what DXGDRM_GET_FRAME has to say. Only called when the node polls
  * readable, so it does not wait. Returns false if the node is gone.
  */
@@ -639,23 +783,9 @@ fetch_frame(struct presenter *p)
     }
     p->seq = frame.seq;
 
-    /* The cursor plane is the client's to draw; all that happens here is
-     * saying when its image changes. Moves alone are not reported. */
+    update_cursor(p, &frame);
     if (frame.cursor_fd >= 0)
         close(frame.cursor_fd);
-    if (!(frame.flags & DXGDRM_FRAME_CURSOR)) {
-        if (p->have_cursor)
-            fprintf(stderr, "presenter: cursor hidden\n");
-        p->have_cursor = false;
-    } else if (!p->have_cursor || frame.cursor_seq != p->cursor_seq) {
-        fprintf(stderr, "presenter: cursor updated: %ux%u %s buffer %llu, hotspot %d,%d, at %d,%d\n",
-                frame.cursor_width, frame.cursor_height,
-                (frame.flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
-                (unsigned long long)frame.cursor_buffer_id,
-                frame.cursor_hot_x, frame.cursor_hot_y, frame.cursor_x, frame.cursor_y);
-        p->have_cursor = true;
-        p->cursor_seq = frame.cursor_seq;
-    }
 
     /* A compositor leaves its last frame up when it goes away. */
     if (!!(frame.flags & DXGDRM_FRAME_OWNED) != p->owned) {

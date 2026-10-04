@@ -3,8 +3,8 @@
  * comments there say more about why the FreeRDP calls are in the order they
  * are in.
  *
- * Not ported yet: the pointer shape, the clipboard, audio, touch gestures, the
- * client's scale factor, and the error frame -- a client that cannot do
+ * Not ported yet: the clipboard, audio, touch gestures, the client's scale
+ * factor, and the error frame -- a client that cannot do
  * gfxredir is disconnected, with the reason in the log.
  */
 
@@ -173,6 +173,13 @@ struct rdp_server {
 
     int screen_width, screen_height;
     bool full_requested;
+
+    /* The pointer's image, bottom-up as the wire wants it; NULL for a hidden
+     * pointer. Nothing is sent before the first rdp_server_set_pointer(). */
+    bool pointer_set;
+    uint8_t *pointer;
+    int pointer_width, pointer_height;
+    int pointer_hot_x, pointer_hot_y;
 
     /* The size the client asked for, and until when the screen may take to
      * get there. */
@@ -1032,6 +1039,78 @@ on_synchronize_event(rdpInput *rdp_input, UINT32 flags)
 /* The peer                                                           */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* The pointer                                                        */
+/* ------------------------------------------------------------------ */
+
+/* MS-RDPBCGR 2.2.9.1.2.1.11: a Large Pointer Update tops out at 384x384. */
+#define MAX_POINTER_SIZE 384
+
+static void
+peer_send_pointer(struct peer_context *peer_ctx)
+{
+    struct rdp_server *server = peer_ctx->server;
+    rdpUpdate *update = peer_ctx->peer->context->update;
+
+    if (!peer_ctx->activated || peer_ctx->failed || !server->pointer_set)
+        return;
+
+    update->BeginPaint(update->context);
+    if (server->pointer) {
+        POINTER_LARGE_UPDATE pointer = { 0 };
+
+        pointer.xorBpp = 32;
+        pointer.cacheIndex = 0;
+        pointer.hotSpotX = (UINT16)server->pointer_hot_x;
+        pointer.hotSpotY = (UINT16)server->pointer_hot_y;
+        pointer.width = (UINT16)server->pointer_width;
+        pointer.height = (UINT16)server->pointer_height;
+        /* A 32bpp xorMask carries its own alpha, so no separate AND mask. */
+        pointer.lengthAndMask = 0;
+        pointer.andMaskData = NULL;
+        pointer.lengthXorMask = (UINT32)server->pointer_width * 4 * (UINT32)server->pointer_height;
+        pointer.xorMaskData = server->pointer;
+        update->pointer->PointerLarge(update->context, &pointer);
+    } else {
+        POINTER_SYSTEM_UPDATE pointer = { .type = SYSPTR_NULL };
+
+        update->pointer->PointerSystem(update->context, &pointer);
+    }
+    update->EndPaint(update->context);
+}
+
+void
+rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int stride,
+                       int width, int height, int hot_x, int hot_y)
+{
+    free(server->pointer);
+    server->pointer = NULL;
+    server->pointer_set = true;
+
+    if (pixels && (width <= 0 || height <= 0 || width > MAX_POINTER_SIZE ||
+                   height > MAX_POINTER_SIZE)) {
+        rdp_log("a %dx%d pointer cannot be sent; hiding it", width, height);
+        pixels = NULL;
+    }
+    if (pixels)
+        server->pointer = malloc((size_t)width * 4 * (size_t)height);
+
+    if (server->pointer) {
+        /* Pointer bitmaps are bottom-up, like a Windows DIB. B G R A in
+         * memory is what the wire calls ARGB. */
+        for (int y = 0; y < height; y++)
+            memcpy(server->pointer + (size_t)(height - 1 - y) * (size_t)width * 4,
+                   pixels + (size_t)y * (size_t)stride, (size_t)width * 4);
+        server->pointer_width = width;
+        server->pointer_height = height;
+        server->pointer_hot_x = hot_x < 0 ? 0 : hot_x >= width ? width - 1 : hot_x;
+        server->pointer_hot_y = hot_y < 0 ? 0 : hot_y >= height ? height - 1 : hot_y;
+    }
+
+    if (server->peer)
+        peer_send_pointer(server->peer);
+}
+
 static void
 peer_destroy(struct peer_context *peer_ctx)
 {
@@ -1065,11 +1144,15 @@ peer_finish_activation(freerdp_peer *client)
                     freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopWidth),
                     freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopHeight));
         }
+        peer_send_pointer(peer_ctx);
         return TRUE;
     }
 
     peer_ctx->activated = true;
     rdp_log("client activated");
+
+    /* The client has no pointer shape until we send one. */
+    peer_send_pointer(peer_ctx);
 
     /* The client dictates the size: the screen is asked to take the one it
      * connected with. */
@@ -1568,6 +1651,7 @@ rdp_server_free(struct rdp_server *server)
         close(server->wake_fd);
     free(server->cert_pem);
     free(server->key_pem);
+    free(server->pointer);
     free(server);
 }
 
