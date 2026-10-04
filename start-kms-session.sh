@@ -86,6 +86,16 @@ PROPERTIES=(
     --property=Environment=WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 )
 
+# Where icon and cursor themes, schemas and the like are found. A login shell
+# gets this from the profile; the unit has no profile. Without it KWin finds
+# no cursor theme and shows no pointer at all.
+if [ -n "${XDG_DATA_DIRS:-}" ]; then
+    PROPERTIES+=(--property="Environment=XDG_DATA_DIRS=${XDG_DATA_DIRS}")
+fi
+if [ "${SESSION}" = "kwin" ]; then
+    # Plasma's own theme is not installed; GNOME's is.
+    PROPERTIES+=(--property=Environment=XCURSOR_THEME=Adwaita)
+fi
 if [ -n "${LD_LIBRARY_PATH:-}" ]; then
     PROPERTIES+=(--property="Environment=LD_LIBRARY_PATH=${LD_LIBRARY_PATH}")
 fi

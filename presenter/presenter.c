@@ -70,10 +70,11 @@ struct presenter {
     uint8_t *shadow;
     uint32_t width, height;
 
-    /* The cursor plane's image, ARGB8888 as the compositor wrote it. */
+    /* The cursor plane's image: R, G, B, A, premultiplied, tightly packed. */
     uint8_t *cursor;
-    uint32_t cursor_width, cursor_height, cursor_pitch;
+    uint32_t cursor_width, cursor_height;
     uint64_t cursor_seq;
+    bool draw_cursor;
 
     uint8_t *compose;
 
@@ -206,21 +207,22 @@ destroy_import(struct presenter *p, struct import *import)
 /* Import the frame's shared handle, or find the import made for it earlier.
  * Leaves its framebuffer bound for reading. */
 static struct import *
-get_import(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+get_import_buffer(struct presenter *p, uint64_t buffer_id, int fd,
+                  uint32_t width, uint32_t height, uint32_t format, uint32_t pitch)
 {
     struct import *import = NULL, *oldest = &p->imports[0];
     EGLAttrib attribs[] = {
-        EGL_WIDTH, (EGLAttrib)frame->width,
-        EGL_HEIGHT, (EGLAttrib)frame->height,
-        EGL_LINUX_DRM_FOURCC_EXT, (EGLAttrib)frame->format,
-        EGL_DMA_BUF_PLANE0_FD_EXT, frame->fd,
+        EGL_WIDTH, (EGLAttrib)width,
+        EGL_HEIGHT, (EGLAttrib)height,
+        EGL_LINUX_DRM_FOURCC_EXT, (EGLAttrib)format,
+        EGL_DMA_BUF_PLANE0_FD_EXT, fd,
         EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
-        EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLAttrib)frame->pitch,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLAttrib)pitch,
         EGL_NONE,
     };
 
     for (int i = 0; i < MAX_IMPORTS; i++) {
-        if (p->imports[i].buffer_id == frame->buffer_id) {
+        if (p->imports[i].buffer_id == buffer_id) {
             import = &p->imports[i];
             break;
         }
@@ -236,7 +238,7 @@ get_import(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
                                        NULL, attribs);
         if (import->image == EGL_NO_IMAGE) {
             fprintf(stderr, "presenter: importing buffer %llu failed (0x%x)\n",
-                    (unsigned long long)frame->buffer_id, eglGetError());
+                    (unsigned long long)buffer_id, eglGetError());
             return NULL;
         }
 
@@ -250,21 +252,28 @@ get_import(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
                                import->texture, 0);
         if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             fprintf(stderr, "presenter: buffer %llu is not readable as a framebuffer\n",
-                    (unsigned long long)frame->buffer_id);
-            import->buffer_id = frame->buffer_id;
+                    (unsigned long long)buffer_id);
+            import->buffer_id = buffer_id;
             destroy_import(p, import);
             return NULL;
         }
 
-        import->buffer_id = frame->buffer_id;
+        import->buffer_id = buffer_id;
         fprintf(stderr, "presenter: imported buffer %llu (%ux%u, %.4s)\n",
-                (unsigned long long)frame->buffer_id, frame->width, frame->height,
-                (const char *)&frame->format);
+                (unsigned long long)buffer_id, width, height,
+                (const char *)&format);
     }
 
     import->last_used = ++p->use_counter;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, import->fbo);
     return import;
+}
+
+static struct import *
+get_import(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+{
+    return get_import_buffer(p, frame->buffer_id, frame->fd, frame->width, frame->height,
+                             frame->format, frame->pitch);
 }
 
 static bool
@@ -478,30 +487,60 @@ read_dumb(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
     return (long)read.width * read.height;
 }
 
+/* Fetch the cursor plane's image. mutter puts a dumb buffer there, KWin a GPU
+ * buffer like any other layer; either way it ends up as RGBA in p->cursor. */
 static void
 read_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
 {
-    size_t size = (size_t)frame->cursor_width * frame->cursor_height * 4;
-    struct drm_dxgdrm_read_pixels read = {
-        .plane = DXGDRM_PLANE_CURSOR,
-        .size = (uint32_t)size,
-    };
+    uint32_t width = frame->cursor_width, height = frame->cursor_height;
+    size_t size = (size_t)width * height * 4;
 
     free(p->cursor);
     p->cursor = malloc(size);
     p->cursor_width = p->cursor_height = 0;
     if (!p->cursor)
         return;
-    read.data = (uintptr_t)p->cursor;
 
-    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read)) {
-        fprintf(stderr, "presenter: reading the cursor failed: %s\n", strerror(errno));
-        return;
+    if (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) {
+        if (!get_import_buffer(p, frame->cursor_buffer_id, frame->cursor_fd, width, height,
+                               frame->cursor_format, frame->cursor_pitch))
+            return;
+
+        /* Small and rare: the blocking path is fine here. */
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glReadPixels(0, 0, (GLsizei)width, (GLsizei)height, GL_RGBA, GL_UNSIGNED_BYTE, p->cursor);
+        if (glGetError() != GL_NO_ERROR) {
+            fprintf(stderr, "presenter: reading the cursor back failed\n");
+            return;
+        }
+    } else {
+        struct drm_dxgdrm_read_pixels read = {
+            .plane = DXGDRM_PLANE_CURSOR,
+            .size = (uint32_t)size,
+            .data = (uintptr_t)p->cursor,
+        };
+
+        if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read) ||
+            read.width != width || read.height != height || read.pitch != width * 4) {
+            fprintf(stderr, "presenter: reading the cursor failed: %s\n", strerror(errno));
+            return;
+        }
+
+        /* ARGB8888 is B, G, R, A in memory. */
+        for (size_t i = 0; i < size; i += 4) {
+            uint8_t blue = p->cursor[i];
+
+            p->cursor[i] = p->cursor[i + 2];
+            p->cursor[i + 2] = blue;
+        }
     }
 
-    p->cursor_width = read.width;
-    p->cursor_height = read.height;
-    p->cursor_pitch = read.pitch;
+    p->cursor_width = width;
+    p->cursor_height = height;
+    fprintf(stderr, "presenter: cursor image %ux%u (%s), hotspot %d,%d\n", width, height,
+            (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
+            frame->cursor_hot_x, frame->cursor_hot_y);
 }
 
 /* Shadow copy plus the cursor plane, which is what the client would draw. */
@@ -510,7 +549,7 @@ compose(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
 {
     memcpy(p->compose, p->shadow, (size_t)p->width * p->height * 4);
 
-    if (!(frame->flags & DXGDRM_FRAME_CURSOR) || !p->cursor_width)
+    if (!p->draw_cursor || !(frame->flags & DXGDRM_FRAME_CURSOR) || !p->cursor_width)
         return;
 
     for (uint32_t cy = 0; cy < p->cursor_height; cy++) {
@@ -521,19 +560,19 @@ compose(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
 
         for (uint32_t cx = 0; cx < p->cursor_width; cx++) {
             int x = frame->cursor_x + (int)cx;
-            const uint8_t *src = p->cursor + (size_t)cy * p->cursor_pitch + cx * 4;
+            const uint8_t *src = p->cursor + ((size_t)cy * p->cursor_width + cx) * 4;
             uint8_t *dst;
             unsigned inv;
 
             if (x < 0 || x >= (int)p->width || !src[3])
                 continue;
 
-            /* ARGB8888, premultiplied: B, G, R, A in memory. */
+            /* Premultiplied alpha. */
             dst = p->compose + ((size_t)y * p->width + x) * 4;
             inv = 255 - src[3];
-            dst[0] = (uint8_t)(src[2] + dst[0] * inv / 255);
+            dst[0] = (uint8_t)(src[0] + dst[0] * inv / 255);
             dst[1] = (uint8_t)(src[1] + dst[1] * inv / 255);
-            dst[2] = (uint8_t)(src[0] + dst[2] * inv / 255);
+            dst[2] = (uint8_t)(src[2] + dst[2] * inv / 255);
         }
     }
 }
@@ -654,11 +693,14 @@ static void
 usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--sync] [--full]\n"
+            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--no-cursor]\n"
+            "       [--sync] [--full]\n"
             "  --out DIR       where the JPEGs go (default /tmp/weaselway-frames)\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
             "  --no-pointer    do not create the circling uinput pointer\n"
+            "  --no-cursor     leave the cursor plane out of the JPEGs: the frame as the\n"
+            "                  compositor rendered it\n"
             "  --sync          read back with a blocking glReadPixels per damage rect\n"
             "  --full          ignore the damage and read the whole frame every time\n",
             argv0);
@@ -671,6 +713,7 @@ main(int argc, char **argv)
         .out_dir = "/tmp/weaselway-frames",
         .max_frames = 600,
         .quality = 85,
+        .draw_cursor = true,
     };
     struct sigaction action = { .sa_handler = on_signal };
     struct drm_dxgdrm_get_frame frame = { 0 };
@@ -689,6 +732,8 @@ main(int argc, char **argv)
             p.quality = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--no-pointer")) {
             pointer = false;
+        } else if (!strcmp(argv[i], "--no-cursor")) {
+            p.draw_cursor = false;
         } else if (!strcmp(argv[i], "--sync")) {
             p.sync_readback = true;
         } else if (!strcmp(argv[i], "--full")) {
@@ -740,6 +785,15 @@ main(int argc, char **argv)
             break;
         }
         seq = frame.seq;
+
+        /* First, so its fd is dealt with on every path below. */
+        if ((frame.flags & DXGDRM_FRAME_CURSOR) && frame.cursor_seq != p.cursor_seq) {
+            read_cursor(&p, &frame);
+            p.cursor_seq = frame.cursor_seq;
+        }
+        if (frame.cursor_fd >= 0)
+            close(frame.cursor_fd);
+
         last_frame = t_start = now_ms();
 
         if (!(frame.flags & DXGDRM_FRAME_PRIMARY)) {
@@ -779,12 +833,6 @@ main(int argc, char **argv)
         have_frame = true;
         t_read = now_ms();
 
-        if ((frame.flags & DXGDRM_FRAME_CURSOR) &&
-            (frame.cursor_seq != p.cursor_seq || !p.cursor_width)) {
-            read_cursor(&p, &frame);
-            p.cursor_seq = frame.cursor_seq;
-        }
-
         compose(&p, &frame);
         if (!write_jpeg(&p, frames % p.max_frames))
             break;
@@ -793,7 +841,7 @@ main(int argc, char **argv)
 
         fprintf(stderr,
                 "frame %u: %s %ux%u buffer %llu, %u rect(s)%s, %.1f%% read back in %.2f ms "
-                "(issue %.2f wait %.2f copy %.2f), jpeg %.2f ms, cursor %s at %d,%d\n",
+                "(issue %.2f wait %.2f copy %.2f), jpeg %.2f ms, cursor %s at %d,%d hot %d,%d\n",
                 frames,
                 (frame.flags & DXGDRM_FRAME_SHARED) ? "d3d12" : "dumb",
                 frame.width, frame.height, (unsigned long long)frame.buffer_id,
@@ -801,7 +849,7 @@ main(int argc, char **argv)
                 100.0 * (double)pixels / ((double)frame.width * frame.height),
                 t_read - t_start, p.issue_ms, p.wait_ms, p.copy_ms, t_done - t_read,
                 (frame.flags & DXGDRM_FRAME_CURSOR) ? "plane" : "none",
-                frame.cursor_x, frame.cursor_y);
+                frame.cursor_x, frame.cursor_y, frame.cursor_hot_x, frame.cursor_hot_y);
     }
 
     quit = 1;
