@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791105193,
-        "narHash": "sha256-oItgRDcpmxxT3hUA/J4M+RWPX7frHADiuKkxBninv8o=",
+        "lastModified": 1791125534,
+        "narHash": "sha256-6Oik4I1oAlaiRno61AJ6yo2iREJjQ+uHnE5Togx3a+A=",
         "owner": "weaselway",
         "repo": "dxgdrm",
-        "rev": "05da31b2165b3a35e119f29a54ab7c0367b3642f",
+        "rev": "65746e2c86f881f18ee7798b9df736324e1fdfa2",
         "type": "github"
       },
       "original": {
