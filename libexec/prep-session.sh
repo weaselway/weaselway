@@ -43,7 +43,7 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
 fi
 
 # kms-wsl spike: input reaches the compositor as ordinary evdev devices that
-# weaselway-presenter creates through uinput. Both are modules in the WSL kernel
+# weaselwayd creates through uinput. Both are modules in the WSL kernel
 # (CONFIG_INPUT_EVDEV=m, CONFIG_INPUT_UINPUT=m), and nothing loads them. They
 # come from WSL's own /lib/modules, by path for the same reason as dxgdrm above
 # and because NixOS' modprobe does not search there. Neither depends on another

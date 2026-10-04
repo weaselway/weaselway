@@ -8,7 +8,7 @@ directory's README.
 They are here for the same reason: distributions build FreeRDP with the channel
 off, so `freerdp/server/gfxredir.h` is installed but `libfreerdp-server3`
 exports none of its symbols. The channel only needs the public WTS
-virtual-channel API, so compiling it into the presenter is enough.
+virtual-channel API, so compiling it into weaselwayd is enough.
 
 When the system FreeRDP moves to a new major/minor, re-copy the files from the
 matching tag instead of patching them here.

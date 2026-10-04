@@ -3,12 +3,13 @@
  * comments there say more about why the FreeRDP calls are in the order they
  * are in.
  *
- * Not ported yet: the clipboard, audio, the client's scale factor, and the
- * error frame -- a client that cannot do
- * gfxredir is disconnected, with the reason in the log.
+ * Not ported yet: the clipboard, the client's scale factor, and the error
+ * frame -- a client that cannot do gfxredir is disconnected, with the reason
+ * in the log.
  */
 
 #include "rdp.h"
+#include "audio.h"
 #include "input.h"
 
 #include <errno.h>
@@ -109,6 +110,12 @@ struct peer_context {
     struct rdp_server *server;
     freerdp_peer *peer;
     HANDLE vcm;
+    /* Held around WTSVirtualChannelManagerCheckFileDescriptorEx(), which is
+     * what writes queued channel data to the socket. The playback thread
+     * calls it too, so that sound does not wait for the main loop. Around the
+     * whole drain: the queue is shared by all channels, and two threads
+     * taking from it at once could send two chunks of one PDU out of order. */
+    pthread_mutex_t vcm_drain_lock;
 
     bool activated;
     /* Between our DesktopResize and the client's re-activation its surface
@@ -128,6 +135,10 @@ struct peer_context {
 
     /* MS-RDPEDISP: the client says what size its window has. */
     DispServerContext *disp;
+
+    /* rdpsnd and audin; see audio.h. */
+    struct audio_out *audio_out;
+    struct audio_in *audio_in;
 
     /* MS-RDPEI: the fingers on the client's touchpad. */
     RdpeiServerContext *rdpei;
@@ -550,13 +561,32 @@ frame_peer(struct rdp_server *server, const struct rdp_frame *frame)
     return peer_ctx;
 }
 
-/* Write queued channel data to the socket now, rather than when poll() next
- * notices the channel manager's event. */
+/*
+ * Write queued channel data to the socket now, rather than when poll() next
+ * notices the channel manager's event.
+ *
+ * Also called on the playback thread (audio.c). What is below
+ * CheckFileDescriptorEx() can be reached from another thread: the message
+ * queue has its own lock, every PDU gets a stream of its own, and the
+ * transport serialises writes. Legacy RDP encryption, with its RC4 state and
+ * sequence counter, would not be safe, but only TLS is ever enabled here.
+ * Opening drdynvc is the main loop's business, hence autoOpen FALSE.
+ */
 static void
 flush_channels(struct peer_context *peer_ctx)
 {
-    if (peer_ctx->vcm)
-        (void)WTSVirtualChannelManagerCheckFileDescriptorEx(peer_ctx->vcm, FALSE);
+    if (!peer_ctx->vcm)
+        return;
+
+    pthread_mutex_lock(&peer_ctx->vcm_drain_lock);
+    (void)WTSVirtualChannelManagerCheckFileDescriptorEx(peer_ctx->vcm, FALSE);
+    pthread_mutex_unlock(&peer_ctx->vcm_drain_lock);
+}
+
+static void
+audio_flush(void *data)
+{
+    flush_channels(data);
 }
 
 bool
@@ -1294,6 +1324,10 @@ peer_finish_activation(freerdp_peer *client)
     /* Before gfxredir, as Weston does. The first frame goes out once the
      * client has confirmed gfxredir caps. */
     setup_disp(peer_ctx);
+    /* Without sound if either fails. */
+    peer_ctx->audio_out = audio_out_new(peer_ctx->vcm, audio_flush, peer_ctx,
+                                        peer_ctx->server->config.verbose);
+    peer_ctx->audio_in = audio_in_new(peer_ctx->vcm);
     setup_rdpei(peer_ctx);
     setup_gfxredir(peer_ctx);
     return TRUE;
@@ -1305,6 +1339,7 @@ static bool
 peer_drdynvc_wait(struct peer_context *peer_ctx)
 {
     freerdp_peer *client = peer_ctx->peer;
+    BOOL alive;
 
     if (WTSVirtualChannelManagerGetDrdynvcState(peer_ctx->vcm) == DRDYNVC_STATE_READY) {
         peer_ctx->drdynvc_waiting = false;
@@ -1323,7 +1358,10 @@ peer_drdynvc_wait(struct peer_context *peer_ctx)
     if (!WTSVirtualChannelManagerIsChannelJoined(peer_ctx->vcm, DRDYNVC_SVC_CHANNEL_NAME))
         return true;
 
-    return WTSVirtualChannelManagerCheckFileDescriptor(peer_ctx->vcm);
+    pthread_mutex_lock(&peer_ctx->vcm_drain_lock);
+    alive = WTSVirtualChannelManagerCheckFileDescriptor(peer_ctx->vcm);
+    pthread_mutex_unlock(&peer_ctx->vcm_drain_lock);
+    return alive;
 }
 
 static BOOL
@@ -1383,6 +1421,7 @@ peer_activity(struct peer_context *peer_ctx)
 {
     freerdp_peer *client = peer_ctx->peer;
     BOOL auto_open;
+    BOOL alive;
 
     if (!client->CheckFileDescriptor(client))
         return false;
@@ -1396,7 +1435,10 @@ peer_activity(struct peer_context *peer_ctx)
      * waiting for its license PDU. */
     auto_open = client->activated &&
                 WTSVirtualChannelManagerIsChannelJoined(peer_ctx->vcm, DRDYNVC_SVC_CHANNEL_NAME);
-    return WTSVirtualChannelManagerCheckFileDescriptorEx(peer_ctx->vcm, auto_open);
+    pthread_mutex_lock(&peer_ctx->vcm_drain_lock);
+    alive = WTSVirtualChannelManagerCheckFileDescriptorEx(peer_ctx->vcm, auto_open);
+    pthread_mutex_unlock(&peer_ctx->vcm_drain_lock);
+    return alive;
 }
 
 /*
@@ -1459,6 +1501,7 @@ peer_context_new(freerdp_peer *client, rdpContext *context)
     peer_ctx->writing = -1;
     atomic_init(&peer_ctx->gfxredir_activated, false);
     pthread_mutex_init(&peer_ctx->gfxredir_lock, NULL);
+    pthread_mutex_init(&peer_ctx->vcm_drain_lock, NULL);
     return TRUE;
 }
 
@@ -1476,6 +1519,13 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
          * not match the next one. */
         peer_ctx->server->generation++;
     }
+
+    /* These join the audio threads, of which the playback one flushes the
+     * channels of this peer. */
+    audio_out_free(peer_ctx->audio_out);
+    peer_ctx->audio_out = NULL;
+    audio_in_free(peer_ctx->audio_in);
+    peer_ctx->audio_in = NULL;
 
     if (peer_ctx->disp) {
         peer_ctx->disp->Close(peer_ctx->disp);
@@ -1507,6 +1557,7 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         WTSCloseServer(peer_ctx->vcm);
         peer_ctx->vcm = NULL;
     }
+    pthread_mutex_destroy(&peer_ctx->vcm_drain_lock);
 }
 
 static bool
@@ -1654,7 +1705,7 @@ generate_session_tls(struct rdp_server *server)
 
     name = X509_get_subject_name(x509);
     if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                    (const unsigned char *)"weaselway-presenter", -1, -1, 0) ||
+                                    (const unsigned char *)"weaselwayd", -1, -1, 0) ||
         !X509_set_issuer_name(x509, name) || !X509_sign(x509, pkey, EVP_sha256()))
         goto out;
 

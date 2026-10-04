@@ -101,7 +101,7 @@
         mutter = wsl.pkgs.mutter;
         weaselway-scripts = wsl.pkgs.weaselway-scripts;
         weaselway-viewer = wsl.pkgs.weaselway-viewer;
-        weaselway-presenter = wsl.pkgs.weaselway-presenter;
+        weaselwayd = wsl.pkgs.weaselwayd;
         # sudo nix run .#tarballBuilder -> nixos.wsl
         tarballBuilder = wsl.config.system.build.tarballBuilder;
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.tarballBuilder;

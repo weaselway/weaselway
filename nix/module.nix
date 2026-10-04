@@ -129,7 +129,7 @@ in
       "input"
     ];
 
-    # kms-wsl spike: weaselway-presenter creates its simulated pointer through
+    # kms-wsl spike: weaselwayd creates its simulated pointer through
     # uinput, as the user. The compositor needs no such rule: logind hands it
     # the evdev devices and the KMS node.
     services.udev.extraRules = ''
@@ -234,7 +234,7 @@ in
 
     environment.systemPackages = [
       pkgs.weaselway-scripts
-      pkgs.weaselway-presenter
+      pkgs.weaselwayd
       pkgs.kdePackages.kwin
       pkgs.kdePackages.konsole
     ];

@@ -1,5 +1,5 @@
 /*
- * weaselway-presenter: the userspace half of dxgdrm's virtual display.
+ * weaselwayd: the userspace half of dxgdrm's virtual display.
  *
  * The compositor scans out to dxgdrm's KMS node. This waits for its commits,
  * reads the damaged part of each frame back and hands it to the Windows client
@@ -76,7 +76,7 @@ struct readback {
     double started, issued;
 };
 
-struct presenter {
+struct weaselwayd {
     int drm_fd;
     struct gbm_device *gbm;
     EGLDisplay display;
@@ -173,18 +173,18 @@ open_dxgdrm(void)
         match = version && !strcmp(version->name, "dxgdrm");
         drmFreeVersion(version);
         if (match) {
-            fprintf(stderr, "presenter: using %s\n", path);
+            fprintf(stderr, "weaselwayd: using %s\n", path);
             return fd;
         }
         close(fd);
     }
 
-    fprintf(stderr, "presenter: no dxgdrm render node -- is the module loaded?\n");
+    fprintf(stderr, "weaselwayd: no dxgdrm render node -- is the module loaded?\n");
     return -1;
 }
 
 static bool
-init_egl(struct presenter *p)
+init_egl(struct weaselwayd *p)
 {
     static const EGLint context_attribs[] = {
         EGL_CONTEXT_MAJOR_VERSION, 3,
@@ -195,13 +195,13 @@ init_egl(struct presenter *p)
 
     p->gbm = gbm_create_device(p->drm_fd);
     if (!p->gbm) {
-        fprintf(stderr, "presenter: gbm_create_device failed\n");
+        fprintf(stderr, "weaselwayd: gbm_create_device failed\n");
         return false;
     }
 
     p->display = eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, p->gbm, NULL);
     if (p->display == EGL_NO_DISPLAY || !eglInitialize(p->display, &major, &minor)) {
-        fprintf(stderr, "presenter: no EGL display on the gbm device (0x%x)\n", eglGetError());
+        fprintf(stderr, "weaselwayd: no EGL display on the gbm device (0x%x)\n", eglGetError());
         return false;
     }
 
@@ -209,7 +209,7 @@ init_egl(struct presenter *p)
     if (!strstr(extensions, "EGL_EXT_image_dma_buf_import") ||
         !strstr(extensions, "EGL_KHR_surfaceless_context") ||
         !strstr(extensions, "EGL_KHR_no_config_context")) {
-        fprintf(stderr, "presenter: EGL lacks dma-buf import, surfaceless or no-config contexts\n");
+        fprintf(stderr, "weaselwayd: EGL lacks dma-buf import, surfaceless or no-config contexts\n");
         return false;
     }
 
@@ -217,14 +217,14 @@ init_egl(struct presenter *p)
     p->context = eglCreateContext(p->display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, context_attribs);
     if (p->context == EGL_NO_CONTEXT ||
         !eglMakeCurrent(p->display, EGL_NO_SURFACE, EGL_NO_SURFACE, p->context)) {
-        fprintf(stderr, "presenter: cannot create a GLES3 context (0x%x)\n", eglGetError());
+        fprintf(stderr, "weaselwayd: cannot create a GLES3 context (0x%x)\n", eglGetError());
         return false;
     }
 
     image_target_texture_2d =
         (void (*)(GLenum, void *))eglGetProcAddress("glEGLImageTargetTexture2DOES");
     if (!image_target_texture_2d || !strstr((const char *)glGetString(GL_EXTENSIONS), "GL_OES_EGL_image")) {
-        fprintf(stderr, "presenter: GL lacks GL_OES_EGL_image\n");
+        fprintf(stderr, "weaselwayd: GL lacks GL_OES_EGL_image\n");
         return false;
     }
 
@@ -232,13 +232,13 @@ init_egl(struct presenter *p)
 
     /* Only worth anything on the GPU: llvmpipe cannot open a D3D12 shared
      * handle. */
-    fprintf(stderr, "presenter: EGL %d.%d, renderer: %s\n", major, minor,
+    fprintf(stderr, "weaselwayd: EGL %d.%d, renderer: %s\n", major, minor,
             (const char *)glGetString(GL_RENDERER));
     return true;
 }
 
 static void
-destroy_import(struct presenter *p, struct import *import)
+destroy_import(struct weaselwayd *p, struct import *import)
 {
     if (!import->buffer_id)
         return;
@@ -252,7 +252,7 @@ destroy_import(struct presenter *p, struct import *import)
 /* Import the frame's shared handle, or find the import made for it earlier.
  * Leaves its framebuffer bound for reading. */
 static struct import *
-get_import_buffer(struct presenter *p, uint64_t buffer_id, int fd,
+get_import_buffer(struct weaselwayd *p, uint64_t buffer_id, int fd,
                   uint32_t width, uint32_t height, uint32_t format, uint32_t pitch)
 {
     struct import *import = NULL, *oldest = &p->imports[0];
@@ -282,7 +282,7 @@ get_import_buffer(struct presenter *p, uint64_t buffer_id, int fd,
         import->image = eglCreateImage(p->display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                                        NULL, attribs);
         if (import->image == EGL_NO_IMAGE) {
-            fprintf(stderr, "presenter: importing buffer %llu failed (0x%x)\n",
+            fprintf(stderr, "weaselwayd: importing buffer %llu failed (0x%x)\n",
                     (unsigned long long)buffer_id, eglGetError());
             return NULL;
         }
@@ -296,7 +296,7 @@ get_import_buffer(struct presenter *p, uint64_t buffer_id, int fd,
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                import->texture, 0);
         if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            fprintf(stderr, "presenter: buffer %llu is not readable as a framebuffer\n",
+            fprintf(stderr, "weaselwayd: buffer %llu is not readable as a framebuffer\n",
                     (unsigned long long)buffer_id);
             import->buffer_id = buffer_id;
             destroy_import(p, import);
@@ -304,7 +304,7 @@ get_import_buffer(struct presenter *p, uint64_t buffer_id, int fd,
         }
 
         import->buffer_id = buffer_id;
-        fprintf(stderr, "presenter: imported buffer %llu (%ux%u, %.4s)\n",
+        fprintf(stderr, "weaselwayd: imported buffer %llu (%ux%u, %.4s)\n",
                 (unsigned long long)buffer_id, width, height,
                 (const char *)&format);
     }
@@ -315,14 +315,14 @@ get_import_buffer(struct presenter *p, uint64_t buffer_id, int fd,
 }
 
 static struct import *
-get_import(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+get_import(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
 {
     return get_import_buffer(p, frame->buffer_id, frame->fd, frame->width, frame->height,
                              frame->format, frame->pitch);
 }
 
 static struct import *
-find_import(struct presenter *p, uint64_t buffer_id)
+find_import(struct weaselwayd *p, uint64_t buffer_id)
 {
     for (int i = 0; i < MAX_IMPORTS; i++) {
         if (p->imports[i].buffer_id == buffer_id)
@@ -332,7 +332,7 @@ find_import(struct presenter *p, uint64_t buffer_id)
 }
 
 static bool
-resize_shadow(struct presenter *p)
+resize_shadow(struct weaselwayd *p)
 {
     if (p->shadow && p->shadow_width == p->width && p->shadow_height == p->height)
         return true;
@@ -345,7 +345,7 @@ resize_shadow(struct presenter *p)
 }
 
 static void
-add_damage(struct presenter *p, int x1, int y1, int x2, int y2)
+add_damage(struct weaselwayd *p, int x1, int y1, int x2, int y2)
 {
     if (x1 < 0) x1 = 0;
     if (y1 < 0) y1 = 0;
@@ -368,13 +368,13 @@ add_damage(struct presenter *p, int x1, int y1, int x2, int y2)
 }
 
 static void
-add_full_damage(struct presenter *p)
+add_full_damage(struct weaselwayd *p)
 {
     add_damage(p, 0, 0, p->width, p->height);
 }
 
 static bool
-write_jpeg(struct presenter *p, const uint8_t *pixels, unsigned index)
+write_jpeg(struct weaselwayd *p, const uint8_t *pixels, unsigned index)
 {
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
@@ -385,7 +385,7 @@ write_jpeg(struct presenter *p, const uint8_t *pixels, unsigned index)
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
     file = fopen(tmp, "wb");
     if (!file) {
-        fprintf(stderr, "presenter: cannot write %s: %s\n", tmp, strerror(errno));
+        fprintf(stderr, "weaselwayd: cannot write %s: %s\n", tmp, strerror(errno));
         return false;
     }
 
@@ -416,7 +416,7 @@ write_jpeg(struct presenter *p, const uint8_t *pixels, unsigned index)
 
 /* The frame's pixels are where they belong: show them, and say so. */
 static void
-frame_done(struct presenter *p, const uint8_t *pixels)
+frame_done(struct weaselwayd *p, const uint8_t *pixels)
 {
     struct readback *rb = &p->readback;
     double done = now_ms(), jpeg_ms = 0.0;
@@ -448,7 +448,7 @@ frame_done(struct presenter *p, const uint8_t *pixels)
 
 /* The frame did not make it; its part of the screen is still owed. */
 static void
-frame_failed(struct presenter *p)
+frame_failed(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
 
@@ -460,7 +460,7 @@ frame_failed(struct presenter *p)
 
 /* Where the frame in progress goes, or NULL if that place is gone. */
 static uint8_t *
-frame_pixels(struct presenter *p)
+frame_pixels(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
 
@@ -478,7 +478,7 @@ frame_pixels(struct presenter *p)
  * not block.
  */
 static bool
-readback_begin(struct presenter *p)
+readback_begin(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
     struct import *import = find_import(p, p->buffer_id);
@@ -513,7 +513,7 @@ readback_begin(struct presenter *p)
 
 /* Once the fence has signalled: copy the rect out of the pixel buffer. */
 static bool
-readback_copy(struct presenter *p, uint8_t *pixels)
+readback_copy(struct weaselwayd *p, uint8_t *pixels)
 {
     const struct rdp_rect *rect = &p->readback.rect;
     size_t row_bytes = (size_t)rect->width * 4, stride = (size_t)p->width * 4;
@@ -523,7 +523,7 @@ readback_copy(struct presenter *p, uint8_t *pixels)
     src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)(row_bytes * (size_t)rect->height),
                            GL_MAP_READ_BIT);
     if (!src) {
-        fprintf(stderr, "presenter: mapping the readback buffer failed\n");
+        fprintf(stderr, "weaselwayd: mapping the readback buffer failed\n");
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         return false;
     }
@@ -551,7 +551,7 @@ readback_copy(struct presenter *p, uint8_t *pixels)
 
 /* Called every millisecond while a readback is outstanding. */
 static void
-readback_poll(struct presenter *p)
+readback_poll(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
     uint8_t *pixels;
@@ -568,7 +568,7 @@ readback_poll(struct presenter *p)
     rb->active = false;
 
     if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED) {
-        fprintf(stderr, "presenter: the readback did not finish within a second\n");
+        fprintf(stderr, "weaselwayd: the readback did not finish within a second\n");
         frame_failed(p);
         return;
     }
@@ -596,7 +596,7 @@ readback_poll(struct presenter *p)
 /* A dumb-buffer frame (a compositor rendering without the GPU): copy all of
  * it out of the kernel. XRGB8888 is B, G, R, X in memory, as wanted. */
 static bool
-read_dumb(struct presenter *p, uint8_t *pixels)
+read_dumb(struct weaselwayd *p, uint8_t *pixels)
 {
     struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_PRIMARY };
     size_t size = (size_t)p->width * (size_t)p->height * 4 * 2;
@@ -628,7 +628,7 @@ read_dumb(struct presenter *p, uint8_t *pixels)
  * pixels.
  */
 static uint8_t *
-read_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
 {
     int width = (int)frame->cursor_width, height = (int)frame->cursor_height;
     uint8_t *pixels = malloc((size_t)width * (size_t)height * 4);
@@ -698,7 +698,7 @@ fail:
  * down to what is not transparent, with the hotspot kept inside.
  */
 static void
-update_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
 {
     int width = (int)frame->cursor_width, height = (int)frame->cursor_height;
     int hot_x = frame->cursor_hot_x, hot_y = frame->cursor_hot_y;
@@ -708,7 +708,7 @@ update_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
     if (!(frame->flags & DXGDRM_FRAME_CURSOR)) {
         if (p->have_cursor || !p->cursor_sent) {
             if (p->verbose)
-                fprintf(stderr, "presenter: cursor hidden\n");
+                fprintf(stderr, "weaselwayd: cursor hidden\n");
             if (p->rdp)
                 rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
         }
@@ -724,7 +724,7 @@ update_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
 
     pixels = frame->cursor_format == DRM_FORMAT_ARGB8888 ? read_cursor(p, frame) : NULL;
     if (!pixels) {
-        fprintf(stderr, "presenter: cannot read the %dx%d cursor; hiding it\n", width, height);
+        fprintf(stderr, "weaselwayd: cannot read the %dx%d cursor; hiding it\n", width, height);
         if (p->rdp)
             rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
         return;
@@ -754,7 +754,7 @@ update_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
     }
 
     if (p->verbose)
-        fprintf(stderr, "presenter: cursor updated: %dx%d %s buffer %llu, hotspot %d,%d; "
+        fprintf(stderr, "weaselwayd: cursor updated: %dx%d %s buffer %llu, hotspot %d,%d; "
                         "sent as %dx%d+%d+%d\n",
                 width, height, (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
                 (unsigned long long)frame->cursor_buffer_id, hot_x, hot_y, x2 - x1, y2 - y1, x1,
@@ -770,7 +770,7 @@ update_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
  * readable, so it does not wait. Returns false if the node is gone.
  */
 static bool
-fetch_frame(struct presenter *p)
+fetch_frame(struct weaselwayd *p)
 {
     struct drm_dxgdrm_get_frame frame = { .seq = p->seq, .timeout_ms = 1 };
     bool resized;
@@ -778,7 +778,7 @@ fetch_frame(struct presenter *p)
     if (ioctl(p->drm_fd, DRM_IOCTL_DXGDRM_GET_FRAME, &frame)) {
         if (errno == ETIME || errno == EINTR)
             return true;
-        fprintf(stderr, "presenter: DXGDRM_GET_FRAME failed: %s\n", strerror(errno));
+        fprintf(stderr, "weaselwayd: DXGDRM_GET_FRAME failed: %s\n", strerror(errno));
         return false;
     }
     p->seq = frame.seq;
@@ -790,15 +790,15 @@ fetch_frame(struct presenter *p)
     /* A compositor leaves its last frame up when it goes away. */
     if (!!(frame.flags & DXGDRM_FRAME_OWNED) != p->owned) {
         p->owned = !p->owned;
-        fprintf(stderr, p->owned ? "presenter: a compositor took over the display\n"
-                                 : "presenter: no compositor owns the display any more\n");
+        fprintf(stderr, p->owned ? "weaselwayd: a compositor took over the display\n"
+                                 : "weaselwayd: no compositor owns the display any more\n");
         /* Once it has had time to come up; see CLICK_DELAY_MS. */
         atomic_store(&click_at_ms, p->owned ? (long)now_ms() + CLICK_DELAY_MS : 0);
     }
 
     if (!(frame.flags & DXGDRM_FRAME_PRIMARY)) {
         if (p->have_frame)
-            fprintf(stderr, "presenter: the compositor turned the display off\n");
+            fprintf(stderr, "weaselwayd: the compositor turned the display off\n");
         p->have_frame = false;
         p->pending = false;
         return true;
@@ -847,7 +847,7 @@ fetch_frame(struct presenter *p)
  * that is still connecting: there is nothing to keep pace with.
  */
 static void
-ack_frame(struct presenter *p)
+ack_frame(struct weaselwayd *p)
 {
     struct drm_dxgdrm_ack_frame ack = { .primary_seq = p->primary_seq };
 
@@ -858,14 +858,14 @@ ack_frame(struct presenter *p)
         return;
 
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_ACK_FRAME, &ack))
-        fprintf(stderr, "presenter: DXGDRM_ACK_FRAME failed: %s\n", strerror(errno));
+        fprintf(stderr, "weaselwayd: DXGDRM_ACK_FRAME failed: %s\n", strerror(errno));
     p->acked_seq = p->primary_seq;
 }
 
 /* The client's window has a size; ask for a screen of it. The compositor
  * switches to the new mode, and the frames that follow have that size. */
 static void
-apply_size_request(struct presenter *p)
+apply_size_request(struct weaselwayd *p)
 {
     struct drm_dxgdrm_set_mode mode;
     int width, height;
@@ -876,7 +876,7 @@ apply_size_request(struct presenter *p)
     mode.width = (uint32_t)width;
     mode.height = (uint32_t)height;
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SET_MODE, &mode))
-        fprintf(stderr, "presenter: cannot set a %dx%d mode: %s\n", width, height, strerror(errno));
+        fprintf(stderr, "weaselwayd: cannot set a %dx%d mode: %s\n", width, height, strerror(errno));
 }
 
 /*
@@ -888,7 +888,7 @@ apply_size_request(struct presenter *p)
  * pitch), so the box is widened to a multiple of 64 pixels.
  */
 static void
-try_present(struct presenter *p)
+try_present(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
     enum rdp_state state = p->rdp ? rdp_server_state(p->rdp) : RDP_NO_CLIENT;
@@ -980,7 +980,7 @@ pointer_thread(void *data)
             input_pointer_button(args->input, BTN_LEFT, true);
             usleep(50000);
             input_pointer_button(args->input, BTN_LEFT, false);
-            fprintf(stderr, "presenter: clicked in the middle of the screen\n");
+            fprintf(stderr, "weaselwayd: clicked in the middle of the screen\n");
         }
 
         if (args->circle) {
@@ -1011,7 +1011,7 @@ test_swipe(const char *direction, int fingers)
     const int steps = 40;
 
     if (!input || (!dx && !dy) || fingers < 1 || fingers > 5) {
-        fprintf(stderr, "presenter: --swipe up|down|left|right [--fingers 1..5]\n");
+        fprintf(stderr, "weaselwayd: --swipe up|down|left|right [--fingers 1..5]\n");
         return 1;
     }
 
@@ -1059,7 +1059,7 @@ usage(const char *argv0)
 int
 main(int argc, char **argv)
 {
-    struct presenter p = {
+    struct weaselwayd p = {
         .max_frames = 600,
         .quality = 85,
     };
@@ -1117,13 +1117,13 @@ main(int argc, char **argv)
     }
 
     /* No SA_RESTART: a signal has to get us out of poll(). A client that goes
-     * away mid-write must not take the presenter with it. */
+     * away mid-write must not take weaselwayd with it. */
     sigaction(SIGINT, &action, NULL);
     sigaction(SIGTERM, &action, NULL);
     signal(SIGPIPE, SIG_IGN);
 
     if (p.out_dir && mkdir(p.out_dir, 0755) && errno != EEXIST) {
-        fprintf(stderr, "presenter: cannot create %s: %s\n", p.out_dir, strerror(errno));
+        fprintf(stderr, "weaselwayd: cannot create %s: %s\n", p.out_dir, strerror(errno));
         return 1;
     }
 
@@ -1155,7 +1155,7 @@ main(int argc, char **argv)
     if (!fetch_frame(&p))
         return 1;
     if (!p.have_frame)
-        fprintf(stderr, "presenter: waiting for the compositor's first commit\n");
+        fprintf(stderr, "weaselwayd: waiting for the compositor's first commit\n");
     p.stat_since = now_ms();
     p.stat_primary_seq = p.primary_seq;
 
@@ -1179,12 +1179,12 @@ main(int argc, char **argv)
         if (poll(fds, (nfds_t)n, timeout) < 0) {
             if (errno == EINTR)
                 continue;
-            fprintf(stderr, "presenter: poll failed: %s\n", strerror(errno));
+            fprintf(stderr, "weaselwayd: poll failed: %s\n", strerror(errno));
             break;
         }
 
         if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            fprintf(stderr, "presenter: the dxgdrm node went away\n");
+            fprintf(stderr, "weaselwayd: the dxgdrm node went away\n");
             break;
         }
         if ((fds[0].revents & POLLIN) && !fetch_frame(&p))
@@ -1202,7 +1202,7 @@ main(int argc, char **argv)
             /* With the compositor held to our pace the two counts match;
              * more commits than frames means frames were merged. */
             if (p.stat_frames && !p.verbose)
-                fprintf(stderr, "presenter: %u frame(s) for %llu commit(s) in %.0f s, %.2f ms "
+                fprintf(stderr, "weaselwayd: %u frame(s) for %llu commit(s) in %.0f s, %.2f ms "
                                 "and %.0f%% of the screen each on average\n",
                         p.stat_frames,
                         (unsigned long long)(p.primary_seq - p.stat_primary_seq),
@@ -1228,6 +1228,6 @@ main(int argc, char **argv)
     for (int i = 0; i < MAX_IMPORTS; i++)
         destroy_import(&p, &p.imports[i]);
     free(p.shadow);
-    fprintf(stderr, "presenter: %u frame(s)\n", p.frames);
+    fprintf(stderr, "weaselwayd: %u frame(s)\n", p.frames);
     return 0;
 }

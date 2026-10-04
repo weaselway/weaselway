@@ -100,7 +100,7 @@ in
   });
 
   # kms-wsl spike: KWin that tells the kernel what changed in a frame
-  # (FB_DAMAGE_CLIPS), so the presenter does not read back the whole screen
+  # (FB_DAMAGE_CLIPS), so weaselwayd does not read back the whole screen
   # for every frame. The patches are backports (branches weaselway-6.6.6 and
   # weaselway-6.7.5) of the commit on master of github.com/weaselway/kde-kwin;
   # which one depends on the Plasma release in nixpkgs. Replaced in the scope,
@@ -128,10 +128,10 @@ in
   # kms-wsl spike: the userspace half of dxgdrm's virtual display. Built
   # against nixpkgs' libglvnd and libgbm; at run time those load the patched
   # mesa from /run/opengl-driver like everything else.
-  weaselway-presenter = final.stdenv.mkDerivation {
-    pname = "weaselway-presenter";
+  weaselwayd = final.stdenv.mkDerivation {
+    pname = "weaselwayd";
     version = "0-spike";
-    src = ../presenter;
+    src = ../weaselwayd;
 
     nativeBuildInputs = [ final.pkg-config ];
     buildInputs = [
@@ -140,7 +140,7 @@ in
       final.libdrm
       final.libjpeg
       # The RDP server; gfxredir, which nixpkgs' FreeRDP is built without, is
-      # compiled in from presenter/gfxredir.
+      # compiled in from weaselwayd/gfxredir.
       final.freerdp
       final.openssl
     ];

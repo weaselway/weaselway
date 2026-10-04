@@ -1,5 +1,5 @@
 /*
- * The presenter's RDP side: a FreeRDP 3 server on a vsock that hands the
+ * weaselwayd's RDP side: a FreeRDP 3 server on a vsock that hands the
  * Windows client the screen through gfxredir shared memory, and puts the
  * client's mouse and keyboard on the uinput devices.
  *

@@ -6,7 +6,7 @@
 # mutter runs headless and serves RDP itself. Here, the compositor uses its
 # normal native backend: it takes the dxgdrm KMS node and the input devices
 # from logind, page-flips like on real hardware, and knows nothing about
-# Windows. weaselway-presenter is what picks the frames up.
+# Windows. weaselwayd is what picks the frames up.
 #
 # The native backend wants what a display manager normally provides: a logind
 # session on seat0 that owns the devices. So the compositor runs in a transient
@@ -156,6 +156,6 @@ cat <<MSG
 
 Follow the compositor:   journalctl -fu ${UNIT}
 Session and seat:        loginctl; loginctl seat-status seat0
-Serve it to the viewer:  weaselway-presenter      (then start-viewer; --out DIR for JPEGs)
+Serve it to the viewer:  weaselwayd      (then start-viewer; --out DIR for JPEGs)
 Stop:                    start-kms-session stop
 MSG

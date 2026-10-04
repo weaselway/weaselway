@@ -1,5 +1,5 @@
 /*
- * The presenter's input devices: an absolute pointer, a keyboard and a
+ * weaselwayd's input devices: an absolute pointer, a keyboard and a
  * multitouch touchpad on uinput. To the compositor they are ordinary evdev
  * devices that libinput picks up.
  */

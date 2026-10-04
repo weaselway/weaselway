@@ -8,11 +8,11 @@ CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread
            -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
-SOURCES := presenter.c rdp.c input.c
+SOURCES := weaselwayd.c rdp.c input.c audio.c
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
-HEADERS := rdp.h input.h $(wildcard gfxredir/*.h)
+HEADERS := rdp.h input.h audio.h $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes
@@ -39,7 +39,7 @@ LDFLAGS += -pie -Wl,-z,relro,-z,now,-z,noexecstack
 
 PREFIX  ?= /usr/local
 
-weaselway-presenter: $(OBJECTS)
+weaselwayd: $(OBJECTS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
 
 %.o: %.c $(HEADERS)
@@ -52,17 +52,17 @@ gfxredir/%.o: gfxredir/%.c $(HEADERS)
 # operation aborts with a report. Slow; not for the image.
 asan:
 	$(CC) $(CFLAGS) -w -Igfxredir -O1 -fno-omit-frame-pointer -fsanitize=address,undefined \
-		$(LDFLAGS) -o weaselway-presenter-asan $(SOURCES) $(GFXREDIR) $(LDLIBS)
+		$(LDFLAGS) -o weaselwayd-asan $(SOURCES) $(GFXREDIR) $(LDLIBS)
 
 # GCC's static analyzer; reports leaks, double frees and NULL dereferences on
 # paths it can prove.
 analyze:
 	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $(SOURCES)
 
-install: weaselway-presenter
-	install -D -m 0755 weaselway-presenter $(DESTDIR)$(PREFIX)/bin/weaselway-presenter
+install: weaselwayd
+	install -D -m 0755 weaselwayd $(DESTDIR)$(PREFIX)/bin/weaselwayd
 
 clean:
-	rm -f weaselway-presenter weaselway-presenter-asan $(OBJECTS)
+	rm -f weaselwayd weaselwayd-asan $(OBJECTS)
 
 .PHONY: install clean asan analyze

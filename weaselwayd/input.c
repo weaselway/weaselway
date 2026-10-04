@@ -188,7 +188,7 @@ input_new(void)
     input->pointer_fd = create_pointer();
     input->keyboard_fd = input->pointer_fd >= 0 ? create_keyboard() : -1;
     if (input->pointer_fd < 0 || input->keyboard_fd < 0) {
-        fprintf(stderr, "presenter: cannot create the uinput devices (%s) -- no input. "
+        fprintf(stderr, "weaselwayd: cannot create the uinput devices (%s) -- no input. "
                         "Is the uinput module loaded and /dev/uinput writable?\n",
                 strerror(errno));
         input_free(input);
@@ -196,7 +196,7 @@ input_new(void)
     }
 
     input->touchpad_fd = create_touchpad();
-    fprintf(stderr, "presenter: uinput pointer, keyboard%s created\n",
+    fprintf(stderr, "weaselwayd: uinput pointer, keyboard%s created\n",
             input->touchpad_fd >= 0 ? " and touchpad" : " (but no touchpad)");
     return input;
 }
