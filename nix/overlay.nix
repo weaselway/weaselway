@@ -113,6 +113,10 @@ in
       final.libgbm
       final.libdrm
       final.libjpeg
+      # The RDP server; gfxredir, which nixpkgs' FreeRDP is built without, is
+      # compiled in from presenter/gfxredir.
+      final.freerdp
+      final.openssl
     ];
 
     # dxgdrm_drm.h, the uapi header, lives with the module.

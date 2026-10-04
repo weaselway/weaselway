@@ -1,11 +1,19 @@
 # The uapi header lives in the dxgdrm repo; point DXGDRM_INCLUDE at a checkout.
 DXGDRM_INCLUDE ?= ../../dxgdrm
 
-PKGS    := egl glesv2 gbm libdrm libjpeg
+PKGS    := egl glesv2 gbm libdrm libjpeg freerdp3 freerdp-server3 winpr3 libcrypto
 CFLAGS  ?= -O2 -g
-CFLAGS  += -std=gnu11 -Wall -Wextra -Wno-unused-parameter -pthread \
-           -I$(DXGDRM_INCLUDE) $(shell pkg-config --cflags $(PKGS))
+# -isystem: FreeRDP's headers warn about their own deprecated declarations.
+CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread \
+           -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
+
+SOURCES := presenter.c rdp.c input.c
+# The gfxredir server channel, which distributions build FreeRDP without; see
+# gfxredir/README.md. Upstream code, so it is spared our warnings.
+GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
+HEADERS := rdp.h input.h $(wildcard gfxredir/*.h)
+OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes
 # into a crash instead of something exploitable.
@@ -31,24 +39,30 @@ LDFLAGS += -pie -Wl,-z,relro,-z,now,-z,noexecstack
 
 PREFIX  ?= /usr/local
 
-weaselway-presenter: presenter.c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
+weaselway-presenter: $(OBJECTS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
+
+%.o: %.c $(HEADERS)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+gfxredir/%.o: gfxredir/%.c $(HEADERS)
+	$(CC) $(CFLAGS) -w -Igfxredir -c -o $@ $<
 
 # For development: every out-of-bounds access, use-after-free and undefined
 # operation aborts with a report. Slow; not for the image.
-asan: presenter.c
-	$(CC) $(CFLAGS) -O1 -fno-omit-frame-pointer -fsanitize=address,undefined \
-		$(LDFLAGS) -o weaselway-presenter-asan $< $(LDLIBS)
+asan:
+	$(CC) $(CFLAGS) -w -Igfxredir -O1 -fno-omit-frame-pointer -fsanitize=address,undefined \
+		$(LDFLAGS) -o weaselway-presenter-asan $(SOURCES) $(GFXREDIR) $(LDLIBS)
 
 # GCC's static analyzer; reports leaks, double frees and NULL dereferences on
 # paths it can prove.
-analyze: presenter.c
-	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $<
+analyze:
+	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $(SOURCES)
 
 install: weaselway-presenter
 	install -D -m 0755 weaselway-presenter $(DESTDIR)$(PREFIX)/bin/weaselway-presenter
 
 clean:
-	rm -f weaselway-presenter weaselway-presenter-asan
+	rm -f weaselway-presenter weaselway-presenter-asan $(OBJECTS)
 
 .PHONY: install clean asan analyze

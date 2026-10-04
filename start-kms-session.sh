@@ -143,6 +143,6 @@ cat <<MSG
 
 Follow the compositor:   journalctl -fu ${UNIT}
 Session and seat:        loginctl; loginctl seat-status seat0
-Read the frames back:    weaselway-presenter      (JPEGs in /tmp/weaselway-frames)
+Serve it to the viewer:  weaselway-presenter      (then start-viewer; --out DIR for JPEGs)
 Stop:                    start-kms-session stop
 MSG
