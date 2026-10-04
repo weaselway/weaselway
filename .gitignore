@@ -3,3 +3,6 @@
 /weaselwayd/weaselwayd-asan
 /weaselwayd/*.o
 /weaselwayd/gfxredir/*.o
+/weaselwayd/tests/test-formats
+/weaselwayd/tests/selection-tool
+/weaselwayd/tests/rdp-harness

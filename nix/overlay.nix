@@ -123,9 +123,14 @@ in
       # weaselwayd/gfxredir.
       final.weaselway-freerdp
       final.openssl
-      # The main loop, and GIO for the audio sockets.
+      # The main loop, D-Bus for the clipboard, and its images.
       final.glib
+      final.libpng
     ];
+
+    # The clipboard's conversions.
+    doCheck = true;
+    checkTarget = "check";
 
     # dxgdrm_drm.h, the uapi header, lives with the module.
     makeFlags = [

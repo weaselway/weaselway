@@ -12,8 +12,9 @@
  * object is the CopyTextureRegion + map a D3D12 presenter would do.
  *
  * One thread running a GLib main loop: the DRM node (readable when there is a
- * commit to fetch), the RDP server's source, and a one millisecond tick while
- * a readback's fence is outstanding.
+ * commit to fetch), the RDP server's source, a one millisecond tick while a
+ * readback's fence is outstanding, and the session's clipboard on D-Bus
+ * (selection.c).
  */
 
 #define G_LOG_DOMAIN "weaselwayd"
@@ -43,6 +44,7 @@
 #include "input.h"
 #include "log.h"
 #include "rdp.h"
+#include "selection.h"
 
 #define MAX_IMPORTS 8
 
@@ -87,6 +89,7 @@ struct weaselwayd {
 
     struct rdp_server *rdp;
     struct input *input;
+    struct selection *selection;
 
     /* What is on the screen, as DXGDRM_GET_FRAME last described it. */
     uint64_t seq, primary_seq, cursor_seq;
@@ -918,7 +921,7 @@ main(int argc, char **argv)
         .changed_data = &p,
     };
     g_autofree char *shm_dir = NULL;
-    gboolean no_input = FALSE, verbose = FALSE;
+    gboolean no_input = FALSE, no_clipboard = FALSE, verbose = FALSE;
     const GOptionEntry entries[] = {
         { "port", 0, 0, G_OPTION_ARG_INT, &rdp_config.vsock_port,
           "The vsock port the RDP server listens on (default $WEASELWAY_VSOCK_PORT, or 3389)",
@@ -931,6 +934,8 @@ main(int argc, char **argv)
           "DIR" },
         { "no-input", 0, 0, G_OPTION_ARG_NONE, &no_input,
           "Create no uinput devices: no input from the client", NULL },
+        { "no-clipboard", 0, 0, G_OPTION_ARG_NONE, &no_clipboard,
+          "Leave the session's clipboard and the client's apart", NULL },
         { "verbose", 0, 0, G_OPTION_ARG_NONE, &verbose, "A line for every frame", NULL },
         G_OPTION_ENTRY_NULL,
     };
@@ -976,8 +981,11 @@ main(int argc, char **argv)
 
     if (!no_input)
         p.input = input_new();
+    if (!no_clipboard)
+        p.selection = selection_new();
 
     rdp_config.input = p.input;
+    rdp_config.selection = p.selection;
     p.rdp = rdp_server_new(&rdp_config, &error);
     if (!p.rdp) {
         g_warning("%s", error->message);
@@ -1008,6 +1016,7 @@ main(int argc, char **argv)
     if (p.readback.active)
         glDeleteSync(p.readback.sync);
     rdp_server_free(p.rdp);
+    selection_free(p.selection);
     input_free(p.input);
     for (int i = 0; i < MAX_IMPORTS; i++)
         destroy_import(&p, &p.imports[i]);

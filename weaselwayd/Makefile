@@ -2,18 +2,18 @@
 DXGDRM_INCLUDE ?= ../../dxgdrm
 
 PKGS    := egl glesv2 gbm libdrm freerdp3 freerdp-server3 winpr3 libcrypto \
-           glib-2.0 gio-2.0 gio-unix-2.0
+           glib-2.0 gio-2.0 gio-unix-2.0 libpng
 CFLAGS  ?= -O2 -g
 # -isystem: FreeRDP's headers warn about their own deprecated declarations.
 CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread \
            -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
-SOURCES := weaselwayd.c rdp.c input.c audio.c log.c
+SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c selection.c formats.c log.c
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
-HEADERS := rdp.h input.h audio.h log.h $(wildcard gfxredir/*.h)
+HEADERS := rdp.h input.h audio.h clipboard.h selection.h formats.h log.h $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes
@@ -60,10 +60,31 @@ asan:
 analyze:
 	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $(SOURCES)
 
+# The clipboard's conversions, which need nothing but GLib and libpng to run.
+TEST_PKGS := glib-2.0 gio-2.0 gio-unix-2.0 libpng
+TEST_CFLAGS := -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -g -I. \
+               $(shell pkg-config --cflags $(TEST_PKGS))
+TEST_LIBS := $(shell pkg-config --libs $(TEST_PKGS))
+
+tests/test-formats: tests/test-formats.c formats.c formats.h
+	$(CC) $(TEST_CFLAGS) -o $@ tests/test-formats.c formats.c $(TEST_LIBS)
+
+# For trying selection.c against a running mutter; see tests/selection-mutter.sh.
+tests/selection-tool: tests/selection-tool.c selection.c selection.h
+	$(CC) $(TEST_CFLAGS) -o $@ tests/selection-tool.c selection.c $(TEST_LIBS)
+
+# The RDP server and the clipboard without dxgdrm; see tests/clipboard-rdp.sh.
+tests/rdp-harness: tests/rdp-harness.c $(filter-out weaselwayd.o,$(OBJECTS))
+	$(CC) $(CFLAGS) $(LDFLAGS) -I. -o $@ $^ $(LDLIBS)
+
+check: tests/test-formats
+	tests/test-formats
+
 install: weaselwayd
 	install -D -m 0755 weaselwayd $(DESTDIR)$(PREFIX)/bin/weaselwayd
 
 clean:
-	rm -f weaselwayd weaselwayd-asan $(OBJECTS)
+	rm -f weaselwayd weaselwayd-asan $(OBJECTS) tests/test-formats tests/selection-tool \
+		tests/rdp-harness
 
-.PHONY: install clean asan analyze
+.PHONY: install clean asan analyze check

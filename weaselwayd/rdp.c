@@ -3,15 +3,15 @@
  * comments there say more about why the FreeRDP calls are in the order they
  * are in.
  *
- * Not ported yet: the clipboard, the client's scale factor, and the error
- * frame -- a client that cannot do gfxredir is disconnected, with the reason
- * in the log.
+ * Not ported yet: the client's scale factor, and the error frame -- a client
+ * that cannot do gfxredir is disconnected, with the reason in the log.
  */
 
 #define G_LOG_DOMAIN "rdp"
 
 #include "rdp.h"
 #include "audio.h"
+#include "clipboard.h"
 #include "input.h"
 
 #include <errno.h>
@@ -133,6 +133,9 @@ struct peer_context {
     /* rdpsnd and audin; see audio.h. */
     struct audio_out *audio_out;
     struct audio_in *audio_in;
+
+    /* cliprdr; see clipboard.h. */
+    struct clipboard *clipboard;
 
     /* MS-RDPEI: the fingers on the client's touchpad. */
     RdpeiServerContext *rdpei;
@@ -1288,6 +1291,9 @@ peer_finish_activation(freerdp_peer *client)
     peer_ctx->audio_out = audio_out_new(peer_ctx->vcm, audio_flush, peer_ctx,
                                         peer_ctx->server->config.verbose);
     peer_ctx->audio_in = audio_in_new(peer_ctx->vcm);
+    /* Without a clipboard if the client did not ask for the channel. */
+    peer_ctx->clipboard = clipboard_new(peer_ctx->vcm, client->context,
+                                        peer_ctx->server->config.selection);
     setup_rdpei(peer_ctx);
     setup_gfxredir(peer_ctx);
     return TRUE;
@@ -1485,6 +1491,9 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
     peer_ctx->audio_out = NULL;
     audio_in_free(peer_ctx->audio_in);
     peer_ctx->audio_in = NULL;
+
+    clipboard_free(peer_ctx->clipboard);
+    peer_ctx->clipboard = NULL;
 
     if (peer_ctx->disp) {
         peer_ctx->disp->Close(peer_ctx->disp);

@@ -30,6 +30,11 @@ weaselwayd -- GL readback -> shared memory -- RDP on a vsock --> sdl-freerdp.exe
 - The client's keyboard, mouse and touchpad become uinput devices that libinput picks up like any
   others. The session's size follows the viewer's window: weaselwayd sets the mode on dxgdrm, and the
   compositor sees a hotplug.
+- The clipboard is the one thing weaselwayd asks the compositor for. With mutter it goes through the
+  D-Bus interface gnome-remote-desktop uses (`org.gnome.Mutter.RemoteDesktop`): a session object
+  whose clipboard is enabled and which is never started, so gnome-shell shows no "screen is being
+  shared" indicator. Text, HTML and images cross, converted between Windows clipboard formats and
+  mime types.
 - The compositor needs a logind session on `seat0` that owns the devices. `start-session` creates
   one with a transient system unit that has a PAM session, which is what a display manager does.
 
@@ -116,7 +121,8 @@ It publishes nothing.
     and libgbm (which load the patched mesa at run time), `weaselway-freerdp`, and the uapi header
     from the dxgdrm input. The gfxredir server channel is compiled in from
     [weaselwayd/gfxredir](weaselwayd/gfxredir), because distributions build FreeRDP without it.
-    It is a GLib program: one main loop, with GIO for the audio sockets.
+    It is a GLib program: one main loop, GIO for D-Bus and sockets, libpng for images on the
+    clipboard. The build runs `make check`.
   - `weaselway-freerdp`: nixpkgs freerdp plus
     [nix/freerdp-dsp-ffmpeg-pcm-s16.patch](nix/freerdp-dsp-ffmpeg-pcm-s16.patch). Only weaselwayd
     links it.
@@ -247,7 +253,13 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 - To test unpushed commits of the other repos, add
   `--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.1-wsl'` (similarly `freerdp`, `dxgdrm`).
 - weaselwayd alone builds with `make` in [weaselwayd/](weaselwayd), given `DXGDRM_INCLUDE` (a dxgdrm
-  checkout) and FreeRDP 3, GLib, EGL, GLES, gbm and libdrm from pkg-config.
+  checkout) and FreeRDP 3, GLib, libpng, EGL, GLES, gbm and libdrm from pkg-config.
+  - `make check` tests the clipboard's format conversions.
+  - [tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh) copies and pastes text, HTML and an
+    image in both directions without Windows or a GPU: xfreerdp on an Xvfb plays the client, a
+    headless mutter the session, and `tests/rdp-harness` is weaselwayd's RDP server and clipboard
+    without the screen. [tests/selection-mutter.sh](weaselwayd/tests/selection-mutter.sh) tries
+    the mutter side alone. Neither runs in the build; they need mutter, D-Bus and an X server.
 - Not on cache.nixos.org, so they take time: the dxgdrm kernel tree, mesa, mutter, and gnome-shell,
   which relinks against mutter. CI pushes them to weaselway.cachix.org; a builder that has it as a
   substituter (`extra-substituters`, key in [nix/module.nix](nix/module.nix)) gets them from there for
@@ -322,14 +334,19 @@ wpctl status; pw-top -b -n 3                    # sink present, graph running, E
 ls -l /dev/dri /dev/uinput                      # card0, renderD128; uinput group input
 loginctl; loginctl seat-status seat0            # the session is on seat0 and owns the devices
 journalctl -u weaselway-session -b              # the compositor
-journalctl --user -u weaselwayd -b              # weaselwayd: …, rdp: …, audio: …
+journalctl --user -u weaselwayd -b              # weaselwayd: …, rdp: …, audio: …, clipboard: …
 ```
 
 `weaselwayd --verbose` logs a line for every frame: which buffer, how much of the screen, and how
-long the readback took. `G_MESSAGES_DEBUG=rdp` (or `audio`, `weaselwayd`) does the same for one
-part. To run it by hand, stop the unit first
+long the readback took, and every step of a copy and paste. `G_MESSAGES_DEBUG=clipboard` (or `rdp`,
+`audio`, `weaselwayd`) does the same for one part. To run it by hand, stop the unit first
 (`systemctl --user stop weaselwayd`). `--tcp N` listens on 127.0.0.1 instead of the vsock, for a
-client on the Linux side.
+client on the Linux side. `--no-clipboard` keeps the two clipboards apart.
+
+For the clipboard, the log says whether mutter gave weaselwayd one ("sharing the session's
+clipboard"), and `busctl --user tree org.gnome.Mutter.RemoteDesktop` shows the session object.
+mutter closes the session when the screen is locked; weaselwayd asks for a new one every three
+seconds until it gets it.
 
 `start-viewer /sdl-show-stats:2` and `/sdl-show-damage` show the same from the client's side.
 
@@ -369,10 +386,15 @@ nix shell nixpkgs#sox -c sox -n -r 48000 -c 2 /tmp/tone.wav synth 8 sine 440 vol
 
 ## Open
 
-- **Not ported from the RDP backend mutter used to carry:** the clipboard, the client's scale
-  factor, and the error frame (a client is disconnected instead, with the reason in the log). There
-  is no touchscreen device either, only the touchpad.
-  - The clipboard has no compositor-neutral API. KWin has data-control; mutter does not.
+- **Not ported from the RDP backend mutter used to carry:** the client's scale factor, and the
+  error frame (a client is disconnected instead, with the reason in the log). There is no
+  touchscreen device either, only the touchpad.
+- **The clipboard** works with mutter only, and carries no files.
+  - There is no compositor-neutral API. KWin has ext-data-control-v1, which would be a second
+    implementation of [weaselwayd/selection.h](weaselwayd/selection.h); mutter does not have it.
+  - A client that connects with text or an image on its clipboard replaces what the session had.
+  - Tested against mutter 50.4 with xfreerdp as the client
+    ([tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh)).
 - **Audio from browsers crackles** (Chromium, Firefox, GNOME Web on YouTube); mpv is fine.
   weaselwayd's log shows no dropped backlog or stalls while it happens. `pw-top` showed errors on
   the playback stream, and the graph running at 48 kHz against the sink's 44.1 kHz. Raising

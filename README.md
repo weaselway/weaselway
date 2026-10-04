@@ -218,8 +218,9 @@ change the `systemDistro=` line to the one it prints and run `wsl --shutdown`.
 
 ## What doesn't work yet
 
-- **The clipboard is not shared with Windows.** Copy and paste works inside
-  the session, not between it and Windows.
+- **Files cannot be copied between Windows and the session.** Text, formatted
+  text and images can.
+- **On Plasma the clipboard is not shared with Windows.** On GNOME it is.
 - **The scale factor of the Windows display is not passed on.** Set the scale
   in the desktop's display settings.
 - **Audio from browsers can crackle.** Other players are fine.
