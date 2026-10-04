@@ -122,6 +122,7 @@ struct presenter {
     /* Since the last statistics line. */
     unsigned stat_frames;
     double stat_ms, stat_pixels, stat_since;
+    uint64_t stat_primary_seq;
 };
 
 static volatile sig_atomic_t quit;
@@ -1024,14 +1025,19 @@ main(int argc, char **argv)
         ack_frame(&p);
 
         if (now_ms() - p.stat_since >= 5000.0) {
+            /* With the compositor held to our pace the two counts match;
+             * more commits than frames means frames were merged. */
             if (p.stat_frames && !p.verbose)
-                fprintf(stderr, "presenter: %u frame(s) in %.0f s, %.2f ms and %.0f%% of the "
-                                "screen each on average\n",
-                        p.stat_frames, (now_ms() - p.stat_since) / 1000.0,
+                fprintf(stderr, "presenter: %u frame(s) for %llu commit(s) in %.0f s, %.2f ms "
+                                "and %.0f%% of the screen each on average\n",
+                        p.stat_frames,
+                        (unsigned long long)(p.primary_seq - p.stat_primary_seq),
+                        (now_ms() - p.stat_since) / 1000.0,
                         p.stat_ms / p.stat_frames,
                         100.0 * p.stat_pixels / p.stat_frames /
                             ((double)p.width * p.height > 0 ? (double)p.width * p.height : 1.0));
             p.stat_frames = 0;
+            p.stat_primary_seq = p.primary_seq;
             p.stat_ms = p.stat_pixels = 0.0;
             p.stat_since = now_ms();
         }
