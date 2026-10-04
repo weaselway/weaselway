@@ -102,9 +102,33 @@ none, and the viewer. `install-viewer-link <name>` gives it another name than
 "Weaselway". It opens a minimized console window next to the viewer, which
 closes with it.
 
-`start-session` takes the session to start: `gnome` (the default),
-`gnome-shell` for the bare shell without the desktop's services, and `plasma`
-or `kwin` if Plasma is enabled.
+`start-session` takes the session to start: `gnome` (the default), the whole
+desktop as a login would start it, and `plasma` if Plasma is enabled.
+`gnome-shell` and `kwin` are for debugging: the bare shell or compositor
+without the services of `gnome-session` or Plasma (settings daemon, keyring,
+portals and so on), so much of the desktop does not work in them.
+
+`start-session custom` is for any other compositor with a KMS backend (sway,
+weston, Hyprland, ...). It runs `custom-weaselway-session` from the `PATH` in
+the same logind session on the seat, so that script is where the compositor
+is started and given what it needs:
+
+```nix
+environment.systemPackages = [
+  pkgs.sway
+  (pkgs.writeShellScriptBin "custom-weaselway-session" ''
+    export XDG_CURRENT_DESKTOP=sway
+    exec sway "$@"
+  '')
+];
+```
+
+[examples/custom-weaselway-session](examples/custom-weaselway-session) does
+the same for sway without a rebuild: its `nix-shell` shebang fetches sway when
+the session starts.
+
+Only GNOME and Plasma are tested on the virtual display; another compositor
+may want something of the KMS device that dxgdrm does not have.
 
 ## Using the viewer
 

@@ -71,6 +71,7 @@ in
         "gnome-shell"
         "plasma"
         "kwin"
+        "custom"
       ];
       default = "gnome";
       description = "Session that `start-session` starts when given none.";

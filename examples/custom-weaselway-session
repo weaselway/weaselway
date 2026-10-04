@@ -1,0 +1,17 @@
+#!/usr/bin/env nix-shell
+#!nix-shell -I nixpkgs=flake:nixpkgs -i bash -p sway foot
+
+# An example custom-weaselway-session: sway, for `start-session custom`.
+#
+# Copy it to a directory on the PATH and make it executable, or name its
+# directory for the one run: PATH=~/bin:$PATH start-session custom. nix-shell
+# fetches sway and foot, the terminal of sway's default configuration, on the
+# first run; nothing has to be installed.
+#
+# -I: the session's unit has no NIX_PATH, so say where nixpkgs is. flake:nixpkgs
+# is the one the system was built from.
+
+export XDG_CURRENT_DESKTOP=sway
+export WLR_DRM_DEVICES=/dev/dri/card0
+
+exec sway "$@"

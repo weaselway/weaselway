@@ -15,10 +15,18 @@
 # Usage: start-session.sh [--adapter NAME] [SESSION] [-- arguments]
 #        start-session.sh stop
 #
-#   gnome        the GNOME desktop (gnome-session)
-#   gnome-shell  the bare shell, without the session's services
+#   gnome        the GNOME desktop (gnome-session): the shell plus the services
+#                a desktop needs -- settings daemon, keyring, portals, polkit
+#                agent, input methods, autostart. What to use normally.
+#   gnome-shell  only the shell, started by hand and without any of those. For
+#                debugging the shell or the compositor; much in the desktop
+#                (settings, theming, keyring prompts, ...) does not work.
 #   plasma       the Plasma desktop, if the system has it
-#   kwin         bare KWin with a terminal in it
+#   kwin         bare KWin with a terminal in it; the debugging counterpart to
+#                plasma, as gnome-shell is to gnome
+#   custom       whatever custom-weaselway-session on the PATH starts: any
+#                compositor with a KMS backend (sway, weston, Hyprland, ...).
+#                A script of your own that ends in `exec <compositor>`.
 #
 # Without SESSION it is $WEASELWAY_DEFAULT_SESSION, or gnome.
 
@@ -28,7 +36,7 @@ UNIT=weaselway-session
 
 usage() {
     cat >&2 <<USAGE
-usage: start-session [--adapter NAME] [gnome|gnome-shell|plasma|kwin] [-- arguments]
+usage: start-session [--adapter NAME] [gnome|gnome-shell|plasma|kwin|custom] [-- arguments]
        start-session stop
 USAGE
     exit 1
@@ -65,7 +73,8 @@ case "${SESSION}" in
         DESKTOP=GNOME
         ;;
     gnome-shell)
-        # --display-server rather than letting it guess: WSL puts
+        # For debugging only: the shell alone, none of gnome-session's
+        # services. --display-server rather than letting it guess: WSL puts
         # WAYLAND_DISPLAY and DISPLAY into every shell, and with those set
         # mutter would try to run nested.
         COMMAND=(gnome-shell --wayland --display-server "$@")
@@ -80,6 +89,14 @@ case "${SESSION}" in
         # Enough to see it render and take input.
         COMMAND=(kwin_wayland --drm --xwayland "$@" konsole)
         DESKTOP=KDE
+        ;;
+    custom)
+        # Not ours to know what it starts. It runs as the session's main
+        # process, in the logind session on seat0, so the compositor it execs
+        # gets the KMS node and the input devices like the ones above. It sets
+        # XDG_CURRENT_DESKTOP and whatever else its compositor wants itself.
+        COMMAND=(custom-weaselway-session "$@")
+        DESKTOP=
         ;;
     *)
         usage
@@ -106,7 +123,9 @@ systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY GNOME_SETUP_DISPLAY \
 # PATH is the user's.
 if ! command -v "${COMMAND[0]}" > /dev/null; then
     echo "error: ${COMMAND[0]} is not installed" >&2
-    if [ "${DESKTOP}" = "KDE" ]; then
+    if [ "${SESSION}" = "custom" ]; then
+        echo "Put an executable script of that name on the PATH; it starts the compositor, e.g. 'exec sway'." >&2
+    elif [ "${DESKTOP}" = "KDE" ]; then
         echo "Plasma is off by default; set weaselway.plasma.enable = true in /etc/nixos/configuration.nix and rebuild." >&2
     fi
     exit 1
@@ -124,7 +143,6 @@ PROPERTIES=(
     --property=Environment=XDG_SESSION_TYPE=wayland
     --property=Environment=XDG_SESSION_CLASS=user
     --property=Environment=XDG_SEAT=seat0
-    --property="Environment=XDG_CURRENT_DESKTOP=${DESKTOP}"
     # The user manager's bus, which pam_systemd starts with the session, so
     # that services started from the session land on the same one.
     --property="Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${SESSION_UID}/bus"
@@ -134,6 +152,10 @@ PROPERTIES=(
     --property=Environment=GSK_RENDERER=gl
     --property=Environment=WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 )
+
+if [ -n "${DESKTOP}" ]; then
+    PROPERTIES+=(--property="Environment=XDG_CURRENT_DESKTOP=${DESKTOP}")
+fi
 
 # Where icon and cursor themes, schemas and the like are found. A login shell
 # gets this from the profile; the unit has no profile. Without it KWin finds
