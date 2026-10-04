@@ -91,6 +91,17 @@ To stop the session:
 start-session stop
 ```
 
+To get there with a double click, put a shortcut on the Windows desktop:
+
+```sh
+install-viewer-link
+```
+
+The shortcut starts the distro if it is not running, the session if there is
+none, and the viewer. `install-viewer-link <name>` gives it another name than
+"Weaselway". It opens a minimized console window next to the viewer, which
+closes with it.
+
 `start-session` takes the session to start: `gnome` (the default),
 `gnome-shell` for the bare shell without the desktop's services, and `plasma`
 or `kwin` if Plasma is enabled.

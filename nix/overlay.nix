@@ -174,6 +174,10 @@ in
           checkPhase = "";
           bashOptions = [ ];
         })
+        (script "install-viewer-link" [
+          final.bash
+          final.coreutils
+        ])
         (script "install-system-image" [
           final.coreutils
           final.curl

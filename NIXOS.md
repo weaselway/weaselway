@@ -121,8 +121,8 @@ It publishes nothing.
     links it.
   - `weaselway-viewer`: `freerdp.packages.<build system>.sdl-freerdp`. These are Windows binaries, so
     the build machine doesn't matter.
-  - `weaselway-scripts`: `start-session`, `start-viewer` and `install-system-image`, wrapped with
-    `writeShellApplication`. The wrapper for `start-viewer` sets `WEASELWAY_VIEWER` to the exe in the
+  - `weaselway-scripts`: `start-session`, `start-viewer`, `install-viewer-link` and
+    `install-system-image`, wrapped with `writeShellApplication`. The wrapper for `start-viewer` sets `WEASELWAY_VIEWER` to the exe in the
     store.
 - [nix/module.nix](nix/module.nix): `nixosModules.weaselway`. See the next section.
 - [nix/image/](nix/image): `configuration.nix` and `flake.nix`, which the image also ships as its
