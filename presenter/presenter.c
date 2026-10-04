@@ -23,6 +23,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -482,6 +483,15 @@ write_jpeg(struct presenter *p, unsigned index)
 
 #define POINTER_ABS_MAX 65535
 
+/* When to click once in the middle of the screen, as now_ms(); 0 for never.
+ * Set by the main loop, taken by the pointer thread. */
+static atomic_long click_at_ms;
+
+/* GNOME Shell starts in the overview, which is not much of a test image. A
+ * click on the workspace in the middle of it leaves the overview, and is
+ * harmless anywhere else. */
+#define CLICK_DELAY_MS 3000
+
 static void
 emit(int fd, uint16_t type, uint16_t code, int32_t value)
 {
@@ -527,6 +537,21 @@ pointer_thread(void *data)
     fprintf(stderr, "presenter: uinput pointer created, circling\n");
 
     while (!quit) {
+        long click_at = atomic_load(&click_at_ms);
+
+        if (click_at && now_ms() >= (double)click_at) {
+            atomic_store(&click_at_ms, 0);
+            emit(fd, EV_ABS, ABS_X, POINTER_ABS_MAX / 2);
+            emit(fd, EV_ABS, ABS_Y, POINTER_ABS_MAX / 2);
+            emit(fd, EV_SYN, SYN_REPORT, 0);
+            emit(fd, EV_KEY, BTN_LEFT, 1);
+            emit(fd, EV_SYN, SYN_REPORT, 0);
+            usleep(50000);
+            emit(fd, EV_KEY, BTN_LEFT, 0);
+            emit(fd, EV_SYN, SYN_REPORT, 0);
+            fprintf(stderr, "presenter: clicked in the middle of the screen\n");
+        }
+
         /* A circle around the centre, a quarter of the height in radius,
          * once every four seconds. */
         double x = 0.5 + 0.25 * cos(angle) * 9.0 / 16.0;
@@ -553,7 +578,9 @@ usage(const char *argv0)
             "  --out DIR       where the JPEGs go (default /tmp/weaselway-frames)\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
-            "  --no-pointer    do not create the circling uinput pointer\n",
+            "  --no-pointer    do not create the uinput pointer, which circles and, three\n"
+            "                  seconds after a compositor takes the display, clicks once in\n"
+            "                  the middle of the screen (to leave GNOME's overview)\n",
 
 
             argv0);
@@ -656,6 +683,8 @@ main(int argc, char **argv)
             owned = !owned;
             fprintf(stderr, owned ? "presenter: a compositor took over the display\n"
                                   : "presenter: no compositor owns the display any more\n");
+            /* Once it has had time to come up; see CLICK_DELAY_MS. */
+            atomic_store(&click_at_ms, owned ? (long)now_ms() + CLICK_DELAY_MS : 0);
         }
 
         last_frame = t_start = now_ms();
