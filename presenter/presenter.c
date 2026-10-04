@@ -77,6 +77,13 @@ struct presenter {
 
     uint8_t *compose;
 
+    /* Asynchronous readback: the pixel buffer glReadPixels targets, and what
+     * the last one cost, for the frame line. */
+    GLuint pbo;
+    size_t pbo_size;
+    bool sync_readback;
+    double issue_ms, wait_ms, copy_ms;
+
     const char *out_dir;
     unsigned max_frames;
     int quality;
@@ -319,6 +326,118 @@ read_shared(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
     return pixels;
 }
 
+/*
+ * The same, without the presenter's thread ever waiting inside glReadPixels.
+ *
+ * Reading into a client pointer makes the driver copy to a staging buffer,
+ * wait for the GPU, map and memcpy before it returns. Reading into a pixel
+ * buffer object does not have to: Mesa's d3d12 driver (weaselway's) issues a
+ * texture -> buffer copy and returns. A fence says when the copy has landed,
+ * and the map after that does not block.
+ *
+ * One readback covers the bounding box of the damage, as mutter's RDP backend
+ * does it. The driver only takes the direct path when a row is a multiple of
+ * 256 bytes (D3D12's placed-footprint pitch), so the box is widened to a
+ * multiple of 64 pixels.
+ *
+ * This stub still waits for the fence before it does anything else, so a frame
+ * takes as long as before end to end. What it shows is where the time goes
+ * (issue / wait / copy): the wait is the part a real presenter spends in
+ * poll() on the fence, next to its sockets, instead of inside the driver.
+ */
+static long
+read_shared_async(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
+{
+    int width = (int)frame->width, height = (int)frame->height;
+    int x1 = width, y1 = height, x2 = 0, y2 = 0, w, h;
+    size_t full_size = (size_t)width * height * 4;
+    const uint8_t *src;
+    GLsync sync;
+    GLenum status;
+    double t0, t1, t2;
+
+    if (!get_import(p, frame))
+        return -1;
+
+    if (frame->flags & DXGDRM_FRAME_DAMAGE_FULL) {
+        x1 = y1 = 0;
+        x2 = width;
+        y2 = height;
+    } else {
+        for (unsigned i = 0; i < frame->num_damage; i++) {
+            const struct drm_dxgdrm_rect *r = &frame->damage[i];
+
+            if (r->x1 < x1) x1 = r->x1;
+            if (r->y1 < y1) y1 = r->y1;
+            if (r->x2 > x2) x2 = r->x2;
+            if (r->y2 > y2) y2 = r->y2;
+        }
+    }
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > width) x2 = width;
+    if (y2 > height) y2 = height;
+    if (x2 <= x1 || y2 <= y1)
+        return 0;
+
+    /* Widen to a multiple of 64 pixels, moving left where the right edge is
+     * in the way. A frame narrower than that takes the driver's slow path. */
+    w = (x2 - x1 + 63) & ~63;
+    if (w > width)
+        w = width;
+    if (x1 + w > width)
+        x1 = width - w;
+    h = y2 - y1;
+
+    t0 = now_ms();
+
+    if (!p->pbo)
+        glGenBuffers(1, &p->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+    /* Sized for a whole frame once, so that no damage shape reallocates it. */
+    if (p->pbo_size != full_size) {
+        glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)full_size, NULL, GL_STREAM_READ);
+        p->pbo_size = full_size;
+    }
+
+    /* Tightly packed at offset 0: the transfer is exactly the box. */
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glReadPixels(x1, y1, w, h, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();
+    t1 = now_ms();
+
+    status = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+    glDeleteSync(sync);
+    t2 = now_ms();
+    if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED) {
+        fprintf(stderr, "presenter: the readback did not finish within a second\n");
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        return -1;
+    }
+
+    src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)((size_t)w * h * 4),
+                           GL_MAP_READ_BIT);
+    if (!src) {
+        fprintf(stderr, "presenter: mapping the readback buffer failed\n");
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        return -1;
+    }
+
+    for (int y = 0; y < h; y++)
+        memcpy(p->shadow + ((size_t)(y1 + y) * width + x1) * 4,
+               src + (size_t)y * w * 4, (size_t)w * 4);
+
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    p->issue_ms = t1 - t0;
+    p->wait_ms = t2 - t1;
+    p->copy_ms = now_ms() - t2;
+    return (long)w * h;
+}
+
 /* A dumb-buffer frame (a compositor rendering without the GPU): copy all of
  * it out of the kernel. */
 static long
@@ -534,11 +653,12 @@ static void
 usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer]\n"
+            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--sync]\n"
             "  --out DIR       where the JPEGs go (default /tmp/weaselway-frames)\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
-            "  --no-pointer    do not create the circling uinput pointer\n",
+            "  --no-pointer    do not create the circling uinput pointer\n"
+            "  --sync          read back with a blocking glReadPixels per damage rect\n",
             argv0);
 }
 
@@ -567,6 +687,8 @@ main(int argc, char **argv)
             p.quality = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--no-pointer")) {
             pointer = false;
+        } else if (!strcmp(argv[i], "--sync")) {
+            p.sync_readback = true;
         } else {
             usage(argv[0]);
             return 2;
@@ -634,10 +756,13 @@ main(int argc, char **argv)
             if (!have_frame)
                 frame.flags |= DXGDRM_FRAME_DAMAGE_FULL;
 
-            if (frame.flags & DXGDRM_FRAME_SHARED)
+            p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
+            if (!(frame.flags & DXGDRM_FRAME_SHARED))
+                pixels = read_dumb(&p, &frame);
+            else if (p.sync_readback)
                 pixels = read_shared(&p, &frame);
             else
-                pixels = read_dumb(&p, &frame);
+                pixels = read_shared_async(&p, &frame);
         }
         if (frame.fd >= 0)
             close(frame.fd);
@@ -663,14 +788,14 @@ main(int argc, char **argv)
         frames++;
 
         fprintf(stderr,
-                "frame %u: %s %ux%u buffer %llu, %u rect(s)%s, %.1f%% read back in %.2f ms, "
-                "jpeg %.2f ms, cursor %s at %d,%d\n",
+                "frame %u: %s %ux%u buffer %llu, %u rect(s)%s, %.1f%% read back in %.2f ms "
+                "(issue %.2f wait %.2f copy %.2f), jpeg %.2f ms, cursor %s at %d,%d\n",
                 frames,
                 (frame.flags & DXGDRM_FRAME_SHARED) ? "d3d12" : "dumb",
                 frame.width, frame.height, (unsigned long long)frame.buffer_id,
                 frame.num_damage, (frame.flags & DXGDRM_FRAME_DAMAGE_FULL) ? " (full)" : "",
                 100.0 * (double)pixels / ((double)frame.width * frame.height),
-                t_read - t_start, t_done - t_read,
+                t_read - t_start, p.issue_ms, p.wait_ms, p.copy_ms, t_done - t_read,
                 (frame.flags & DXGDRM_FRAME_CURSOR) ? "plane" : "none",
                 frame.cursor_x, frame.cursor_y);
     }
