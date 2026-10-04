@@ -216,6 +216,10 @@ in
 
     # kwin and konsole are only here for the kms-wsl spike
     # (`start-kms-session kwin`); both come from cache.nixos.org.
+    # KWin looks for a cursor theme called "default" and shows no pointer
+    # without one. Plasma's own is not installed; point it at GNOME's.
+    xdg.icons.fallbackCursorThemes = [ "Adwaita" ];
+
     environment.systemPackages = [
       pkgs.weaselway-scripts
       pkgs.weaselway-presenter

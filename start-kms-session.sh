@@ -96,6 +96,11 @@ if [ "${SESSION}" = "kwin" ]; then
     # Plasma's own theme is not installed; GNOME's is.
     PROPERTIES+=(--property=Environment=XCURSOR_THEME=Adwaita)
 fi
+# Extra variables for the compositor, space separated, for debugging:
+#   WEASELWAY_KMS_ENV="QT_LOGGING_RULES=kwin_*.debug=true" start-kms-session kwin
+for ASSIGNMENT in ${WEASELWAY_KMS_ENV:-}; do
+    PROPERTIES+=(--property="Environment=${ASSIGNMENT}")
+done
 if [ -n "${LD_LIBRARY_PATH:-}" ]; then
     PROPERTIES+=(--property="Environment=LD_LIBRARY_PATH=${LD_LIBRARY_PATH}")
 fi
