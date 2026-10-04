@@ -19,11 +19,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <math.h>
 #include <poll.h>
-#include <pthread.h>
 #include <signal.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,7 +31,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <linux/input-event-codes.h>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -126,15 +122,6 @@ struct weaselwayd {
 };
 
 static volatile sig_atomic_t quit;
-
-/* When to click once in the middle of the screen, as now_ms(); 0 for never.
- * Set by the main loop, taken by the pointer thread. */
-static atomic_long click_at_ms;
-
-/* GNOME Shell starts in the overview, which is not much to look at. A click on
- * the workspace in the middle of it leaves the overview, and is harmless
- * anywhere else. */
-#define CLICK_DELAY_MS 3000
 
 /* An extension entry point, which libglvnd's libGLESv2 does not export. */
 static void (*image_target_texture_2d)(GLenum target, void *image);
@@ -792,8 +779,6 @@ fetch_frame(struct weaselwayd *p)
         p->owned = !p->owned;
         fprintf(stderr, p->owned ? "weaselwayd: a compositor took over the display\n"
                                  : "weaselwayd: no compositor owns the display any more\n");
-        /* Once it has had time to come up; see CLICK_DELAY_MS. */
-        atomic_store(&click_at_ms, p->owned ? (long)now_ms() + CLICK_DELAY_MS : 0);
     }
 
     if (!(frame.flags & DXGDRM_FRAME_PRIMARY)) {
@@ -954,83 +939,6 @@ try_present(struct weaselwayd *p)
         frame_failed(p);
 }
 
-/*
- * Input nobody typed: the click that gets GNOME out of its overview, and with
- * --circle a pointer going round, which gives the compositor something to
- * repaint when there is no client to move the real one.
- */
-struct pointer_thread {
-    struct input *input;
-    bool circle;
-};
-
-static void *
-pointer_thread(void *data)
-{
-    const struct pointer_thread *args = data;
-    const int range = 65536;
-    double angle = 0.0;
-
-    while (!quit) {
-        long click_at = atomic_load(&click_at_ms);
-
-        if (click_at && now_ms() >= (double)click_at) {
-            atomic_store(&click_at_ms, 0);
-            input_pointer_motion(args->input, range / 2, range / 2, range, range);
-            input_pointer_button(args->input, BTN_LEFT, true);
-            usleep(50000);
-            input_pointer_button(args->input, BTN_LEFT, false);
-            fprintf(stderr, "weaselwayd: clicked in the middle of the screen\n");
-        }
-
-        if (args->circle) {
-            /* Around the centre, a quarter of the height in radius, once
-             * every four seconds. */
-            double x = 0.5 + 0.25 * cos(angle) * 9.0 / 16.0;
-            double y = 0.5 + 0.25 * sin(angle);
-
-            input_pointer_motion(args->input, (int)(x * range), (int)(y * range), range, range);
-            angle += 2.0 * M_PI / (4.0 * 60.0);
-        }
-
-        usleep(1000000 / 60);
-    }
-    return NULL;
-}
-
-/*
- * --swipe: put fingers on the touchpad, move them and lift them, to see what
- * the compositor makes of it without a client's touchpad at hand.
- */
-static int
-test_swipe(const char *direction, int fingers)
-{
-    struct input *input = input_new();
-    double dx = !strcmp(direction, "left") ? -1 : !strcmp(direction, "right") ? 1 : 0;
-    double dy = !strcmp(direction, "up") ? -1 : !strcmp(direction, "down") ? 1 : 0;
-    const int steps = 40;
-
-    if (!input || (!dx && !dy) || fingers < 1 || fingers > 5) {
-        fprintf(stderr, "weaselwayd: --swipe up|down|left|right [--fingers 1..5]\n");
-        return 1;
-    }
-
-    /* The compositor has to find the new device first. */
-    usleep(1500 * 1000);
-    for (int step = 0; step <= steps; step++) {
-        for (int i = 0; i < fingers; i++)
-            input_touchpad_contact(input, (uint32_t)i, true,
-                                   0.3 + 0.12 * i + dx * 0.25 * step / steps,
-                                   0.5 + dy * 0.4 * step / steps);
-        input_touchpad_frame(input);
-        usleep(10 * 1000);
-    }
-    input_touchpad_release(input);
-    usleep(500 * 1000);
-    input_free(input);
-    return 0;
-}
-
 static void
 usage(const char *argv0)
 {
@@ -1046,12 +954,7 @@ usage(const char *argv0)
             "  --out DIR       also write every frame to DIR as a JPEG\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
-            "  --no-input      create no uinput devices: no input from the client, and no\n"
-            "                  click in the middle of the screen three seconds after a\n"
-            "                  compositor takes the display (which leaves GNOME's overview)\n"
-            "  --circle        move the pointer in a circle\n"
-            "  --swipe DIR     only swipe up, down, left or right on the touchpad, and exit\n"
-            "  --fingers N     with that many fingers (default 3)\n"
+            "  --no-input      create no uinput devices: no input from the client\n"
             "  --verbose       a line for every frame\n",
             argv0);
 }
@@ -1067,12 +970,9 @@ main(int argc, char **argv)
         .vsock_port = 3389,
         .shm_dir = "/mnt/wslg-shared-memory",
     };
-    struct pointer_thread pointer_args = { 0 };
     struct sigaction action = { .sa_handler = on_signal };
-    bool use_rdp = true, use_input = true, have_pointer_thread = false;
-    pthread_t pointer_tid;
-    const char *env, *swipe = NULL;
-    int swipe_fingers = 3;
+    bool use_rdp = true, use_input = true;
+    const char *env;
 
     if ((env = getenv("MUTTER_RDP_VSOCK_PORT")) && atoi(env) > 0)
         rdp_config.vsock_port = atoi(env);
@@ -1096,12 +996,6 @@ main(int argc, char **argv)
             p.quality = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--no-input")) {
             use_input = false;
-        } else if (!strcmp(argv[i], "--circle")) {
-            pointer_args.circle = true;
-        } else if (!strcmp(argv[i], "--swipe") && i + 1 < argc) {
-            swipe = argv[++i];
-        } else if (!strcmp(argv[i], "--fingers") && i + 1 < argc) {
-            swipe_fingers = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--verbose")) {
             p.verbose = true;
         } else {
@@ -1127,9 +1021,6 @@ main(int argc, char **argv)
         return 1;
     }
 
-    if (swipe)
-        return test_swipe(swipe, swipe_fingers);
-
     p.drm_fd = open_dxgdrm();
     if (p.drm_fd < 0 || !init_egl(&p))
         return 1;
@@ -1143,11 +1034,6 @@ main(int argc, char **argv)
         p.rdp = rdp_server_new(&rdp_config);
         if (!p.rdp)
             return 1;
-    }
-
-    if (p.input) {
-        pointer_args.input = p.input;
-        have_pointer_thread = !pthread_create(&pointer_tid, NULL, pointer_thread, &pointer_args);
     }
 
     /* The first call is what makes the node poll readable from then on. It
@@ -1216,10 +1102,6 @@ main(int argc, char **argv)
             p.stat_since = now_ms();
         }
     }
-
-    quit = 1;
-    if (have_pointer_thread)
-        pthread_join(pointer_tid, NULL);
 
     if (p.readback.active)
         glDeleteSync(p.readback.sync);
