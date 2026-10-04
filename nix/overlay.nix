@@ -60,8 +60,8 @@ in
   # FreeRDP for mutter's RDP server. nixpkgs builds it with FFmpeg, whose DSP
   # backend maps 16-bit PCM to FFmpeg's *unsigned* PCM codec, so every sample
   # mutter sends to the client (and every microphone sample it receives) comes
-  # out shifted by 32768 -- unintelligible. Only mutter links this one, so
-  # nothing else rebuilds.
+  # out shifted by 32768 -- unintelligible. Only mutter and weaselwayd link
+  # this one, so nothing else rebuilds.
   weaselway-freerdp = prev.freerdp.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [ ./freerdp-dsp-ffmpeg-pcm-s16.patch ];
   });
@@ -139,9 +139,10 @@ in
       final.libgbm
       final.libdrm
       final.libjpeg
-      # The RDP server; gfxredir, which nixpkgs' FreeRDP is built without, is
-      # compiled in from weaselwayd/gfxredir.
-      final.freerdp
+      # The RDP server, with the PCM fix: nixpkgs' distorts the sound.
+      # gfxredir, which it is built without, is compiled in from
+      # weaselwayd/gfxredir.
+      final.weaselway-freerdp
       final.openssl
     ];
 
