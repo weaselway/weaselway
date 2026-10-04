@@ -9,7 +9,7 @@
  *     device and read back only what was damaged, and how long does that take
  *     (the timings it prints);
  *   - does the compositor take input from a uinput device (it moves a pointer
- *     in a circle, which shows up in the frames);
+ *     in a circle; the cursor plane follows it, and what it hovers changes);
  *   - does any of this work with an unmodified compositor at all.
  *
  * The readback goes through GL rather than D3D12 directly: the frame is a
@@ -70,13 +70,6 @@ struct presenter {
     uint8_t *shadow;
     uint32_t width, height;
 
-    /* The cursor plane's image: R, G, B, A, premultiplied, tightly packed. */
-    uint8_t *cursor;
-    uint32_t cursor_width, cursor_height;
-    uint64_t cursor_seq;
-    bool draw_cursor;
-
-    uint8_t *compose;
 
     /* Asynchronous readback: the pixel buffer glReadPixels targets, and what
      * the last one cost, for the frame line. */
@@ -281,12 +274,10 @@ resize_shadow(struct presenter *p, uint32_t width, uint32_t height)
         return true;
 
     free(p->shadow);
-    free(p->compose);
     p->shadow = calloc((size_t)width * height, 4);
-    p->compose = malloc((size_t)width * height * 4);
     p->width = width;
     p->height = height;
-    return p->shadow && p->compose;
+    return p->shadow != NULL;
 }
 
 /*
@@ -442,96 +433,6 @@ read_dumb(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
     return (long)read.width * read.height;
 }
 
-/* Fetch the cursor plane's image. mutter puts a dumb buffer there, KWin a GPU
- * buffer like any other layer; either way it ends up as RGBA in p->cursor. */
-static void
-read_cursor(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
-{
-    uint32_t width = frame->cursor_width, height = frame->cursor_height;
-    size_t size = (size_t)width * height * 4;
-
-    free(p->cursor);
-    p->cursor = malloc(size);
-    p->cursor_width = p->cursor_height = 0;
-    if (!p->cursor)
-        return;
-
-    if (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) {
-        if (!get_import_buffer(p, frame->cursor_buffer_id, frame->cursor_fd, width, height,
-                               frame->cursor_format, frame->cursor_pitch))
-            return;
-
-        /* Small and rare: the blocking path is fine here. */
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-        glReadPixels(0, 0, (GLsizei)width, (GLsizei)height, GL_RGBA, GL_UNSIGNED_BYTE, p->cursor);
-        if (glGetError() != GL_NO_ERROR) {
-            fprintf(stderr, "presenter: reading the cursor back failed\n");
-            return;
-        }
-    } else {
-        struct drm_dxgdrm_read_pixels read = {
-            .plane = DXGDRM_PLANE_CURSOR,
-            .size = (uint32_t)size,
-            .data = (uintptr_t)p->cursor,
-        };
-
-        if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read) ||
-            read.width != width || read.height != height || read.pitch != width * 4) {
-            fprintf(stderr, "presenter: reading the cursor failed: %s\n", strerror(errno));
-            return;
-        }
-
-        /* ARGB8888 is B, G, R, A in memory. */
-        for (size_t i = 0; i < size; i += 4) {
-            uint8_t blue = p->cursor[i];
-
-            p->cursor[i] = p->cursor[i + 2];
-            p->cursor[i + 2] = blue;
-        }
-    }
-
-    p->cursor_width = width;
-    p->cursor_height = height;
-    fprintf(stderr, "presenter: cursor image %ux%u (%s), hotspot %d,%d\n", width, height,
-            (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
-            frame->cursor_hot_x, frame->cursor_hot_y);
-}
-
-/* Shadow copy plus the cursor plane, which is what the client would draw. */
-static void
-compose(struct presenter *p, const struct drm_dxgdrm_get_frame *frame)
-{
-    memcpy(p->compose, p->shadow, (size_t)p->width * p->height * 4);
-
-    if (!p->draw_cursor || !(frame->flags & DXGDRM_FRAME_CURSOR) || !p->cursor_width)
-        return;
-
-    for (uint32_t cy = 0; cy < p->cursor_height; cy++) {
-        int y = frame->cursor_y + (int)cy;
-
-        if (y < 0 || y >= (int)p->height)
-            continue;
-
-        for (uint32_t cx = 0; cx < p->cursor_width; cx++) {
-            int x = frame->cursor_x + (int)cx;
-            const uint8_t *src = p->cursor + ((size_t)cy * p->cursor_width + cx) * 4;
-            uint8_t *dst;
-            unsigned inv;
-
-            if (x < 0 || x >= (int)p->width || !src[3])
-                continue;
-
-            /* Premultiplied alpha. */
-            dst = p->compose + ((size_t)y * p->width + x) * 4;
-            inv = 255 - src[3];
-            dst[0] = (uint8_t)(src[0] + dst[0] * inv / 255);
-            dst[1] = (uint8_t)(src[1] + dst[1] * inv / 255);
-            dst[2] = (uint8_t)(src[2] + dst[2] * inv / 255);
-        }
-    }
-}
-
 static bool
 write_jpeg(struct presenter *p, unsigned index)
 {
@@ -560,7 +461,7 @@ write_jpeg(struct presenter *p, unsigned index)
     jpeg_start_compress(&cinfo, TRUE);
 
     while (cinfo.next_scanline < cinfo.image_height) {
-        JSAMPROW row = p->compose + (size_t)cinfo.next_scanline * p->width * 4;
+        JSAMPROW row = p->shadow + (size_t)cinfo.next_scanline * p->width * 4;
 
         jpeg_write_scanlines(&cinfo, &row, 1);
     }
@@ -648,13 +549,12 @@ static void
 usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--no-cursor]\n"
+            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer]\n"
             "  --out DIR       where the JPEGs go (default /tmp/weaselway-frames)\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
-            "  --no-pointer    do not create the circling uinput pointer\n"
-            "  --no-cursor     leave the cursor plane out of the JPEGs: the frame as the\n"
-            "                  compositor rendered it\n",
+            "  --no-pointer    do not create the circling uinput pointer\n",
+
 
             argv0);
 }
@@ -666,12 +566,12 @@ main(int argc, char **argv)
         .out_dir = "/tmp/weaselway-frames",
         .max_frames = 600,
         .quality = 85,
-        .draw_cursor = true,
     };
     struct sigaction action = { .sa_handler = on_signal };
     struct drm_dxgdrm_get_frame frame = { 0 };
     uint64_t seq = 0, primary_seq = 0;
-    bool pointer = true, have_frame = false;
+    bool pointer = true, have_frame = false, have_cursor = false, owned = false;
+    uint64_t cursor_seq = 0;
     pthread_t pointer_tid;
     unsigned frames = 0;
     double last_frame = 0.0;
@@ -685,8 +585,6 @@ main(int argc, char **argv)
             p.quality = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--no-pointer")) {
             pointer = false;
-        } else if (!strcmp(argv[i], "--no-cursor")) {
-            p.draw_cursor = false;
 
         } else {
             usage(argv[0]);
@@ -716,8 +614,7 @@ main(int argc, char **argv)
 
     while (!quit) {
         double t_start, t_read, t_done, wait;
-        long pixels = 0;
-        bool primary_changed;
+        long pixels;
 
         /* The cursor moving is a commit too. One frame per display refresh
          * is plenty; damage keeps accumulating in the kernel meanwhile. */
@@ -736,13 +633,30 @@ main(int argc, char **argv)
         }
         seq = frame.seq;
 
-        /* First, so its fd is dealt with on every path below. */
-        if ((frame.flags & DXGDRM_FRAME_CURSOR) && frame.cursor_seq != p.cursor_seq) {
-            read_cursor(&p, &frame);
-            p.cursor_seq = frame.cursor_seq;
-        }
+        /* The cursor plane is the client's to draw; all that happens here is
+         * saying when its image changes. Moves alone are not reported. */
         if (frame.cursor_fd >= 0)
             close(frame.cursor_fd);
+        if (!(frame.flags & DXGDRM_FRAME_CURSOR)) {
+            if (have_cursor)
+                fprintf(stderr, "presenter: cursor hidden\n");
+            have_cursor = false;
+        } else if (!have_cursor || frame.cursor_seq != cursor_seq) {
+            fprintf(stderr, "presenter: cursor updated: %ux%u %s buffer %llu, hotspot %d,%d, at %d,%d\n",
+                    frame.cursor_width, frame.cursor_height,
+                    (frame.flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
+                    (unsigned long long)frame.cursor_buffer_id,
+                    frame.cursor_hot_x, frame.cursor_hot_y, frame.cursor_x, frame.cursor_y);
+            have_cursor = true;
+            cursor_seq = frame.cursor_seq;
+        }
+
+        /* A compositor leaves its last frame up when it goes away. */
+        if (!!(frame.flags & DXGDRM_FRAME_OWNED) != owned) {
+            owned = !owned;
+            fprintf(stderr, owned ? "presenter: a compositor took over the display\n"
+                                  : "presenter: no compositor owns the display any more\n");
+        }
 
         last_frame = t_start = now_ms();
 
@@ -758,18 +672,22 @@ main(int argc, char **argv)
             break;
         }
 
-        primary_changed = frame.primary_seq != primary_seq || !have_frame;
-        p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
-        if (primary_changed) {
-            /* The shadow copy starts out empty, whatever the damage says. */
-            if (!have_frame)
-                frame.flags |= DXGDRM_FRAME_DAMAGE_FULL;
-
-            if (!(frame.flags & DXGDRM_FRAME_SHARED))
-                pixels = read_dumb(&p, &frame);
-            else
-                pixels = read_shared(&p, &frame);
+        /* Only the cursor or the owner changed: nothing to read back. */
+        if (have_frame && frame.primary_seq == primary_seq) {
+            if (frame.fd >= 0)
+                close(frame.fd);
+            continue;
         }
+
+        /* The shadow copy starts out empty, whatever the damage says. */
+        if (!have_frame)
+            frame.flags |= DXGDRM_FRAME_DAMAGE_FULL;
+
+        p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
+        if (!(frame.flags & DXGDRM_FRAME_SHARED))
+            pixels = read_dumb(&p, &frame);
+        else
+            pixels = read_shared(&p, &frame);
         if (frame.fd >= 0)
             close(frame.fd);
         if (pixels < 0) {
@@ -781,7 +699,6 @@ main(int argc, char **argv)
         have_frame = true;
         t_read = now_ms();
 
-        compose(&p, &frame);
         if (!write_jpeg(&p, frames % p.max_frames))
             break;
         t_done = now_ms();
@@ -789,15 +706,13 @@ main(int argc, char **argv)
 
         fprintf(stderr,
                 "frame %u: %s %ux%u buffer %llu, %u rect(s)%s, %.1f%% read back in %.2f ms "
-                "(issue %.2f wait %.2f copy %.2f), jpeg %.2f ms, cursor %s at %d,%d hot %d,%d\n",
+                "(issue %.2f wait %.2f copy %.2f), jpeg %.2f ms\n",
                 frames,
                 (frame.flags & DXGDRM_FRAME_SHARED) ? "d3d12" : "dumb",
                 frame.width, frame.height, (unsigned long long)frame.buffer_id,
                 frame.num_damage, (frame.flags & DXGDRM_FRAME_DAMAGE_FULL) ? " (full)" : "",
                 100.0 * (double)pixels / ((double)frame.width * frame.height),
-                t_read - t_start, p.issue_ms, p.wait_ms, p.copy_ms, t_done - t_read,
-                (frame.flags & DXGDRM_FRAME_CURSOR) ? "plane" : "none",
-                frame.cursor_x, frame.cursor_y, frame.cursor_hot_x, frame.cursor_hot_y);
+                t_read - t_start, p.issue_ms, p.wait_ms, p.copy_ms, t_done - t_read);
     }
 
     quit = 1;
