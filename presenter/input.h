@@ -1,6 +1,7 @@
 /*
- * The presenter's input devices: an absolute pointer and a keyboard on uinput.
- * To the compositor they are ordinary evdev devices that libinput picks up.
+ * The presenter's input devices: an absolute pointer, a keyboard and a
+ * multitouch touchpad on uinput. To the compositor they are ordinary evdev
+ * devices that libinput picks up.
  */
 
 #ifndef WEASELWAY_INPUT_H
@@ -24,6 +25,18 @@ void input_pointer_button(struct input *input, uint16_t button, bool pressed);
 void input_pointer_wheel(struct input *input, int value120, bool horizontal);
 /* An evdev key code (KEY_A, ...). */
 void input_key(struct input *input, uint16_t key, bool pressed);
+
+/*
+ * The touchpad gets the fingers as they are on the client's pad, and libinput
+ * makes swipes and pinches of them like of any other touchpad's. A contact is
+ * named by the client's id for it; @x and @y are its place on the pad, 0 to 1.
+ * What changed takes effect with the frame that follows, so fingers that move
+ * together are seen to.
+ */
+void input_touchpad_contact(struct input *input, uint32_t id, bool down, double x, double y);
+void input_touchpad_frame(struct input *input);
+/* Lift every finger, for a client that stopped saying where they are. */
+void input_touchpad_release(struct input *input);
 
 /* Let go of everything still held, for when the client goes away. */
 void input_release_all(struct input *input);

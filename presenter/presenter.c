@@ -998,6 +998,39 @@ pointer_thread(void *data)
     return NULL;
 }
 
+/*
+ * --swipe: put fingers on the touchpad, move them and lift them, to see what
+ * the compositor makes of it without a client's touchpad at hand.
+ */
+static int
+test_swipe(const char *direction, int fingers)
+{
+    struct input *input = input_new();
+    double dx = !strcmp(direction, "left") ? -1 : !strcmp(direction, "right") ? 1 : 0;
+    double dy = !strcmp(direction, "up") ? -1 : !strcmp(direction, "down") ? 1 : 0;
+    const int steps = 40;
+
+    if (!input || (!dx && !dy) || fingers < 1 || fingers > 5) {
+        fprintf(stderr, "presenter: --swipe up|down|left|right [--fingers 1..5]\n");
+        return 1;
+    }
+
+    /* The compositor has to find the new device first. */
+    usleep(1500 * 1000);
+    for (int step = 0; step <= steps; step++) {
+        for (int i = 0; i < fingers; i++)
+            input_touchpad_contact(input, (uint32_t)i, true,
+                                   0.3 + 0.12 * i + dx * 0.25 * step / steps,
+                                   0.5 + dy * 0.4 * step / steps);
+        input_touchpad_frame(input);
+        usleep(10 * 1000);
+    }
+    input_touchpad_release(input);
+    usleep(500 * 1000);
+    input_free(input);
+    return 0;
+}
+
 static void
 usage(const char *argv0)
 {
@@ -1017,6 +1050,8 @@ usage(const char *argv0)
             "                  click in the middle of the screen three seconds after a\n"
             "                  compositor takes the display (which leaves GNOME's overview)\n"
             "  --circle        move the pointer in a circle\n"
+            "  --swipe DIR     only swipe up, down, left or right on the touchpad, and exit\n"
+            "  --fingers N     with that many fingers (default 3)\n"
             "  --verbose       a line for every frame\n",
             argv0);
 }
@@ -1036,7 +1071,8 @@ main(int argc, char **argv)
     struct sigaction action = { .sa_handler = on_signal };
     bool use_rdp = true, use_input = true, have_pointer_thread = false;
     pthread_t pointer_tid;
-    const char *env;
+    const char *env, *swipe = NULL;
+    int swipe_fingers = 3;
 
     if ((env = getenv("MUTTER_RDP_VSOCK_PORT")) && atoi(env) > 0)
         rdp_config.vsock_port = atoi(env);
@@ -1062,6 +1098,10 @@ main(int argc, char **argv)
             use_input = false;
         } else if (!strcmp(argv[i], "--circle")) {
             pointer_args.circle = true;
+        } else if (!strcmp(argv[i], "--swipe") && i + 1 < argc) {
+            swipe = argv[++i];
+        } else if (!strcmp(argv[i], "--fingers") && i + 1 < argc) {
+            swipe_fingers = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--verbose")) {
             p.verbose = true;
         } else {
@@ -1086,6 +1126,9 @@ main(int argc, char **argv)
         fprintf(stderr, "presenter: cannot create %s: %s\n", p.out_dir, strerror(errno));
         return 1;
     }
+
+    if (swipe)
+        return test_swipe(swipe, swipe_fingers);
 
     p.drm_fd = open_dxgdrm();
     if (p.drm_fd < 0 || !init_egl(&p))

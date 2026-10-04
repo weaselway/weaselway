@@ -3,8 +3,8 @@
  * comments there say more about why the FreeRDP calls are in the order they
  * are in.
  *
- * Not ported yet: the clipboard, audio, touch gestures, the client's scale
- * factor, and the error frame -- a client that cannot do
+ * Not ported yet: the clipboard, audio, the client's scale factor, and the
+ * error frame -- a client that cannot do
  * gfxredir is disconnected, with the reason in the log.
  */
 
@@ -49,6 +49,8 @@
 #include <freerdp/server/disp.h>
 #include <freerdp/server/drdynvc.h>
 #include <freerdp/server/gfxredir.h>
+#include <freerdp/server/rdpei.h>
+#include <freerdp/channels/rdpei.h>
 #include <freerdp/update.h>
 #include <freerdp/version.h>
 #include <winpr/input.h>
@@ -126,6 +128,12 @@ struct peer_context {
 
     /* MS-RDPEDISP: the client says what size its window has. */
     DispServerContext *disp;
+
+    /* MS-RDPEI: the fingers on the client's touchpad. */
+    RdpeiServerContext *rdpei;
+    /* When the last touch frame came, while fingers are down; 0 otherwise.
+     * Under gfxredir_lock. */
+    double touch_last_ms;
 
     /* The gfxredir and disp callbacks run on the channels' own reader
      * threads. They only record what happened here, under this lock, and wake
@@ -1040,6 +1048,129 @@ on_synchronize_event(rdpInput *rdp_input, UINT32 flags)
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
+/* Touch (MS-RDPEI)                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The client sends the contacts on its touchpad once three or more fingers
+ * are down; with fewer, Windows makes pointer motion and scrolling of them,
+ * which arrive as mouse events. They go to the uinput touchpad as they are,
+ * and it is libinput in the compositor that makes swipes and pinches of them.
+ *
+ * A contact's position is the finger's place on the pad, mapped onto the
+ * desktop: a fraction of the desktop's size is that fraction of the pad's.
+ */
+
+/* Fingers the client has said nothing about for this long are lifted. Its own
+ * watchdog lifts them sooner; this is for the lift that got lost. */
+#define TOUCH_TIMEOUT_MS 500
+
+/* On the rdpei channel's reader thread. */
+static UINT
+rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event)
+{
+    struct peer_context *peer_ctx = context->user_data;
+    struct input *input = peer_ctx->server->config.input;
+    rdpSettings *settings = peer_ctx->peer->context->settings;
+    double width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+    double height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+
+    if (!input || width < 2 || height < 2)
+        return CHANNEL_RC_OK;
+
+    for (UINT16 f = 0; f < event->frameCount; f++) {
+        const RDPINPUT_TOUCH_FRAME *frame = &event->frames[f];
+
+        for (UINT32 c = 0; c < frame->contactCount; c++) {
+            const RDPINPUT_CONTACT_DATA *contact = &frame->contacts[c];
+            bool up = contact->contactFlags &
+                      (RDPINPUT_CONTACT_FLAG_UP | RDPINPUT_CONTACT_FLAG_CANCELED);
+
+            if (!up &&
+                !(contact->contactFlags & (RDPINPUT_CONTACT_FLAG_DOWN | RDPINPUT_CONTACT_FLAG_UPDATE)))
+                continue;
+            if (peer_ctx->server->config.verbose)
+                rdp_log("touch: contact %u %s at %d,%d", (unsigned)contact->contactId,
+                        up ? "up" : "down", (int)contact->x, (int)contact->y);
+            input_touchpad_contact(input, contact->contactId, !up, contact->x / (width - 1),
+                                   contact->y / (height - 1));
+        }
+        /* One frame is one instant; an event can carry several. */
+        input_touchpad_frame(input);
+    }
+
+    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    peer_ctx->touch_last_ms = now_ms();
+    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    wake(peer_ctx->server);
+    return CHANNEL_RC_OK;
+}
+
+static UINT
+rdpei_client_ready(RdpeiServerContext *context)
+{
+    rdp_log("touch: the client is ready (version 0x%08x, %u touch points)",
+            (unsigned)context->clientVersion, (unsigned)context->maxTouchPoints);
+    return CHANNEL_RC_OK;
+}
+
+/* Once the channel is open, which is the first moment the server's half of
+ * the handshake can be sent. On the rdpei thread. */
+static BOOL
+rdpei_channel_id_assigned(RdpeiServerContext *context, UINT32 channel_id)
+{
+    (void)channel_id;
+    return rdpei_server_send_sc_ready(context, RDPINPUT_PROTOCOL_V300, 0) == CHANNEL_RC_OK;
+}
+
+static void
+setup_rdpei(struct peer_context *peer_ctx)
+{
+    RdpeiServerContext *rdpei;
+
+    if (!peer_ctx->server->config.input)
+        return;
+
+    rdpei = rdpei_server_context_new(peer_ctx->vcm);
+    if (!rdpei)
+        return;
+
+    rdpei->user_data = peer_ctx;
+    rdpei->onChannelIdAssigned = rdpei_channel_id_assigned;
+    rdpei->onClientReady = rdpei_client_ready;
+    rdpei->onTouchEvent = rdpei_touch_event;
+
+    if (rdpei->Open(rdpei) != CHANNEL_RC_OK) {
+        rdp_log("cannot open the touch channel; no touchpad gestures");
+        rdpei_server_context_free(rdpei);
+        return;
+    }
+    peer_ctx->rdpei = rdpei;
+}
+
+/* How long until fingers that nothing is heard of are lifted; -1 if none are
+ * down. Lifts them when it is time. */
+static int
+touch_timeout(struct peer_context *peer_ctx)
+{
+    double last;
+
+    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    last = peer_ctx->touch_last_ms;
+    if (last && now_ms() - last >= TOUCH_TIMEOUT_MS)
+        peer_ctx->touch_last_ms = 0;
+    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+
+    if (!last)
+        return -1;
+    if (now_ms() - last < TOUCH_TIMEOUT_MS)
+        return (int)(TOUCH_TIMEOUT_MS - (now_ms() - last)) + 1;
+    /* Nothing is held when all fingers were lifted properly. */
+    input_touchpad_release(peer_ctx->server->config.input);
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
 /* The pointer                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1163,6 +1294,7 @@ peer_finish_activation(freerdp_peer *client)
     /* Before gfxredir, as Weston does. The first frame goes out once the
      * client has confirmed gfxredir caps. */
     setup_disp(peer_ctx);
+    setup_rdpei(peer_ctx);
     setup_gfxredir(peer_ctx);
     return TRUE;
 }
@@ -1349,6 +1481,12 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         peer_ctx->disp->Close(peer_ctx->disp);
         disp_server_context_free(peer_ctx->disp);
         peer_ctx->disp = NULL;
+    }
+
+    if (peer_ctx->rdpei) {
+        peer_ctx->rdpei->Close(peer_ctx->rdpei);
+        rdpei_server_context_free(peer_ctx->rdpei);
+        peer_ctx->rdpei = NULL;
     }
 
     if (peer_ctx->gfxredir) {
@@ -1714,7 +1852,7 @@ rdp_server_timeout_ms(struct rdp_server *server)
     /* A screen that does not follow is noticed by the clock alone. */
     if (server->wanted_deadline > now_ms())
         return (int)(server->wanted_deadline - now_ms()) + 1;
-    return -1;
+    return touch_timeout(peer_ctx);
 }
 
 static bool
