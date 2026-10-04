@@ -156,6 +156,6 @@ cat <<MSG
 
 Follow the compositor:   journalctl -fu ${UNIT}
 Session and seat:        loginctl; loginctl seat-status seat0
-Serve it to the viewer:  weaselwayd      (then start-viewer; --out DIR for JPEGs)
+Serve it to the viewer:  weaselwayd      (then start-viewer)
 Stop:                    start-kms-session stop
 MSG

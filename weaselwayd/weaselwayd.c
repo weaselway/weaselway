@@ -4,8 +4,7 @@
  * The compositor scans out to dxgdrm's KMS node. This waits for its commits,
  * reads the damaged part of each frame back and hands it to the Windows client
  * through gfxredir shared memory (rdp.c); the client's mouse and keyboard come
- * back as uinput devices (input.c). With --out it also, or instead, writes
- * every frame to a JPEG.
+ * back as uinput devices (input.c).
  *
  * The readback goes through GL rather than D3D12 directly: the frame is a
  * D3D12 shared handle, Mesa's d3d12 driver imports one as a dma-buf
@@ -27,7 +26,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -37,7 +35,6 @@
 #include <GLES3/gl3.h>
 #include <GLES2/gl2ext.h>
 #include <gbm.h>
-#include <jpeglib.h>
 #include <xf86drm.h>
 #include <drm_fourcc.h>
 
@@ -63,8 +60,7 @@ struct readback {
     bool active;
     GLsync sync;
     struct rdp_rect rect;
-    /* Where the pixels go: a buffer of the client's pool, or the shadow copy. */
-    bool to_client;
+    /* The buffer of the client's pool the pixels go to. */
     struct rdp_frame frame;
     uint64_t buffer_id;
     /* The screen's size when it was issued. */
@@ -105,13 +101,6 @@ struct weaselwayd {
     size_t pbo_size;
     struct readback readback;
 
-    /* For --out without a client: the screen as last read back, B G R X. */
-    uint8_t *shadow;
-    int shadow_width, shadow_height;
-
-    const char *out_dir;
-    unsigned max_frames;
-    int quality;
     bool verbose;
 
     unsigned frames;
@@ -318,19 +307,6 @@ find_import(struct weaselwayd *p, uint64_t buffer_id)
     return NULL;
 }
 
-static bool
-resize_shadow(struct weaselwayd *p)
-{
-    if (p->shadow && p->shadow_width == p->width && p->shadow_height == p->height)
-        return true;
-
-    free(p->shadow);
-    p->shadow = calloc((size_t)p->width * (size_t)p->height, 4);
-    p->shadow_width = p->width;
-    p->shadow_height = p->height;
-    return p->shadow != NULL;
-}
-
 static void
 add_damage(struct weaselwayd *p, int x1, int y1, int x2, int y2)
 {
@@ -360,63 +336,14 @@ add_full_damage(struct weaselwayd *p)
     add_damage(p, 0, 0, p->width, p->height);
 }
 
-static bool
-write_jpeg(struct weaselwayd *p, const uint8_t *pixels, unsigned index)
-{
-    struct jpeg_compress_struct cinfo;
-    struct jpeg_error_mgr jerr;
-    char path[4096], tmp[4096 + 8];
-    FILE *file;
-
-    snprintf(path, sizeof(path), "%s/frame-%06u.jpg", p->out_dir, index);
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-    file = fopen(tmp, "wb");
-    if (!file) {
-        fprintf(stderr, "weaselwayd: cannot write %s: %s\n", tmp, strerror(errno));
-        return false;
-    }
-
-    cinfo.err = jpeg_std_error(&jerr);
-    jpeg_create_compress(&cinfo);
-    jpeg_stdio_dest(&cinfo, file);
-    cinfo.image_width = (JDIMENSION)p->width;
-    cinfo.image_height = (JDIMENSION)p->height;
-    cinfo.input_components = 4;
-    cinfo.in_color_space = JCS_EXT_BGRX;
-    jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, p->quality, TRUE);
-    jpeg_start_compress(&cinfo, TRUE);
-
-    while (cinfo.next_scanline < cinfo.image_height) {
-        JSAMPROW row = (JSAMPROW)(pixels + (size_t)cinfo.next_scanline * (size_t)p->width * 4);
-
-        jpeg_write_scanlines(&cinfo, &row, 1);
-    }
-
-    jpeg_finish_compress(&cinfo);
-    jpeg_destroy_compress(&cinfo);
-    fclose(file);
-
-    /* So a viewer following the directory never sees half a file. */
-    return rename(tmp, path) == 0;
-}
-
 /* The frame's pixels are where they belong: show them, and say so. */
 static void
-frame_done(struct weaselwayd *p, const uint8_t *pixels)
+frame_done(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
-    double done = now_ms(), jpeg_ms = 0.0;
+    double done = now_ms();
 
-    if (rb->to_client)
-        rdp_server_end_frame(p->rdp, &rb->frame, &rb->rect);
-
-    if (p->out_dir) {
-        double t = now_ms();
-
-        write_jpeg(p, pixels, p->frames % p->max_frames);
-        jpeg_ms = now_ms() - t;
-    }
+    rdp_server_end_frame(p->rdp, &rb->frame, &rb->rect);
     p->frames++;
 
     p->stat_frames++;
@@ -426,11 +353,11 @@ frame_done(struct weaselwayd *p, const uint8_t *pixels)
     if (p->verbose)
         fprintf(stderr,
                 "frame %u: %s buffer %llu, %dx%d+%d+%d (%.1f%%) read back in %.2f ms "
-                "(issue %.2f), jpeg %.2f ms\n",
+                "(issue %.2f)\n",
                 p->frames, p->dumb ? "dumb" : "d3d12", (unsigned long long)rb->buffer_id,
                 rb->rect.width, rb->rect.height, rb->rect.x, rb->rect.y,
                 100.0 * rb->rect.width * rb->rect.height / ((double)p->width * p->height),
-                done - rb->started, rb->issued - rb->started, jpeg_ms);
+                done - rb->started, rb->issued - rb->started);
 }
 
 /* The frame did not make it; its part of the screen is still owed. */
@@ -439,21 +366,9 @@ frame_failed(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
 
-    if (rb->to_client)
-        rdp_server_cancel_frame(p->rdp, &rb->frame);
+    rdp_server_cancel_frame(p->rdp, &rb->frame);
     add_damage(p, rb->rect.x, rb->rect.y, rb->rect.x + rb->rect.width,
                rb->rect.y + rb->rect.height);
-}
-
-/* Where the frame in progress goes, or NULL if that place is gone. */
-static uint8_t *
-frame_pixels(struct weaselwayd *p)
-{
-    struct readback *rb = &p->readback;
-
-    if (rb->to_client)
-        return rdp_server_frame_pixels(p->rdp, &rb->frame);
-    return p->shadow;
 }
 
 /*
@@ -563,19 +478,18 @@ readback_poll(struct weaselwayd *p)
     /* The screen changed size under the readback; all of the new one is
      * owed already. */
     if (rb->width != p->width || rb->height != p->height) {
-        if (rb->to_client)
-            rdp_server_cancel_frame(p->rdp, &rb->frame);
+        rdp_server_cancel_frame(p->rdp, &rb->frame);
         return;
     }
 
     /* The client may have left, or been resized, while the pixels were on
      * their way. Whoever comes next asks for the whole screen anyway. */
-    pixels = frame_pixels(p);
+    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame);
     if (!pixels)
         return;
 
     if (readback_copy(p, pixels))
-        frame_done(p, pixels);
+        frame_done(p);
     else
         frame_failed(p);
 }
@@ -696,8 +610,7 @@ update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
         if (p->have_cursor || !p->cursor_sent) {
             if (p->verbose)
                 fprintf(stderr, "weaselwayd: cursor hidden\n");
-            if (p->rdp)
-                rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
+            rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
         }
         p->have_cursor = false;
         p->cursor_sent = true;
@@ -712,8 +625,7 @@ update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
     pixels = frame->cursor_format == DRM_FORMAT_ARGB8888 ? read_cursor(p, frame) : NULL;
     if (!pixels) {
         fprintf(stderr, "weaselwayd: cannot read the %dx%d cursor; hiding it\n", width, height);
-        if (p->rdp)
-            rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
+        rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
         return;
     }
 
@@ -746,9 +658,8 @@ update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
                 width, height, (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
                 (unsigned long long)frame->cursor_buffer_id, hot_x, hot_y, x2 - x1, y2 - y1, x1,
                 y1);
-    if (p->rdp)
-        rdp_server_set_pointer(p->rdp, pixels + ((size_t)y1 * (size_t)width + (size_t)x1) * 4,
-                               width * 4, x2 - x1, y2 - y1, hot_x - x1, hot_y - y1);
+    rdp_server_set_pointer(p->rdp, pixels + ((size_t)y1 * (size_t)width + (size_t)x1) * 4,
+                           width * 4, x2 - x1, y2 - y1, hot_x - x1, hot_y - y1);
     free(pixels);
 }
 
@@ -794,8 +705,7 @@ fetch_frame(struct weaselwayd *p)
     p->height = (int)frame.height;
     p->buffer_id = frame.buffer_id;
     p->dumb = !(frame.flags & DXGDRM_FRAME_SHARED);
-    if (p->rdp)
-        rdp_server_set_screen_size(p->rdp, p->width, p->height);
+    rdp_server_set_screen_size(p->rdp, p->width, p->height);
 
     /* Imported while the fd is at hand; the readback finds it by its id. */
     if (!p->dumb && !get_import(p, &frame)) {
@@ -839,7 +749,7 @@ ack_frame(struct weaselwayd *p)
     if (!p->have_frame || p->acked_seq == p->primary_seq)
         return;
     if (p->pending &&
-        (p->readback.active || (p->rdp && rdp_server_state(p->rdp) == RDP_BUSY)))
+        (p->readback.active || rdp_server_state(p->rdp) == RDP_BUSY))
         return;
 
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_ACK_FRAME, &ack))
@@ -855,7 +765,7 @@ apply_size_request(struct weaselwayd *p)
     struct drm_dxgdrm_set_mode mode;
     int width, height;
 
-    if (!p->rdp || !rdp_server_take_size_request(p->rdp, &width, &height))
+    if (!rdp_server_take_size_request(p->rdp, &width, &height))
         return;
 
     mode.width = (uint32_t)width;
@@ -876,21 +786,21 @@ static void
 try_present(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
-    enum rdp_state state = p->rdp ? rdp_server_state(p->rdp) : RDP_NO_CLIENT;
+    enum rdp_state state = rdp_server_state(p->rdp);
     struct rdp_rect rect;
     uint8_t *pixels;
 
     if (!p->have_frame || rb->active)
         return;
 
-    if (p->rdp && rdp_server_take_full_request(p->rdp))
+    if (rdp_server_take_full_request(p->rdp))
         add_full_damage(p);
 
     if (state == RDP_BUSY || state == RDP_CONNECTING || !p->pending)
         return;
 
     /* Nobody to show it to. A client that connects gets the whole screen. */
-    if (state == RDP_NO_CLIENT && !p->out_dir) {
+    if (state == RDP_NO_CLIENT) {
         p->pending = false;
         return;
     }
@@ -910,13 +820,8 @@ try_present(struct weaselwayd *p)
         rect.width = w;
     }
 
-    rb->to_client = state == RDP_READY;
-    if (rb->to_client) {
-        if (!rdp_server_begin_frame(p->rdp, &rect, &rb->frame))
-            return;
-    } else if (!resize_shadow(p)) {
+    if (!rdp_server_begin_frame(p->rdp, &rect, &rb->frame))
         return;
-    }
 
     p->pending = false;
     rb->rect = rect;
@@ -932,9 +837,9 @@ try_present(struct weaselwayd *p)
     }
 
     rb->issued = rb->started;
-    pixels = frame_pixels(p);
+    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame);
     if (pixels && read_dumb(p, pixels))
-        frame_done(p, pixels);
+        frame_done(p);
     else
         frame_failed(p);
 }
@@ -950,10 +855,6 @@ usage(const char *argv0)
             "  --shm DIR       the shared-memory share the client maps the frames from\n"
             "                  (default $WSL2_SHARED_MEMORY_MOUNT_POINT, or\n"
             "                  /mnt/wslg-shared-memory)\n"
-            "  --no-rdp        no RDP server; only useful with --out\n"
-            "  --out DIR       also write every frame to DIR as a JPEG\n"
-            "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
-            "  --quality Q     JPEG quality (default 85)\n"
             "  --no-input      create no uinput devices: no input from the client\n"
             "  --verbose       a line for every frame\n",
             argv0);
@@ -962,16 +863,13 @@ usage(const char *argv0)
 int
 main(int argc, char **argv)
 {
-    struct weaselwayd p = {
-        .max_frames = 600,
-        .quality = 85,
-    };
+    struct weaselwayd p = { 0 };
     struct rdp_config rdp_config = {
         .vsock_port = 3389,
         .shm_dir = "/mnt/wslg-shared-memory",
     };
     struct sigaction action = { .sa_handler = on_signal };
-    bool use_rdp = true, use_input = true;
+    bool use_input = true;
     const char *env;
 
     if ((env = getenv("MUTTER_RDP_VSOCK_PORT")) && atoi(env) > 0)
@@ -986,14 +884,6 @@ main(int argc, char **argv)
             rdp_config.tcp_port = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--shm") && i + 1 < argc) {
             rdp_config.shm_dir = argv[++i];
-        } else if (!strcmp(argv[i], "--no-rdp")) {
-            use_rdp = false;
-        } else if (!strcmp(argv[i], "--out") && i + 1 < argc) {
-            p.out_dir = argv[++i];
-        } else if (!strcmp(argv[i], "--max-frames") && i + 1 < argc) {
-            p.max_frames = (unsigned)strtoul(argv[++i], NULL, 10);
-        } else if (!strcmp(argv[i], "--quality") && i + 1 < argc) {
-            p.quality = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--no-input")) {
             use_input = false;
         } else if (!strcmp(argv[i], "--verbose")) {
@@ -1003,8 +893,6 @@ main(int argc, char **argv)
             return 2;
         }
     }
-    if (!p.max_frames)
-        p.max_frames = 1;
     if (rdp_config.vsock_port <= 0 || rdp_config.tcp_port < 0 || rdp_config.tcp_port > 65535) {
         usage(argv[0]);
         return 2;
@@ -1016,11 +904,6 @@ main(int argc, char **argv)
     sigaction(SIGTERM, &action, NULL);
     signal(SIGPIPE, SIG_IGN);
 
-    if (p.out_dir && mkdir(p.out_dir, 0755) && errno != EEXIST) {
-        fprintf(stderr, "weaselwayd: cannot create %s: %s\n", p.out_dir, strerror(errno));
-        return 1;
-    }
-
     p.drm_fd = open_dxgdrm();
     if (p.drm_fd < 0 || !init_egl(&p))
         return 1;
@@ -1028,13 +911,11 @@ main(int argc, char **argv)
     if (use_input)
         p.input = input_new();
 
-    if (use_rdp) {
-        rdp_config.input = p.input;
-        rdp_config.verbose = p.verbose;
-        p.rdp = rdp_server_new(&rdp_config);
-        if (!p.rdp)
-            return 1;
-    }
+    rdp_config.input = p.input;
+    rdp_config.verbose = p.verbose;
+    p.rdp = rdp_server_new(&rdp_config);
+    if (!p.rdp)
+        return 1;
 
     /* The first call is what makes the node poll readable from then on. It
      * returns at once if a compositor is already up. */
@@ -1050,13 +931,11 @@ main(int argc, char **argv)
         int n = 1, rdp_n = 0, timeout = 1000, rdp_timeout;
 
         fds[0] = (struct pollfd){ .fd = p.drm_fd, .events = POLLIN };
-        if (p.rdp) {
-            rdp_n = rdp_server_get_fds(p.rdp, &fds[1], 80);
-            n += rdp_n;
-            rdp_timeout = rdp_server_timeout_ms(p.rdp);
-            if (rdp_timeout >= 0 && rdp_timeout < timeout)
-                timeout = rdp_timeout;
-        }
+        rdp_n = rdp_server_get_fds(p.rdp, &fds[1], 80);
+        n += rdp_n;
+        rdp_timeout = rdp_server_timeout_ms(p.rdp);
+        if (rdp_timeout >= 0 && rdp_timeout < timeout)
+            timeout = rdp_timeout;
         /* GLib rounds its timeouts to a millisecond too; the fence of a
          * damage-sized readback takes about two. */
         if (p.readback.active)
@@ -1076,8 +955,7 @@ main(int argc, char **argv)
         if ((fds[0].revents & POLLIN) && !fetch_frame(&p))
             break;
 
-        if (p.rdp)
-            rdp_server_dispatch(p.rdp, &fds[1], rdp_n);
+        rdp_server_dispatch(p.rdp, &fds[1], rdp_n);
         apply_size_request(&p);
 
         readback_poll(&p);
@@ -1109,7 +987,6 @@ main(int argc, char **argv)
     input_free(p.input);
     for (int i = 0; i < MAX_IMPORTS; i++)
         destroy_import(&p, &p.imports[i]);
-    free(p.shadow);
     fprintf(stderr, "weaselwayd: %u frame(s)\n", p.frames);
     return 0;
 }

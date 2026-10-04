@@ -138,7 +138,6 @@ in
       final.libglvnd
       final.libgbm
       final.libdrm
-      final.libjpeg
       # The RDP server, with the PCM fix: nixpkgs' distorts the sound.
       # gfxredir, which it is built without, is compiled in from
       # weaselwayd/gfxredir.
