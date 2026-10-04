@@ -12,7 +12,7 @@
 # session on seat0 that owns the devices. So the compositor runs in a transient
 # system unit with a PAM session, not under the user manager.
 #
-# Usage: start-kms-session.sh [gnome|kwin|stop] [-- compositor arguments]
+# Usage: start-kms-session.sh [gnome|plasma|kwin|stop] [-- compositor arguments]
 #
 # Do not run this next to start-gnome-shell.sh: both shells want the same
 # session bus names and the same Wayland socket.
@@ -43,6 +43,13 @@ case "${SESSION}" in
         COMMAND=("${WEASELWAY_KMS_GNOME_SHELL:-gnome-shell}" --wayland --display-server "$@")
         DESKTOP=GNOME
         ;;
+    plasma)
+        # The whole desktop, as a display manager would start it. KWin and
+        # the shell run as units of the user manager; KWin finds the logind
+        # session through XDG_SESSION_ID, which startplasma hands on.
+        COMMAND=(startplasma-wayland "$@")
+        DESKTOP=KDE
+        ;;
     kwin)
         # A bare compositor with a terminal in it; enough to see it render
         # and take input.
@@ -50,7 +57,7 @@ case "${SESSION}" in
         DESKTOP=KDE
         ;;
     *)
-        echo "usage: $0 [gnome|kwin|stop] [-- compositor arguments]" >&2
+        echo "usage: $0 [gnome|plasma|kwin|stop] [-- compositor arguments]" >&2
         exit 1
         ;;
 esac
@@ -59,6 +66,12 @@ if [ ! -e /dev/dri/card0 ]; then
     echo "error: no /dev/dri/card0 -- did weaselway-prep load dxgdrm? (systemctl status weaselway-prep)" >&2
     exit 1
 fi
+
+# A compositor leaves its sockets' names in the user manager's environment when
+# it goes. Plasma's KWin is started by the user manager and would take them to
+# mean that it is to run nested, in a compositor that is no longer there.
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY GNOME_SETUP_DISPLAY \
+    XDG_CURRENT_DESKTOP 2>/dev/null || true
 
 # The unit starts with a clean environment, so resolve the compositor here,
 # where PATH is the user's.

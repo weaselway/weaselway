@@ -214,10 +214,21 @@ in
       trusted-public-keys = [ "weaselway.cachix.org-1:aN6jpdbl2M5QNsR3U8zx1G/R0jHIkYkvX15G9jxPiHU=" ];
     };
 
-    # kwin and konsole are only here for the kms-wsl spike
-    # (`start-kms-session kwin`); both come from cache.nixos.org.
-    # KWin looks for a cursor theme called "default" and shows no pointer
-    # without one. Plasma's own is not installed; point it at GNOME's.
+    # Plasma is only here for the kms-wsl spike (`start-kms-session plasma`,
+    # or `kwin` for the bare compositor); it comes from cache.nixos.org.
+    services.desktopManager.plasma6.enable = true;
+    # Both desktops want to be the one that asks for ssh passphrases.
+    programs.ssh.askPassword = lib.mkForce "${pkgs.seahorse}/libexec/seahorse/ssh-askpass";
+    # And they disagree about the screen reader.
+    services.orca.enable = lib.mkForce false;
+    # Plasma runs KWin through a setcap wrapper, for CAP_SYS_NICE. NixOS's
+    # wrappers drop LD_LIBRARY_PATH from the environment (and with file
+    # capabilities the loader would too), which is how the d3d12 driver is
+    # found (see environment.d/05-weaselway-nixos.conf): KWin then cannot
+    # create its gbm device. Realtime scheduling is not worth that here.
+    security.wrappers.kwin_wayland.enable = lib.mkForce false;
+    # For the bare KWin, which looks for a cursor theme called "default" and
+    # shows no pointer without one.
     xdg.icons.fallbackCursorThemes = [ "Adwaita" ];
 
     environment.systemPackages = [
