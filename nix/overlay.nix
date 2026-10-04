@@ -153,10 +153,22 @@ in
     ];
   };
 
-  # kms-wsl spike: gnome-shell as nixpkgs builds it, against unpatched mutter.
-  # The KMS session runs this one, so what it proves holds for stock GNOME.
-  # Same derivation as nixpkgs', so it comes from cache.nixos.org.
-  weaselway-stock-gnome-shell = prev.gnome-shell.override { mutter = prev.mutter; };
+  # kms-wsl spike: nixpkgs' mutter, without the RDP backend, for the KMS
+  # session. The one patch is a fix that has nothing to do with RDP: the
+  # overview keeps its old size when the stage is resized, which the viewer's
+  # window does to it all the time. builtins.path for the same reason as
+  # KWin's patch above.
+  weaselway-kms-mutter = prev.mutter.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [
+      (builtins.path {
+        name = "mutter-stage-relayout.patch";
+        path = ./mutter-stage-relayout.patch;
+      })
+    ];
+  });
+
+  # gnome-shell as nixpkgs builds it, against that mutter.
+  weaselway-kms-gnome-shell = prev.gnome-shell.override { mutter = final.weaselway-kms-mutter; };
 
   # sdl-freerdp.exe with its SDL DLLs, cross-compiled by the freerdp flake.
   # Windows binaries, so whichever machine builds them is fine.
@@ -210,7 +222,7 @@ in
             final.systemd
           ];
           text = ''
-            : "''${WEASELWAY_KMS_GNOME_SHELL:=${final.weaselway-stock-gnome-shell}/bin/gnome-shell}"
+            : "''${WEASELWAY_KMS_GNOME_SHELL:=${final.weaselway-kms-gnome-shell}/bin/gnome-shell}"
             export WEASELWAY_KMS_GNOME_SHELL
           ''
           + builtins.readFile ../start-kms-session.sh;

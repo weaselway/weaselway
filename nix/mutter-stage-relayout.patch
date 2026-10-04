@@ -1,0 +1,49 @@
+From 8ab9bae0d7f3cca7af9299be5a7444874ae058e7 Mon Sep 17 00:00:00 2001
+From: Oliver Bestmann <oliver.bestmann@googlemail.com>
+Date: Sun, 27 Sep 2026 11:10:33 +0200
+Subject: [PATCH] stage: Relayout top-level actors when the stage is resized
+
+gnome-shell's uiGroup reports the stage size as its preferred size, but
+Clutter caches that request and nothing invalidates it when the stage
+resizes. The overview (bound to uiGroup) then stays at the old size after
+a monitor reconfiguration, leaving the newly exposed area unpainted.
+
+Queue a relayout on the stage's direct children after resizing the stage
+so their cached size requests are dropped.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/backends/meta-stage.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/backends/meta-stage.c b/src/backends/meta-stage.c
+index d039c5430..f375e92b8 100644
+--- a/src/backends/meta-stage.c
++++ b/src/backends/meta-stage.c
+@@ -587,6 +587,8 @@ meta_stage_rebuild_views (MetaStage *stage)
+   MetaStageImpl *stage_impl = META_STAGE_IMPL (stage_window);
+   MetaMonitorManager *monitor_manager =
+     meta_backend_get_monitor_manager (stage->backend);
++  ClutterActorIter iter;
++  ClutterActor *child;
+   int width, height;
+ 
+   meta_stage_impl_rebuild_views (stage_impl);
+@@ -594,6 +596,14 @@ meta_stage_rebuild_views (MetaStage *stage)
+   meta_monitor_manager_get_screen_size (monitor_manager, &width, &height);
+   clutter_actor_set_size (CLUTTER_ACTOR (stage), width, height);
+ 
++  /* Top-level actors may derive their preferred size from the stage size
++   * (e.g. gnome-shell's uiGroup), which Clutter can't track as a dependency.
++   * Drop their cached size requests so the stage relayout picks up the new
++   * size instead of allocating them with the old one. */
++  clutter_actor_iter_init (&iter, CLUTTER_ACTOR (stage));
++  while (clutter_actor_iter_next (&iter, &child))
++    clutter_actor_queue_relayout (child);
++
+   g_list_foreach (stage->overlays,
+                   (GFunc) meta_overlay_invalidate_views,
+                   NULL);
+-- 
+2.55.0
+
