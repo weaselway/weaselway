@@ -751,12 +751,12 @@ main(int argc, char **argv)
         }
 
         primary_changed = frame.primary_seq != primary_seq || !have_frame;
+        p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
         if (primary_changed) {
             /* The shadow copy starts out empty, whatever the damage says. */
             if (!have_frame)
                 frame.flags |= DXGDRM_FRAME_DAMAGE_FULL;
 
-            p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
             if (!(frame.flags & DXGDRM_FRAME_SHARED))
                 pixels = read_dumb(&p, &frame);
             else if (p.sync_readback)
