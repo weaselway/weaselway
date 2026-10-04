@@ -1,18 +1,19 @@
 # The uapi header lives in the dxgdrm repo; point DXGDRM_INCLUDE at a checkout.
 DXGDRM_INCLUDE ?= ../../dxgdrm
 
-PKGS    := egl glesv2 gbm libdrm freerdp3 freerdp-server3 winpr3 libcrypto
+PKGS    := egl glesv2 gbm libdrm freerdp3 freerdp-server3 winpr3 libcrypto \
+           glib-2.0 gio-2.0 gio-unix-2.0
 CFLAGS  ?= -O2 -g
 # -isystem: FreeRDP's headers warn about their own deprecated declarations.
 CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread \
            -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
-SOURCES := weaselwayd.c rdp.c input.c audio.c
+SOURCES := weaselwayd.c rdp.c input.c audio.c log.c
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
-HEADERS := rdp.h input.h audio.h $(wildcard gfxredir/*.h)
+HEADERS := rdp.h input.h audio.h log.h $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes

@@ -1,3 +1,5 @@
 # Built by weaselwayd/Makefile.
 /weaselwayd/weaselwayd
 /weaselwayd/weaselwayd-asan
+/weaselwayd/*.o
+/weaselwayd/gfxredir/*.o

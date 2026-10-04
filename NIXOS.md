@@ -116,6 +116,7 @@ It publishes nothing.
     and libgbm (which load the patched mesa at run time), `weaselway-freerdp`, and the uapi header
     from the dxgdrm input. The gfxredir server channel is compiled in from
     [weaselwayd/gfxredir](weaselwayd/gfxredir), because distributions build FreeRDP without it.
+    It is a GLib program: one main loop, with GIO for the audio sockets.
   - `weaselway-freerdp`: nixpkgs freerdp plus
     [nix/freerdp-dsp-ffmpeg-pcm-s16.patch](nix/freerdp-dsp-ffmpeg-pcm-s16.patch). Only weaselwayd
     links it.
@@ -246,7 +247,7 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 - To test unpushed commits of the other repos, add
   `--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.1-wsl'` (similarly `freerdp`, `dxgdrm`).
 - weaselwayd alone builds with `make` in [weaselwayd/](weaselwayd), given `DXGDRM_INCLUDE` (a dxgdrm
-  checkout) and FreeRDP 3, EGL, GLES, gbm and libdrm from pkg-config.
+  checkout) and FreeRDP 3, GLib, EGL, GLES, gbm and libdrm from pkg-config.
 - Not on cache.nixos.org, so they take time: the dxgdrm kernel tree, mesa, mutter, and gnome-shell,
   which relinks against mutter. CI pushes them to weaselway.cachix.org; a builder that has it as a
   substituter (`extra-substituters`, key in [nix/module.nix](nix/module.nix)) gets them from there for
@@ -321,11 +322,12 @@ wpctl status; pw-top -b -n 3                    # sink present, graph running, E
 ls -l /dev/dri /dev/uinput                      # card0, renderD128; uinput group input
 loginctl; loginctl seat-status seat0            # the session is on seat0 and owns the devices
 journalctl -u weaselway-session -b              # the compositor
-journalctl --user -u weaselwayd -b              # weaselwayd: rdp: …, rdp: audio: …
+journalctl --user -u weaselwayd -b              # weaselwayd: …, rdp: …, audio: …
 ```
 
 `weaselwayd --verbose` logs a line for every frame: which buffer, how much of the screen, and how
-long the readback took. To run it by hand, stop the unit first
+long the readback took. `G_MESSAGES_DEBUG=rdp` (or `audio`, `weaselwayd`) does the same for one
+part. To run it by hand, stop the unit first
 (`systemctl --user stop weaselwayd`). `--tcp N` listens on 127.0.0.1 instead of the vsock, for a
 client on the Linux side.
 

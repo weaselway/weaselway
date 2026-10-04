@@ -3,17 +3,19 @@
  * Windows client the screen through gfxredir shared memory, and puts the
  * client's mouse and keyboard on the uinput devices.
  *
- * Ported from mutter's src/backends/rdp/meta-rdp-server.c. Everything here
- * runs on the thread that calls rdp_server_dispatch(), except the gfxredir
- * channel's own reader thread, which only leaves notes for it.
+ * Ported from mutter's src/backends/rdp/meta-rdp-server.c. The server is a
+ * source of the main context it was created under, and everything here runs
+ * on that context's thread, except the channels' own reader threads, which
+ * only leave notes for it.
  */
 
 #ifndef WEASELWAY_RDP_H
 #define WEASELWAY_RDP_H
 
-#include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+#include <glib.h>
 
 struct input;
 struct rdp_server;
@@ -29,6 +31,10 @@ struct rdp_config {
     /* Where the client's input goes; NULL for none. */
     struct input *input;
     bool verbose;
+    /* Called whenever the server has dispatched: the client's state, the
+     * size it wants, or whether it wants the whole screen may be another. */
+    void (*changed)(void *data);
+    void *changed_data;
 };
 
 struct rdp_rect {
@@ -54,15 +60,9 @@ enum rdp_state {
     RDP_READY,
 };
 
-struct rdp_server *rdp_server_new(const struct rdp_config *config);
+/* Starts listening, on the thread-default main context. */
+struct rdp_server *rdp_server_new(const struct rdp_config *config, GError **error);
 void rdp_server_free(struct rdp_server *server);
-
-/* The descriptors to poll for reading; returns how many were filled in. */
-int rdp_server_get_fds(struct rdp_server *server, struct pollfd *fds, int max);
-/* How long poll() may sleep at most, in ms; -1 for no limit. */
-int rdp_server_timeout_ms(struct rdp_server *server);
-/* Call after every poll(), with the array rdp_server_get_fds() filled. */
-void rdp_server_dispatch(struct rdp_server *server, const struct pollfd *fds, int n);
 
 /* The size of the screen being presented; 0x0 while there is none. */
 void rdp_server_set_screen_size(struct rdp_server *server, int width, int height);
@@ -96,7 +96,7 @@ void rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, in
  *           is ended or cancelled the state is RDP_BUSY.
  *   pixels  the buffer, width * 4 bytes a row, B G R X. NULL if the pool went
  *           away in the meantime (the client left or the screen was resized);
- *           the frame is then over. Valid until the next dispatch.
+ *           the frame is then over. Valid until the main loop runs again.
  *   end     tells the client to show @rect of it.
  */
 bool rdp_server_begin_frame(struct rdp_server *server, const struct rdp_rect *rect,

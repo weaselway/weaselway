@@ -1,14 +1,13 @@
+#define G_LOG_DOMAIN "input"
+
 #include "input.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include <glib.h>
 #include <linux/uinput.h>
 
 #define POINTER_ABS_MAX 65535
@@ -30,7 +29,7 @@ struct input {
 
     /* The RDP callbacks and the simulated pointer write from different
      * threads; an event and its SYN_REPORT have to stay together. */
-    pthread_mutex_t lock;
+    GMutex lock;
 
     /* What is held down, so that a repeated press is not sent twice and a
      * client that disappears does not leave a key stuck. */
@@ -158,11 +157,11 @@ create_touchpad(void)
         ioctl(fd, UI_SET_PROPBIT, INPUT_PROP_POINTER) ||
         ioctl(fd, UI_SET_PROPBIT, INPUT_PROP_BUTTONPAD))
         goto fail;
-    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+    for (size_t i = 0; i < G_N_ELEMENTS(keys); i++) {
         if (ioctl(fd, UI_SET_KEYBIT, keys[i]))
             goto fail;
     }
-    for (size_t i = 0; i < sizeof(axes) / sizeof(axes[0]); i++) {
+    for (size_t i = 0; i < G_N_ELEMENTS(axes); i++) {
         if (ioctl(fd, UI_ABS_SETUP, &axes[i]))
             goto fail;
     }
@@ -178,26 +177,23 @@ fail:
 struct input *
 input_new(void)
 {
-    struct input *input = calloc(1, sizeof(*input));
+    struct input *input = g_new0(struct input, 1);
 
-    if (!input)
-        return NULL;
-
-    pthread_mutex_init(&input->lock, NULL);
+    g_mutex_init(&input->lock);
     input->touchpad_fd = -1;
     input->pointer_fd = create_pointer();
     input->keyboard_fd = input->pointer_fd >= 0 ? create_keyboard() : -1;
     if (input->pointer_fd < 0 || input->keyboard_fd < 0) {
-        fprintf(stderr, "weaselwayd: cannot create the uinput devices (%s) -- no input. "
-                        "Is the uinput module loaded and /dev/uinput writable?\n",
-                strerror(errno));
+        g_warning("cannot create the uinput devices (%s) -- no input. "
+                  "Is the uinput module loaded and /dev/uinput writable?",
+                  g_strerror(errno));
         input_free(input);
         return NULL;
     }
 
     input->touchpad_fd = create_touchpad();
-    fprintf(stderr, "weaselwayd: uinput pointer, keyboard%s created\n",
-            input->touchpad_fd >= 0 ? " and touchpad" : " (but no touchpad)");
+    g_message("uinput pointer, keyboard%s created",
+              input->touchpad_fd >= 0 ? " and touchpad" : " (but no touchpad)");
     return input;
 }
 
@@ -219,8 +215,8 @@ input_free(struct input *input)
         ioctl(input->touchpad_fd, UI_DEV_DESTROY);
         close(input->touchpad_fd);
     }
-    pthread_mutex_destroy(&input->lock);
-    free(input);
+    g_mutex_clear(&input->lock);
+    g_free(input);
 }
 
 void
@@ -228,16 +224,14 @@ input_pointer_motion(struct input *input, int x, int y, int width, int height)
 {
     if (width < 2 || height < 2)
         return;
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x > width - 1) x = width - 1;
-    if (y > height - 1) y = height - 1;
+    x = CLAMP(x, 0, width - 1);
+    y = CLAMP(y, 0, height - 1);
 
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     emit(input->pointer_fd, EV_ABS, ABS_X, (int32_t)((int64_t)x * POINTER_ABS_MAX / (width - 1)));
     emit(input->pointer_fd, EV_ABS, ABS_Y, (int32_t)((int64_t)y * POINTER_ABS_MAX / (height - 1)));
     emit(input->pointer_fd, EV_SYN, SYN_REPORT, 0);
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 void
@@ -246,13 +240,13 @@ input_pointer_button(struct input *input, uint16_t button, bool pressed)
     if (button < BTN_LEFT || button >= BTN_LEFT + N_BUTTONS)
         return;
 
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     if (input->buttons[button - BTN_LEFT] != pressed) {
         input->buttons[button - BTN_LEFT] = pressed;
         emit(input->pointer_fd, EV_KEY, button, pressed);
         emit(input->pointer_fd, EV_SYN, SYN_REPORT, 0);
     }
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 void
@@ -264,7 +258,7 @@ input_pointer_wheel(struct input *input, int value120, bool horizontal)
     if (!value120)
         return;
 
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     emit(input->pointer_fd, EV_REL, horizontal ? REL_HWHEEL_HI_RES : REL_WHEEL_HI_RES, value120);
 
     *rest += value120;
@@ -274,7 +268,7 @@ input_pointer_wheel(struct input *input, int value120, bool horizontal)
         *rest -= notches * 120;
     }
     emit(input->pointer_fd, EV_SYN, SYN_REPORT, 0);
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 void
@@ -283,14 +277,14 @@ input_key(struct input *input, uint16_t key, bool pressed)
     if (key < KEY_ESC || key >= BTN_MISC)
         return;
 
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     /* A repeat arrives as another press; the compositor repeats by itself. */
     if (input->keys[key] != pressed) {
         input->keys[key] = pressed;
         emit(input->keyboard_fd, EV_KEY, key, pressed);
         emit(input->keyboard_fd, EV_SYN, SYN_REPORT, 0);
     }
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 void
@@ -301,7 +295,7 @@ input_touchpad_contact(struct input *input, uint32_t id, bool down, double x, do
     if (fd < 0)
         return;
 
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     for (int i = 0; i < TOUCHPAD_SLOTS; i++) {
         if (input->slots[i].used && input->slots[i].id == id)
             slot = i;
@@ -317,8 +311,8 @@ input_touchpad_contact(struct input *input, uint32_t id, bool down, double x, do
         }
     } else if (slot >= 0 || unused >= 0) {
         /* A finger more than there are slots is not told about. */
-        x = x < 0.0 ? 0.0 : x > 1.0 ? 1.0 : x;
-        y = y < 0.0 ? 0.0 : y > 1.0 ? 1.0 : y;
+        x = CLAMP(x, 0.0, 1.0);
+        y = CLAMP(y, 0.0, 1.0);
 
         emit(fd, EV_ABS, ABS_MT_SLOT, slot >= 0 ? slot : unused);
         if (slot < 0) {
@@ -333,7 +327,7 @@ input_touchpad_contact(struct input *input, uint32_t id, bool down, double x, do
         emit(fd, EV_ABS, ABS_MT_POSITION_X, input->slots[slot].x);
         emit(fd, EV_ABS, ABS_MT_POSITION_Y, input->slots[slot].y);
     }
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 /* The single-touch half of the protocol and the end of the frame. With the
@@ -377,9 +371,9 @@ input_touchpad_frame(struct input *input)
     if (input->touchpad_fd < 0)
         return;
 
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     touchpad_frame_locked(input);
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 static void
@@ -405,15 +399,15 @@ touchpad_release_locked(struct input *input)
 void
 input_touchpad_release(struct input *input)
 {
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     touchpad_release_locked(input);
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }
 
 void
 input_release_all(struct input *input)
 {
-    pthread_mutex_lock(&input->lock);
+    g_mutex_lock(&input->lock);
     for (int i = 0; i < N_BUTTONS; i++) {
         if (input->buttons[i]) {
             input->buttons[i] = false;
@@ -429,5 +423,5 @@ input_release_all(struct input *input)
     }
     emit(input->keyboard_fd, EV_SYN, SYN_REPORT, 0);
     touchpad_release_locked(input);
-    pthread_mutex_unlock(&input->lock);
+    g_mutex_unlock(&input->lock);
 }

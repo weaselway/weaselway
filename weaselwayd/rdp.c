@@ -8,25 +8,22 @@
  * in the log.
  */
 
+#define G_LOG_DOMAIN "rdp"
+
 #include "rdp.h"
 #include "audio.h"
 #include "input.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
-#include <pthread.h>
-#include <stdarg.h>
-#include <stdatomic.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
+
+#include <gio/gio.h>
+#include <glib/gstdio.h>
 
 #include <linux/input-event-codes.h>
 #include <linux/vm_sockets.h>
@@ -71,9 +68,6 @@
  * one free to start the next frame on. */
 #define N_BUFFERS 3
 
-/* GUID form: "{...}" = 32 hex + 4 dashes + 2 braces. */
-#define SHM_NAME_SIZE (32 + 4 + 2)
-
 /* A client with gfxredir confirms caps right after the channel opens. One
  * without it, or without the share to map, never answers. */
 #define GFXREDIR_CAPS_TIMEOUT_MS 5000
@@ -115,7 +109,7 @@ struct peer_context {
      * calls it too, so that sound does not wait for the main loop. Around the
      * whole drain: the queue is shared by all channels, and two threads
      * taking from it at once could send two chunks of one PDU out of order. */
-    pthread_mutex_t vcm_drain_lock;
+    GMutex vcm_drain_lock;
 
     bool activated;
     /* Between our DesktopResize and the client's re-activation its surface
@@ -127,11 +121,11 @@ struct peer_context {
 
     DrdynvcServerContext *drdynvc;
     bool drdynvc_waiting;
-    double drdynvc_wait_start;
+    gint64 drdynvc_wait_start;
 
     GfxRedirServerContext *gfxredir;
-    atomic_bool gfxredir_activated;
-    double gfxredir_caps_deadline; /* 0 for none */
+    int gfxredir_activated;        /* atomic */
+    gint64 gfxredir_caps_deadline; /* 0 for none */
 
     /* MS-RDPEDISP: the client says what size its window has. */
     DispServerContext *disp;
@@ -144,12 +138,12 @@ struct peer_context {
     RdpeiServerContext *rdpei;
     /* When the last touch frame came, while fingers are down; 0 otherwise.
      * Under gfxredir_lock. */
-    double touch_last_ms;
+    gint64 touch_last;
 
     /* The gfxredir and disp callbacks run on the channels' own reader
      * threads. They only record what happened here, under this lock, and wake
      * the main loop. */
-    pthread_mutex_t gfxredir_lock;
+    GMutex gfxredir_lock;
     bool disp_requested;
     int disp_width, disp_height;
     bool gfxredir_present_requested;
@@ -173,7 +167,22 @@ struct peer_context {
     int shm_fd;
     void *shm_addr;
     size_t shm_size;
-    char shm_name[SHM_NAME_SIZE + 1];
+    /* A GUID in braces, the name of the section the client opens, and the
+     * file on the share that is. */
+    char *shm_name;
+    char *shm_path;
+};
+
+/* A descriptor of FreeRDP's that the main loop watches for us. */
+struct watch {
+    int fd;
+    gpointer tag;
+    bool peer;
+};
+
+struct rdp_source {
+    GSource source;
+    struct rdp_server *server;
 };
 
 struct rdp_server {
@@ -187,8 +196,14 @@ struct rdp_server {
     /* One client at a time. */
     struct peer_context *peer;
 
-    /* Written by the gfxredir thread to get the main loop out of poll(). */
-    int wake_fd;
+    /* Our place in the main loop: FreeRDP's descriptors, the deadlines
+     * below, and @woken, which the channels' threads set to get it out of
+     * poll(). */
+    GMainContext *context;
+    GSource *source;
+    GArray *watches;
+    gint64 deadline; /* -1 for none */
+    int woken;       /* atomic */
 
     int screen_width, screen_height;
     bool full_requested;
@@ -203,57 +218,29 @@ struct rdp_server {
     /* The size the client asked for, and until when the screen may take to
      * get there. */
     int wanted_width, wanted_height;
-    double wanted_deadline;
+    gint64 wanted_deadline;
     bool size_request_pending;
     /* Bumped whenever a pool goes away, which ends any frame begun on it. */
     uint64_t generation;
-
-    /* What the array of the last rdp_server_get_fds() held. */
-    int n_listener_fds;
-    int n_peer_fds;
-    struct peer_context *fds_peer;
 };
 
-static void
-rdp_log(const char *format, ...)
-{
-    va_list args;
+#define MS(ms) ((gint64)(ms) * G_TIME_SPAN_MILLISECOND)
 
-    fputs("rdp: ", stderr);
-    va_start(args, format);
-    vfprintf(stderr, format, args);
-    va_end(args);
-    fputc('\n', stderr);
-}
-
-static double
-now_ms(void)
-{
-    struct timespec ts;
-
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
-}
-
+/* For the channels' threads: have the main loop dispatch us. */
 static void
 wake(struct rdp_server *server)
 {
-    uint64_t one = 1;
-
-    if (write(server->wake_fd, &one, sizeof(one)) < 0) {
-        /* Only fails when the counter is full, and then it is readable. */
-    }
+    g_atomic_int_set(&server->woken, 1);
+    g_main_context_wakeup(server->context);
 }
 
 static void
 rect_union(struct rdp_rect *into, const struct rdp_rect *rect)
 {
-    int x1 = into->x < rect->x ? into->x : rect->x;
-    int y1 = into->y < rect->y ? into->y : rect->y;
-    int x2 = into->x + into->width > rect->x + rect->width
-        ? into->x + into->width : rect->x + rect->width;
-    int y2 = into->y + into->height > rect->y + rect->height
-        ? into->y + into->height : rect->y + rect->height;
+    int x1 = MIN(into->x, rect->x);
+    int y1 = MIN(into->y, rect->y);
+    int x2 = MAX(into->x + into->width, rect->x + rect->width);
+    int y2 = MAX(into->y + into->height, rect->y + rect->height);
 
     *into = (struct rdp_rect){ x1, y1, x2 - x1, y2 - y1 };
 }
@@ -283,7 +270,7 @@ peer_fail(struct peer_context *peer_ctx, const char *reason)
     if (peer_ctx->failed)
         return;
 
-    rdp_log("no shared-memory graphics for this client, dropping it: %s", reason);
+    g_warning("no shared-memory graphics for this client, dropping it: %s", reason);
     peer_ctx->failed = true;
 }
 
@@ -297,79 +284,52 @@ free_shared_memory(struct peer_context *peer_ctx)
     if (peer_ctx->shm_addr)
         munmap(peer_ctx->shm_addr, peer_ctx->shm_size);
     peer_ctx->shm_addr = NULL;
-
-    if (peer_ctx->shm_fd >= 0) {
-        char path[PATH_MAX];
-
-        close(peer_ctx->shm_fd);
-        if (peer_ctx->shm_name[0]) {
-            snprintf(path, sizeof(path), "%s/%s", peer_ctx->server->config.shm_dir,
-                     peer_ctx->shm_name);
-            unlink(path);
-        }
-    }
-    peer_ctx->shm_fd = -1;
     peer_ctx->shm_size = 0;
-    peer_ctx->shm_name[0] = '\0';
+
+    g_clear_fd(&peer_ctx->shm_fd, NULL);
+    if (peer_ctx->shm_path)
+        g_unlink(peer_ctx->shm_path);
+    g_clear_pointer(&peer_ctx->shm_path, g_free);
+    g_clear_pointer(&peer_ctx->shm_name, g_free);
 }
 
 /* A GUID-named file on the share; the client opens the section of that name. */
 static bool
 allocate_shared_memory(struct peer_context *peer_ctx, size_t size)
 {
-    char path[PATH_MAX];
-    int uuid_fd, fd;
+    g_autofree char *uuid = g_uuid_string_random();
+    g_autofree char *name = g_strdup_printf("{%s}", uuid);
+    g_autofree char *path = g_build_filename(peer_ctx->server->config.shm_dir, name, NULL);
+    g_autofd int fd = g_open(path, O_CREAT | O_RDWR | O_EXCL | O_CLOEXEC, S_IWUSR | S_IRUSR);
     void *addr;
 
-    peer_ctx->shm_name[0] = '\0';
-
-    uuid_fd = open("/proc/sys/kernel/random/uuid", O_RDONLY | O_CLOEXEC);
-    if (uuid_fd < 0) {
-        rdp_log("cannot open the uuid source: %s", strerror(errno));
-        return false;
-    }
-    /* 32 hex digits and 4 dashes, between the braces. */
-    if (read(uuid_fd, &peer_ctx->shm_name[1], 32 + 4) != 32 + 4) {
-        rdp_log("cannot read a uuid: %s", strerror(errno));
-        close(uuid_fd);
-        return false;
-    }
-    close(uuid_fd);
-    peer_ctx->shm_name[0] = '{';
-    peer_ctx->shm_name[SHM_NAME_SIZE - 1] = '}';
-    peer_ctx->shm_name[SHM_NAME_SIZE] = '\0';
-
-    snprintf(path, sizeof(path), "%s/%s", peer_ctx->server->config.shm_dir, peer_ctx->shm_name);
-
-    fd = open(path, O_CREAT | O_RDWR | O_EXCL | O_CLOEXEC, S_IWUSR | S_IRUSR);
     if (fd < 0) {
-        rdp_log("cannot create %s: %s", path, strerror(errno));
-        peer_ctx->shm_name[0] = '\0';
+        g_warning("cannot create %s: %s", path, g_strerror(errno));
         return false;
     }
 
     if (fallocate(fd, 0, 0, (off_t)size) < 0) {
-        rdp_log("cannot allocate %zu bytes of shared memory: %s", size, strerror(errno));
+        g_warning("cannot allocate %zu bytes of shared memory: %s", size, g_strerror(errno));
         goto fail;
     }
 
     addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (addr == MAP_FAILED) {
-        rdp_log("cannot map %zu bytes of shared memory: %s", size, strerror(errno));
+        g_warning("cannot map %zu bytes of shared memory: %s", size, g_strerror(errno));
         goto fail;
     }
 
-    peer_ctx->shm_fd = fd;
+    peer_ctx->shm_fd = g_steal_fd(&fd);
     peer_ctx->shm_addr = addr;
     peer_ctx->shm_size = size;
-    rdp_log("allocated shared memory %s (%zu bytes)", peer_ctx->shm_name, size);
+    peer_ctx->shm_name = g_steal_pointer(&name);
+    peer_ctx->shm_path = g_steal_pointer(&path);
+    g_message("allocated shared memory %s (%zu bytes)", peer_ctx->shm_name, size);
     return true;
 
 fail:
-    close(fd);
     /* Nothing else knows the name, so it would stay on the share for good. */
-    unlink(path);
-    peer_ctx->shm_name[0] = '\0';
+    g_unlink(path);
     return false;
 }
 
@@ -399,10 +359,10 @@ destroy_pool(struct peer_context *peer_ctx)
 
     /* Every present so far named a buffer that no longer exists. Their acks
      * may still arrive, or never; refuse to retire anything up to here. */
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     peer_ctx->present_id_floor = peer_ctx->current_frame_id;
     peer_ctx->gfxredir_n_acked = 0;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
 
     memset(peer_ctx->buffers, 0, sizeof(peer_ctx->buffers));
     peer_ctx->pool_created = false;
@@ -426,7 +386,8 @@ ensure_pool(struct peer_context *peer_ctx, int width, int height)
     size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
     size_t buffer_pitch = (size + page_size - 1) & ~(page_size - 1);
     size_t pool_size = buffer_pitch * N_BUFFERS;
-    unsigned short section_name[SHM_NAME_SIZE + 1];
+    g_autofree gunichar2 *section_name = NULL;
+    glong section_name_length = 0;
     GFXREDIR_OPEN_POOL_PDU open_pool = { 0 };
 
     if (width <= 0 || height <= 0)
@@ -440,17 +401,15 @@ ensure_pool(struct peer_context *peer_ctx, int width, int height)
     if (!allocate_shared_memory(peer_ctx, pool_size))
         return false;
 
-    /* The section name is UTF-16 on the wire; wchar_t is four bytes here. */
-    for (int i = 0; i < SHM_NAME_SIZE; i++)
-        section_name[i] = (unsigned short)peer_ctx->shm_name[i];
-    section_name[SHM_NAME_SIZE] = 0;
+    /* The section name is UTF-16 on the wire, counted with its terminator. */
+    section_name = g_utf8_to_utf16(peer_ctx->shm_name, -1, NULL, &section_name_length, NULL);
 
     open_pool.poolId = POOL_ID;
     open_pool.poolSize = pool_size;
-    open_pool.sectionNameLength = SHM_NAME_SIZE + 1;
+    open_pool.sectionNameLength = (UINT32)section_name_length + 1;
     open_pool.sectionName = section_name;
-    if (redir->OpenPool(redir, &open_pool) != CHANNEL_RC_OK) {
-        rdp_log("gfxredir OpenPool failed");
+    if (!section_name || redir->OpenPool(redir, &open_pool) != CHANNEL_RC_OK) {
+        g_warning("gfxredir OpenPool failed");
         free_shared_memory(peer_ctx);
         return false;
     }
@@ -469,7 +428,7 @@ ensure_pool(struct peer_context *peer_ctx, int width, int height)
         if (redir->CreateBuffer(redir, &create_buffer) != CHANNEL_RC_OK) {
             GFXREDIR_CLOSE_POOL_PDU close_pool = { .poolId = POOL_ID };
 
-            rdp_log("gfxredir CreateBuffer failed");
+            g_warning("gfxredir CreateBuffer failed");
             redir->ClosePool(redir, &close_pool);
             free_shared_memory(peer_ctx);
             return false;
@@ -488,7 +447,7 @@ ensure_pool(struct peer_context *peer_ctx, int width, int height)
     peer_ctx->last_written = -1;
     peer_ctx->writing = -1;
     peer_ctx->n_presents_inflight = 0;
-    rdp_log("gfxredir pool created: %d buffers of %dx%d, %zu bytes", N_BUFFERS, width, height,
+    g_message("gfxredir pool created: %d buffers of %dx%d, %zu bytes", N_BUFFERS, width, height,
             pool_size);
     return true;
 }
@@ -578,9 +537,9 @@ flush_channels(struct peer_context *peer_ctx)
     if (!peer_ctx->vcm)
         return;
 
-    pthread_mutex_lock(&peer_ctx->vcm_drain_lock);
+    g_mutex_lock(&peer_ctx->vcm_drain_lock);
     (void)WTSVirtualChannelManagerCheckFileDescriptorEx(peer_ctx->vcm, FALSE);
-    pthread_mutex_unlock(&peer_ctx->vcm_drain_lock);
+    g_mutex_unlock(&peer_ctx->vcm_drain_lock);
 }
 
 static void
@@ -691,7 +650,7 @@ rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
     present.opaqueRects = &opaque_rect;
 
     if (peer_ctx->gfxredir->PresentBuffer(peer_ctx->gfxredir, &present) != CHANNEL_RC_OK) {
-        rdp_log("gfxredir PresentBuffer failed");
+        g_warning("gfxredir PresentBuffer failed");
         return;
     }
 
@@ -701,7 +660,7 @@ rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
     flush_channels(peer_ctx);
 
     if (server->config.verbose)
-        rdp_log("present %llu: buffer %d, %dx%d+%d+%d, %d in flight",
+        g_debug("present %llu: buffer %d, %dx%d+%d+%d, %d in flight",
                 (unsigned long long)present.presentId, frame->index, rect->width, rect->height,
                 rect->x, rect->y, peer_ctx->n_presents_inflight);
 }
@@ -714,9 +673,9 @@ rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
 static void
 gfxredir_reject_caps(struct peer_context *peer_ctx, const char *reason)
 {
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     peer_ctx->gfxredir_caps_error = reason;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
     wake(peer_ctx->server);
 }
 
@@ -764,13 +723,13 @@ gfxredir_caps_advertise(GfxRedirServerContext *context,
     confirm.capsData = (const BYTE *)(selected + 1);
     context->GraphicsRedirectionCapsConfirm(context, &confirm);
 
-    atomic_store(&peer_ctx->gfxredir_activated, true);
-    rdp_log("gfxredir activated (caps v0x%x)", (unsigned)selected->version);
+    g_atomic_int_set(&peer_ctx->gfxredir_activated, 1);
+    g_message("gfxredir activated (caps v0x%x)", (unsigned)selected->version);
 
     /* The client's screen is empty; fill it without waiting for damage. */
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     peer_ctx->gfxredir_present_requested = true;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
 }
@@ -785,12 +744,12 @@ gfxredir_present_buffer_ack(GfxRedirServerContext *context,
     if (ack->windowId != DESKTOP_WINDOW_ID)
         return CHANNEL_RC_OK;
 
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     /* An ack at or below the floor is for a pool that is gone. We never have
      * more presents outstanding than buffers, so there is always room. */
     if (ack->presentId > peer_ctx->present_id_floor && peer_ctx->gfxredir_n_acked < N_BUFFERS)
         peer_ctx->gfxredir_acked[peer_ctx->gfxredir_n_acked++] = ack->presentId;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
 }
@@ -804,7 +763,7 @@ gfxredir_dispatch(struct peer_context *peer_ctx)
     bool present_requested;
     int n_acked;
 
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     caps_error = peer_ctx->gfxredir_caps_error;
     peer_ctx->gfxredir_caps_error = NULL;
     present_requested = peer_ctx->gfxredir_present_requested;
@@ -812,7 +771,7 @@ gfxredir_dispatch(struct peer_context *peer_ctx)
     n_acked = peer_ctx->gfxredir_n_acked;
     memcpy(acked, peer_ctx->gfxredir_acked, sizeof(acked));
     peer_ctx->gfxredir_n_acked = 0;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
 
     if (caps_error) {
         peer_fail(peer_ctx, caps_error);
@@ -837,8 +796,9 @@ gfxredir_dispatch(struct peer_context *peer_ctx)
         peer_ctx->server->full_requested = true;
     }
 
-    if (peer_ctx->gfxredir_caps_deadline && now_ms() > peer_ctx->gfxredir_caps_deadline &&
-        !atomic_load(&peer_ctx->gfxredir_activated)) {
+    if (peer_ctx->gfxredir_caps_deadline &&
+        g_get_monotonic_time() > peer_ctx->gfxredir_caps_deadline &&
+        !g_atomic_int_get(&peer_ctx->gfxredir_activated)) {
         peer_ctx->gfxredir_caps_deadline = 0;
         peer_fail(peer_ctx, "The client did not open the gfxredir channel. It has to be "
                             "weaselway's sdl-freerdp, started with /wslgsharedmemorypath.");
@@ -867,8 +827,8 @@ setup_gfxredir(struct peer_context *peer_ctx)
     }
 
     peer_ctx->gfxredir = redir;
-    peer_ctx->gfxredir_caps_deadline = now_ms() + GFXREDIR_CAPS_TIMEOUT_MS;
-    rdp_log("gfxredir channel opened, waiting for the client's caps");
+    peer_ctx->gfxredir_caps_deadline = g_get_monotonic_time() + MS(GFXREDIR_CAPS_TIMEOUT_MS);
+    g_message("gfxredir channel opened, waiting for the client's caps");
 }
 
 /* ------------------------------------------------------------------ */
@@ -881,10 +841,10 @@ request_size(struct rdp_server *server, int width, int height)
     if (width <= 0 || height <= 0)
         return;
 
-    rdp_log("the client wants %dx%d", width, height);
+    g_message("the client wants %dx%d", width, height);
     server->wanted_width = width;
     server->wanted_height = height;
-    server->wanted_deadline = now_ms() + SIZE_REQUEST_TIMEOUT_MS;
+    server->wanted_deadline = g_get_monotonic_time() + MS(SIZE_REQUEST_TIMEOUT_MS);
     server->size_request_pending = true;
 }
 
@@ -908,11 +868,11 @@ disp_monitor_layout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LA
     if (!primary)
         primary = &pdu->Monitors[0];
 
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     peer_ctx->disp_requested = true;
     peer_ctx->disp_width = (int)primary->Width;
     peer_ctx->disp_height = (int)primary->Height;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
 }
@@ -924,12 +884,12 @@ disp_dispatch(struct peer_context *peer_ctx)
     bool requested;
     int width, height;
 
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
     requested = peer_ctx->disp_requested;
     peer_ctx->disp_requested = false;
     width = peer_ctx->disp_width;
     height = peer_ctx->disp_height;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
 
     /* No DesktopResize from here: that goes out once the screen has the new
      * size, see peer_sync_desktop_size(). */
@@ -1120,7 +1080,7 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
                 !(contact->contactFlags & (RDPINPUT_CONTACT_FLAG_DOWN | RDPINPUT_CONTACT_FLAG_UPDATE)))
                 continue;
             if (peer_ctx->server->config.verbose)
-                rdp_log("touch: contact %u %s at %d,%d", (unsigned)contact->contactId,
+                g_debug("touch: contact %u %s at %d,%d", (unsigned)contact->contactId,
                         up ? "up" : "down", (int)contact->x, (int)contact->y);
             input_touchpad_contact(input, contact->contactId, !up, contact->x / (width - 1),
                                    contact->y / (height - 1));
@@ -1129,9 +1089,9 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
         input_touchpad_frame(input);
     }
 
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
-    peer_ctx->touch_last_ms = now_ms();
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
+    peer_ctx->touch_last = g_get_monotonic_time();
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
 }
@@ -1139,7 +1099,7 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
 static UINT
 rdpei_client_ready(RdpeiServerContext *context)
 {
-    rdp_log("touch: the client is ready (version 0x%08x, %u touch points)",
+    g_message("touch: the client is ready (version 0x%08x, %u touch points)",
             (unsigned)context->clientVersion, (unsigned)context->maxTouchPoints);
     return CHANNEL_RC_OK;
 }
@@ -1171,30 +1131,32 @@ setup_rdpei(struct peer_context *peer_ctx)
     rdpei->onTouchEvent = rdpei_touch_event;
 
     if (rdpei->Open(rdpei) != CHANNEL_RC_OK) {
-        rdp_log("cannot open the touch channel; no touchpad gestures");
+        g_warning("cannot open the touch channel; no touchpad gestures");
         rdpei_server_context_free(rdpei);
         return;
     }
     peer_ctx->rdpei = rdpei;
 }
 
-/* How long until fingers that nothing is heard of are lifted; -1 if none are
+/* When fingers that nothing is heard of are to be lifted; -1 if none are
  * down. Lifts them when it is time. */
-static int
-touch_timeout(struct peer_context *peer_ctx)
+static gint64
+touch_deadline(struct peer_context *peer_ctx)
 {
-    double last;
+    gint64 last;
+    bool expired;
 
-    pthread_mutex_lock(&peer_ctx->gfxredir_lock);
-    last = peer_ctx->touch_last_ms;
-    if (last && now_ms() - last >= TOUCH_TIMEOUT_MS)
-        peer_ctx->touch_last_ms = 0;
-    pthread_mutex_unlock(&peer_ctx->gfxredir_lock);
+    g_mutex_lock(&peer_ctx->gfxredir_lock);
+    last = peer_ctx->touch_last;
+    expired = last && g_get_monotonic_time() - last >= MS(TOUCH_TIMEOUT_MS);
+    if (expired)
+        peer_ctx->touch_last = 0;
+    g_mutex_unlock(&peer_ctx->gfxredir_lock);
 
     if (!last)
         return -1;
-    if (now_ms() - last < TOUCH_TIMEOUT_MS)
-        return (int)(TOUCH_TIMEOUT_MS - (now_ms() - last)) + 1;
+    if (!expired)
+        return last + MS(TOUCH_TIMEOUT_MS);
     /* Nothing is held when all fingers were lifted properly. */
     input_touchpad_release(peer_ctx->server->config.input);
     return -1;
@@ -1244,19 +1206,17 @@ void
 rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int stride,
                        int width, int height, int hot_x, int hot_y)
 {
-    free(server->pointer);
-    server->pointer = NULL;
+    g_clear_pointer(&server->pointer, g_free);
     server->pointer_set = true;
 
     if (pixels && (width <= 0 || height <= 0 || width > MAX_POINTER_SIZE ||
                    height > MAX_POINTER_SIZE)) {
-        rdp_log("a %dx%d pointer cannot be sent; hiding it", width, height);
+        g_warning("a %dx%d pointer cannot be sent; hiding it", width, height);
         pixels = NULL;
     }
-    if (pixels)
-        server->pointer = malloc((size_t)width * 4 * (size_t)height);
+    if (pixels) {
+        server->pointer = g_malloc((size_t)width * 4 * (size_t)height);
 
-    if (server->pointer) {
         /* Pointer bitmaps are bottom-up, like a Windows DIB. B G R A in
          * memory is what the wire calls ARGB. */
         for (int y = 0; y < height; y++)
@@ -1264,8 +1224,8 @@ rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int str
                    pixels + (size_t)y * (size_t)stride, (size_t)width * 4);
         server->pointer_width = width;
         server->pointer_height = height;
-        server->pointer_hot_x = hot_x < 0 ? 0 : hot_x >= width ? width - 1 : hot_x;
-        server->pointer_hot_y = hot_y < 0 ? 0 : hot_y >= height ? height - 1 : hot_y;
+        server->pointer_hot_x = CLAMP(hot_x, 0, width - 1);
+        server->pointer_hot_y = CLAMP(hot_y, 0, height - 1);
     }
 
     if (server->peer)
@@ -1278,7 +1238,7 @@ peer_destroy(struct peer_context *peer_ctx)
     struct rdp_server *server = peer_ctx->server;
     freerdp_peer *client = peer_ctx->peer;
 
-    rdp_log("client disconnected");
+    g_message("client disconnected");
 
     if (server->peer == peer_ctx)
         server->peer = NULL;
@@ -1301,7 +1261,7 @@ peer_finish_activation(freerdp_peer *client)
         if (peer_ctx->resize_pending) {
             peer_ctx->resize_pending = false;
             peer_ctx->server->full_requested = true;
-            rdp_log("client re-activated at %ux%u",
+            g_message("client re-activated at %ux%u",
                     freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopWidth),
                     freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopHeight));
         }
@@ -1310,7 +1270,7 @@ peer_finish_activation(freerdp_peer *client)
     }
 
     peer_ctx->activated = true;
-    rdp_log("client activated");
+    g_message("client activated");
 
     /* The client has no pointer shape until we send one. */
     peer_send_pointer(peer_ctx);
@@ -1346,8 +1306,8 @@ peer_drdynvc_wait(struct peer_context *peer_ctx)
         return peer_finish_activation(client);
     }
 
-    if (now_ms() - peer_ctx->drdynvc_wait_start > DRDYNVC_TIMEOUT_MS) {
-        rdp_log("drdynvc did not become ready");
+    if (g_get_monotonic_time() - peer_ctx->drdynvc_wait_start > MS(DRDYNVC_TIMEOUT_MS)) {
+        g_warning("drdynvc did not become ready");
         return false;
     }
 
@@ -1358,9 +1318,9 @@ peer_drdynvc_wait(struct peer_context *peer_ctx)
     if (!WTSVirtualChannelManagerIsChannelJoined(peer_ctx->vcm, DRDYNVC_SVC_CHANNEL_NAME))
         return true;
 
-    pthread_mutex_lock(&peer_ctx->vcm_drain_lock);
+    g_mutex_lock(&peer_ctx->vcm_drain_lock);
     alive = WTSVirtualChannelManagerCheckFileDescriptor(peer_ctx->vcm);
-    pthread_mutex_unlock(&peer_ctx->vcm_drain_lock);
+    g_mutex_unlock(&peer_ctx->vcm_drain_lock);
     return alive;
 }
 
@@ -1370,7 +1330,7 @@ on_peer_activate(freerdp_peer *client)
     struct peer_context *peer_ctx = (struct peer_context *)client->context;
     rdpSettings *settings = client->context->settings;
 
-    rdp_log("client activating at %ux%u",
+    g_message("client activating at %ux%u",
             freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
             freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight));
 
@@ -1395,7 +1355,7 @@ on_peer_activate(freerdp_peer *client)
         client->activated = TRUE;
         if (!peer_ctx->drdynvc_waiting) {
             peer_ctx->drdynvc_waiting = true;
-            peer_ctx->drdynvc_wait_start = now_ms();
+            peer_ctx->drdynvc_wait_start = g_get_monotonic_time();
         }
         return TRUE;
     }
@@ -1435,9 +1395,9 @@ peer_activity(struct peer_context *peer_ctx)
      * waiting for its license PDU. */
     auto_open = client->activated &&
                 WTSVirtualChannelManagerIsChannelJoined(peer_ctx->vcm, DRDYNVC_SVC_CHANNEL_NAME);
-    pthread_mutex_lock(&peer_ctx->vcm_drain_lock);
+    g_mutex_lock(&peer_ctx->vcm_drain_lock);
     alive = WTSVirtualChannelManagerCheckFileDescriptorEx(peer_ctx->vcm, auto_open);
-    pthread_mutex_unlock(&peer_ctx->vcm_drain_lock);
+    g_mutex_unlock(&peer_ctx->vcm_drain_lock);
     return alive;
 }
 
@@ -1465,7 +1425,7 @@ peer_sync_desktop_size(struct peer_context *peer_ctx)
      * it is the client that is on that size already, this is all there is to
      * wait for; if not, the client follows once the screen is there. */
     if ((width != server->wanted_width || height != server->wanted_height) &&
-        now_ms() < server->wanted_deadline)
+        g_get_monotonic_time() < server->wanted_deadline)
         return true;
 
     if (!freerdp_settings_get_bool(settings, FreeRDP_DesktopResize)) {
@@ -1473,7 +1433,7 @@ peer_sync_desktop_size(struct peer_context *peer_ctx)
         return true;
     }
 
-    rdp_log("resizing the client's desktop to %dx%d", width, height);
+    g_message("resizing the client's desktop to %dx%d", width, height);
 
     /* Now, while the channel is healthy: the client throws its gfxredir state
      * away on DesktopResize, unacked presents included, and those buffers
@@ -1499,9 +1459,8 @@ peer_context_new(freerdp_peer *client, rdpContext *context)
     peer_ctx->shm_fd = -1;
     peer_ctx->last_written = -1;
     peer_ctx->writing = -1;
-    atomic_init(&peer_ctx->gfxredir_activated, false);
-    pthread_mutex_init(&peer_ctx->gfxredir_lock, NULL);
-    pthread_mutex_init(&peer_ctx->vcm_drain_lock, NULL);
+    g_mutex_init(&peer_ctx->gfxredir_lock);
+    g_mutex_init(&peer_ctx->vcm_drain_lock);
     return TRUE;
 }
 
@@ -1545,7 +1504,7 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         gfxredir_server_context_free(peer_ctx->gfxredir);
         peer_ctx->gfxredir = NULL;
     }
-    pthread_mutex_destroy(&peer_ctx->gfxredir_lock);
+    g_mutex_clear(&peer_ctx->gfxredir_lock);
 
     if (peer_ctx->drdynvc) {
         peer_ctx->drdynvc->Stop(peer_ctx->drdynvc);
@@ -1557,7 +1516,7 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         WTSCloseServer(peer_ctx->vcm);
         peer_ctx->vcm = NULL;
     }
-    pthread_mutex_destroy(&peer_ctx->vcm_drain_lock);
+    g_mutex_clear(&peer_ctx->vcm_drain_lock);
 }
 
 static bool
@@ -1640,16 +1599,16 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     peer_ctx->vcm = WTSOpenServerA((LPSTR)peer_ctx);
     if (!peer_ctx->vcm || peer_ctx->vcm == INVALID_HANDLE_VALUE) {
         peer_ctx->vcm = NULL;
-        rdp_log("cannot create the virtual channel manager");
+        g_warning("cannot create the virtual channel manager");
         goto fail;
     }
 
     server->peer = peer_ctx;
-    rdp_log("client connected");
+    g_message("client connected");
     return true;
 
 fail:
-    rdp_log("cannot set up the incoming client");
+    g_warning("cannot set up the incoming client");
     client->Close(client);
     freerdp_peer_context_free(client);
     return false;
@@ -1662,7 +1621,7 @@ on_peer_accepted(freerdp_listener *listener, freerdp_peer *client)
     struct rdp_server *server = listener->param4;
 
     if (server->peer) {
-        rdp_log("refusing a second client while one is connected");
+        g_warning("refusing a second client while one is connected");
         return FALSE;
     }
 
@@ -1679,12 +1638,12 @@ bio_to_string(BIO *bio)
     char *data = NULL;
     long length = BIO_get_mem_data(bio, &data);
 
-    return length > 0 ? strndup(data, (size_t)length) : NULL;
+    return length > 0 ? g_strndup(data, (gsize)length) : NULL;
 }
 
 /* A self-signed RSA-2048 certificate, made in memory and never written. */
 static bool
-generate_session_tls(struct rdp_server *server)
+generate_session_tls(struct rdp_server *server, GError **error)
 {
     EVP_PKEY *pkey = EVP_RSA_gen(2048);
     X509 *x509 = X509_new();
@@ -1719,7 +1678,8 @@ generate_session_tls(struct rdp_server *server)
 
 out:
     if (!ok)
-        rdp_log("generating the session's TLS certificate failed");
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "generating the session's TLS certificate failed");
     BIO_free(key_bio);
     BIO_free(cert_bio);
     X509_free(x509);
@@ -1728,7 +1688,7 @@ out:
 }
 
 static int
-create_vsock_fd(int port)
+create_vsock_fd(int port, GError **error)
 {
     struct sockaddr_vm addr = {
         .svm_family = AF_VSOCK,
@@ -1736,10 +1696,11 @@ create_vsock_fd(int port)
         .svm_port = (unsigned)port,
     };
     const int buffer_size = 65536;
-    int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    g_autofd int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
 
     if (fd < 0) {
-        rdp_log("cannot create a vsock: %s", strerror(errno));
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "cannot create a vsock: %s",
+                    g_strerror(errno));
         return -1;
     }
 
@@ -1747,72 +1708,252 @@ create_vsock_fd(int port)
     setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(fd, 1) < 0) {
-        rdp_log("cannot listen on vsock port %d: %s", port, strerror(errno));
-        close(fd);
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+                    "cannot listen on vsock port %d: %s", port, g_strerror(errno));
         return -1;
     }
-    return fd;
+    return g_steal_fd(&fd);
 }
 
 static bool
 is_mount_point(const char *path)
 {
-    char parent[PATH_MAX];
-    struct stat st, parent_st;
+    g_autofree char *parent = g_build_filename(path, "..", NULL);
+    GStatBuf st, parent_st;
 
-    snprintf(parent, sizeof(parent), "%s/..", path);
-    if (stat(path, &st) || !S_ISDIR(st.st_mode) || stat(parent, &parent_st))
+    if (g_stat(path, &st) || !S_ISDIR(st.st_mode) || g_stat(parent, &parent_st))
         return false;
     return st.st_dev != parent_st.st_dev;
 }
 
-struct rdp_server *
-rdp_server_new(const struct rdp_config *config)
-{
-    struct rdp_server *server = calloc(1, sizeof(*server));
+/* ------------------------------------------------------------------ */
+/* The main loop's side                                               */
+/* ------------------------------------------------------------------ */
 
-    if (!server)
-        return NULL;
+static int
+collect_fds(int *fds, bool *is_peer, int n, bool peer, HANDLE *handles, DWORD count)
+{
+    for (DWORD i = 0; i < count; i++) {
+        int fd = GetEventFileDescriptor(handles[i]);
+
+        if (fd < 0)
+            continue;
+        fds[n] = fd;
+        is_peer[n++] = peer;
+    }
+    return n;
+}
+
+/* Have the main loop watch what FreeRDP wants watched right now. The set
+ * changes with the peer, and while it connects. */
+static void
+update_watches(struct rdp_server *server)
+{
+    HANDLE handles[MAX_FREERDP_FDS + 1];
+    int fds[2 * (MAX_FREERDP_FDS + 1)];
+    bool is_peer[2 * (MAX_FREERDP_FDS + 1)];
+    struct peer_context *peer_ctx = server->peer;
+    bool changed;
+    DWORD count;
+    int n = 0;
+
+    count = server->listener->GetEventHandles(server->listener, handles, MAX_FREERDP_FDS);
+    n = collect_fds(fds, is_peer, n, false, handles, count);
+
+    if (peer_ctx) {
+        count = peer_ctx->peer->GetEventHandles(peer_ctx->peer, handles, MAX_FREERDP_FDS);
+        if (peer_ctx->vcm)
+            handles[count++] = WTSVirtualChannelManagerGetEventHandle(peer_ctx->vcm);
+        n = collect_fds(fds, is_peer, n, true, handles, count);
+    }
+
+    changed = (guint)n != server->watches->len;
+    for (int i = 0; i < n && !changed; i++) {
+        const struct watch *watch = &g_array_index(server->watches, struct watch, i);
+
+        changed = watch->fd != fds[i] || watch->peer != is_peer[i];
+    }
+    if (!changed)
+        return;
+
+    for (guint i = 0; i < server->watches->len; i++)
+        g_source_remove_unix_fd(server->source, g_array_index(server->watches, struct watch, i).tag);
+    g_array_set_size(server->watches, 0);
+
+    for (int i = 0; i < n; i++) {
+        struct watch watch = {
+            .fd = fds[i],
+            .tag = g_source_add_unix_fd(server->source, fds[i], G_IO_IN),
+            .peer = is_peer[i],
+        };
+
+        g_array_append_val(server->watches, watch);
+    }
+}
+
+static bool
+any_ready(struct rdp_server *server, bool peer)
+{
+    for (guint i = 0; i < server->watches->len; i++) {
+        const struct watch *watch = &g_array_index(server->watches, struct watch, i);
+
+        if (watch->peer == peer && g_source_query_unix_fd(server->source, watch->tag))
+            return true;
+    }
+    return false;
+}
+
+/* When to dispatch even if nothing happens on a descriptor; -1 for never. */
+static gint64
+next_deadline(struct rdp_server *server)
+{
+    struct peer_context *peer_ctx = server->peer;
+    gint64 now = g_get_monotonic_time();
+
+    if (!peer_ctx)
+        return -1;
+    if (peer_ctx->drdynvc_waiting)
+        return now + MS(DRDYNVC_POLL_MS);
+    if (peer_ctx->gfxredir_caps_deadline)
+        return peer_ctx->gfxredir_caps_deadline;
+    /* A screen that does not follow is noticed by the clock alone. */
+    if (server->wanted_deadline > now)
+        return server->wanted_deadline;
+    return touch_deadline(peer_ctx);
+}
+
+static gboolean
+rdp_source_prepare(GSource *source, gint *timeout)
+{
+    struct rdp_server *server = ((struct rdp_source *)source)->server;
+    gint64 now;
+
+    update_watches(server);
+    server->deadline = next_deadline(server);
+
+    if (g_atomic_int_get(&server->woken)) {
+        *timeout = 0;
+        return TRUE;
+    }
+    if (server->deadline < 0) {
+        *timeout = -1;
+        return FALSE;
+    }
+
+    now = g_get_monotonic_time();
+    *timeout = server->deadline > now ? (gint)((server->deadline - now + 999) / 1000) : 0;
+    return *timeout == 0;
+}
+
+static gboolean
+rdp_source_check(GSource *source)
+{
+    struct rdp_server *server = ((struct rdp_source *)source)->server;
+
+    return g_atomic_int_get(&server->woken) ||
+           (server->deadline >= 0 && g_get_monotonic_time() >= server->deadline) ||
+           any_ready(server, true) || any_ready(server, false);
+}
+
+static gboolean
+rdp_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
+{
+    struct rdp_server *server = ((struct rdp_source *)source)->server;
+    struct peer_context *peer_ctx = server->peer;
+    bool listener_ready = any_ready(server, false);
+
+    /* Before the notes are read: one left after this is dispatched again. */
+    g_atomic_int_set(&server->woken, 0);
+
+    /* The peer before the listener: a client that reconnects is refused for
+     * as long as the connection it left behind has not been noticed. */
+    if (peer_ctx) {
+        bool alive = true;
+
+        if (any_ready(server, true))
+            alive = peer_activity(peer_ctx);
+        if (alive && peer_ctx->drdynvc_waiting)
+            alive = peer_drdynvc_wait(peer_ctx);
+        if (alive) {
+            disp_dispatch(peer_ctx);
+            gfxredir_dispatch(peer_ctx);
+            alive = !peer_ctx->failed;
+        }
+        if (!alive)
+            peer_destroy(peer_ctx);
+    }
+
+    if (listener_ready && !server->listener->CheckFileDescriptor(server->listener))
+        g_warning("accepting a client failed");
+
+    /* The client's state may be another now: ready for a frame, asking for a
+     * size, gone. */
+    if (server->config.changed)
+        server->config.changed(server->config.changed_data);
+    return G_SOURCE_CONTINUE;
+}
+
+static GSourceFuncs rdp_source_funcs = {
+    .prepare = rdp_source_prepare,
+    .check = rdp_source_check,
+    .dispatch = rdp_source_dispatch,
+};
+
+struct rdp_server *
+rdp_server_new(const struct rdp_config *config, GError **error)
+{
+    struct rdp_server *server = g_new0(struct rdp_server, 1);
+
     server->config = *config;
     server->owned_listen_fd = -1;
-    server->wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (server->wake_fd < 0)
-        goto fail;
+    server->deadline = -1;
+    server->watches = g_array_new(FALSE, FALSE, sizeof(struct watch));
+    server->context = g_main_context_ref_thread_default();
 
     /* In a plain directory the client would never see the pools. */
     if (!config->shm_dir || !is_mount_point(config->shm_dir)) {
-        rdp_log("the shared-memory share is not mounted at %s",
-                config->shm_dir ? config->shm_dir : "(nowhere)");
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_MOUNTED,
+                    "the shared-memory share is not mounted at %s",
+                    config->shm_dir ? config->shm_dir : "(nowhere)");
         goto fail;
     }
 
-    if (!generate_session_tls(server))
+    if (!generate_session_tls(server, error))
         goto fail;
 
     server->listener = freerdp_listener_new();
-    if (!server->listener)
+    if (!server->listener) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "cannot create a listener");
         goto fail;
+    }
     server->listener->PeerAccepted = on_peer_accepted;
     server->listener->param4 = server;
 
     if (config->tcp_port > 0) {
         if (!server->listener->Open(server->listener, "127.0.0.1", (UINT16)config->tcp_port)) {
-            rdp_log("cannot listen on 127.0.0.1:%d", config->tcp_port);
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "cannot listen on 127.0.0.1:%d",
+                        config->tcp_port);
             goto fail;
         }
-        rdp_log("listening on 127.0.0.1:%d, unauthenticated (FreeRDP %s)", config->tcp_port,
-                FREERDP_VERSION_FULL);
+        g_message("listening on 127.0.0.1:%d, unauthenticated (FreeRDP %s)", config->tcp_port,
+                  FREERDP_VERSION_FULL);
     } else {
-        server->owned_listen_fd = create_vsock_fd(config->vsock_port);
+        server->owned_listen_fd = create_vsock_fd(config->vsock_port, error);
         if (server->owned_listen_fd < 0)
             goto fail;
         if (!server->listener->OpenFromSocket(server->listener, server->owned_listen_fd)) {
-            rdp_log("cannot listen on the vsock");
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                "cannot listen on the vsock");
             goto fail;
         }
-        rdp_log("listening on vsock port %d (FreeRDP %s), frames go to %s", config->vsock_port,
-                FREERDP_VERSION_FULL, config->shm_dir);
+        g_message("listening on vsock port %d (FreeRDP %s), frames go to %s", config->vsock_port,
+                  FREERDP_VERSION_FULL, config->shm_dir);
     }
+
+    server->source = g_source_new(&rdp_source_funcs, sizeof(struct rdp_source));
+    ((struct rdp_source *)server->source)->server = server;
+    g_source_set_static_name(server->source, "rdp");
+    g_source_attach(server->source, server->context);
 
     return server;
 
@@ -1827,6 +1968,11 @@ rdp_server_free(struct rdp_server *server)
     if (!server)
         return;
 
+    if (server->source) {
+        g_source_destroy(server->source);
+        g_source_unref(server->source);
+    }
+
     if (server->peer)
         peer_destroy(server->peer);
 
@@ -1834,121 +1980,13 @@ rdp_server_free(struct rdp_server *server)
         server->listener->Close(server->listener);
         freerdp_listener_free(server->listener);
     }
-    if (server->owned_listen_fd >= 0)
-        close(server->owned_listen_fd);
-    if (server->wake_fd >= 0)
-        close(server->wake_fd);
-    free(server->cert_pem);
-    free(server->key_pem);
-    free(server->pointer);
-    free(server);
-}
-
-/* ------------------------------------------------------------------ */
-/* The main loop's side                                               */
-/* ------------------------------------------------------------------ */
-
-static int
-add_handles(struct pollfd *fds, int n, int max, HANDLE *handles, DWORD count)
-{
-    for (DWORD i = 0; i < count && n < max; i++) {
-        int fd = GetEventFileDescriptor(handles[i]);
-
-        if (fd >= 0)
-            fds[n++] = (struct pollfd){ .fd = fd, .events = POLLIN };
-    }
-    return n;
-}
-
-int
-rdp_server_get_fds(struct rdp_server *server, struct pollfd *fds, int max)
-{
-    HANDLE handles[MAX_FREERDP_FDS + 1];
-    struct peer_context *peer_ctx = server->peer;
-    DWORD count;
-    int n = 0;
-
-    count = server->listener->GetEventHandles(server->listener, handles, MAX_FREERDP_FDS);
-    n = add_handles(fds, n, max, handles, count);
-    server->n_listener_fds = n;
-
-    if (peer_ctx) {
-        count = peer_ctx->peer->GetEventHandles(peer_ctx->peer, handles, MAX_FREERDP_FDS);
-        if (peer_ctx->vcm)
-            handles[count++] = WTSVirtualChannelManagerGetEventHandle(peer_ctx->vcm);
-        n = add_handles(fds, n, max, handles, count);
-    }
-    server->n_peer_fds = n - server->n_listener_fds;
-    server->fds_peer = peer_ctx;
-
-    if (n < max)
-        fds[n++] = (struct pollfd){ .fd = server->wake_fd, .events = POLLIN };
-    return n;
-}
-
-int
-rdp_server_timeout_ms(struct rdp_server *server)
-{
-    struct peer_context *peer_ctx = server->peer;
-
-    if (!peer_ctx)
-        return -1;
-    if (peer_ctx->drdynvc_waiting)
-        return DRDYNVC_POLL_MS;
-    if (peer_ctx->gfxredir_caps_deadline) {
-        double left = peer_ctx->gfxredir_caps_deadline - now_ms();
-
-        return left > 0 ? (int)left + 1 : 0;
-    }
-    /* A screen that does not follow is noticed by the clock alone. */
-    if (server->wanted_deadline > now_ms())
-        return (int)(server->wanted_deadline - now_ms()) + 1;
-    return touch_timeout(peer_ctx);
-}
-
-static bool
-any_ready(const struct pollfd *fds, int first, int count)
-{
-    for (int i = first; i < first + count; i++) {
-        if (fds[i].revents)
-            return true;
-    }
-    return false;
-}
-
-void
-rdp_server_dispatch(struct rdp_server *server, const struct pollfd *fds, int n)
-{
-    struct peer_context *peer_ctx = server->peer;
-    uint64_t counter;
-
-    if (read(server->wake_fd, &counter, sizeof(counter)) < 0) {
-        /* Nothing to drain. */
-    }
-
-    /* The peer before the listener: a client that reconnects is refused for
-     * as long as the connection it left behind has not been noticed. */
-    if (peer_ctx) {
-        bool alive = true;
-
-        if (peer_ctx == server->fds_peer && server->n_listener_fds + server->n_peer_fds <= n &&
-            any_ready(fds, server->n_listener_fds, server->n_peer_fds))
-            alive = peer_activity(peer_ctx);
-        if (alive && peer_ctx->drdynvc_waiting)
-            alive = peer_drdynvc_wait(peer_ctx);
-        if (alive) {
-            disp_dispatch(peer_ctx);
-            gfxredir_dispatch(peer_ctx);
-            alive = !peer_ctx->failed;
-        }
-        if (!alive)
-            peer_destroy(peer_ctx);
-    }
-
-    if (server->n_listener_fds <= n && any_ready(fds, 0, server->n_listener_fds)) {
-        if (!server->listener->CheckFileDescriptor(server->listener))
-            rdp_log("accepting a client failed");
-    }
+    g_clear_fd(&server->owned_listen_fd, NULL);
+    g_array_unref(server->watches);
+    g_main_context_unref(server->context);
+    g_free(server->cert_pem);
+    g_free(server->key_pem);
+    g_free(server->pointer);
+    g_free(server);
 }
 
 void
@@ -1967,7 +2005,7 @@ rdp_server_state(struct rdp_server *server)
         return RDP_NO_CLIENT;
     if (server->screen_width <= 0 || server->screen_height <= 0)
         return RDP_CONNECTING;
-    if (!atomic_load(&peer_ctx->gfxredir_activated))
+    if (!g_atomic_int_get(&peer_ctx->gfxredir_activated))
         return RDP_CONNECTING;
     if (peer_sync_desktop_size(peer_ctx))
         return RDP_CONNECTING;

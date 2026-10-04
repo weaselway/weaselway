@@ -123,6 +123,8 @@ in
       # weaselwayd/gfxredir.
       final.weaselway-freerdp
       final.openssl
+      # The main loop, and GIO for the audio sockets.
+      final.glib
     ];
 
     # dxgdrm_drm.h, the uapi header, lives with the module.
