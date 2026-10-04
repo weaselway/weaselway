@@ -82,6 +82,7 @@ struct presenter {
     GLuint pbo;
     size_t pbo_size;
     bool sync_readback;
+    bool always_full;
     double issue_ms, wait_ms, copy_ms;
 
     const char *out_dir;
@@ -653,12 +654,13 @@ static void
 usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--sync]\n"
+            "usage: %s [--out DIR] [--max-frames N] [--quality Q] [--no-pointer] [--sync] [--full]\n"
             "  --out DIR       where the JPEGs go (default /tmp/weaselway-frames)\n"
             "  --max-frames N  keep N files, then start over at frame-000000 (default 600)\n"
             "  --quality Q     JPEG quality (default 85)\n"
             "  --no-pointer    do not create the circling uinput pointer\n"
-            "  --sync          read back with a blocking glReadPixels per damage rect\n",
+            "  --sync          read back with a blocking glReadPixels per damage rect\n"
+            "  --full          ignore the damage and read the whole frame every time\n",
             argv0);
 }
 
@@ -689,6 +691,8 @@ main(int argc, char **argv)
             pointer = false;
         } else if (!strcmp(argv[i], "--sync")) {
             p.sync_readback = true;
+        } else if (!strcmp(argv[i], "--full")) {
+            p.always_full = true;
         } else {
             usage(argv[0]);
             return 2;
@@ -754,7 +758,7 @@ main(int argc, char **argv)
         p.issue_ms = p.wait_ms = p.copy_ms = 0.0;
         if (primary_changed) {
             /* The shadow copy starts out empty, whatever the damage says. */
-            if (!have_frame)
+            if (!have_frame || p.always_full)
                 frame.flags |= DXGDRM_FRAME_DAMAGE_FULL;
 
             if (!(frame.flags & DXGDRM_FRAME_SHARED))
