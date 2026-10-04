@@ -1,0 +1,381 @@
+From 3994e4d9f6c1ec1ccbf09e9e705b9d404ee641f7 Mon Sep 17 00:00:00 2001
+From: Oliver Bestmann <oliver.bestmann@googlemail.com>
+Date: Sun, 4 Oct 2026 12:30:50 +0200
+Subject: [PATCH] backends/drm: report damage to the kernel with
+ FB_DAMAGE_CLIPS
+
+Backport of the commit of the same name on master to 6.6.6. This release
+doesn't set the property at all, so it is added to DrmPlane here too.
+
+Each layer records what changed in every frame it produces, and a commit
+sets the clips to everything that changed since the last frame that's
+known to have reached the screen. Frames that are still queued are
+counted as not presented, so dropped or merged commits can't lead to too
+little damage being reported.
+
+Damage isn't known for direct scanout, test buffers and rotated outputs;
+those keep reporting the whole buffer.
+---
+ src/backends/drm/drm_commit.cpp    | 42 +++++++++++++++++++++++++++++
+ src/backends/drm/drm_commit.h      |  8 ++++++
+ src/backends/drm/drm_egl_layer.cpp | 21 +++++++++++++--
+ src/backends/drm/drm_layer.cpp     | 43 ++++++++++++++++++++++++++++++
+ src/backends/drm/drm_layer.h       | 30 +++++++++++++++++++++
+ src/backends/drm/drm_pipeline.cpp  |  3 +++
+ src/backends/drm/drm_plane.cpp     | 12 +++++++++
+ src/backends/drm/drm_plane.h       |  9 +++++++
+ 8 files changed, 166 insertions(+), 2 deletions(-)
+
+diff --git a/src/backends/drm/drm_commit.cpp b/src/backends/drm/drm_commit.cpp
+index c0aa9dd76b..a3215773be 100644
+--- a/src/backends/drm/drm_commit.cpp
++++ b/src/backends/drm/drm_commit.cpp
+@@ -45,6 +45,8 @@ void DrmCommit::setDefunct()
+     m_defunct = true;
+ }
+ 
++static const qsizetype s_maxDamageClips = 64;
++
+ DrmAtomicCommit::DrmAtomicCommit(DrmGpu *gpu)
+     : DrmCommit(gpu)
+ {
+@@ -91,6 +93,38 @@ void DrmAtomicCommit::addBuffer(DrmPlane *plane, const std::shared_ptr<DrmFrameb
+     }
+ }
+ 
++void DrmAtomicCommit::addDamage(DrmPlane *plane, const std::optional<Region> &damage, uint64_t frameSerial)
++{
++    m_frameSerials[plane] = frameSerial;
++    const auto buffer = m_buffers[plane];
++    if (!damage || !buffer) {
++        // no clips means that everything is damaged
++        addBlob(plane->fbDamage, nullptr);
++        return;
++    }
++    const Region clipped = *damage & Rect(QPoint(), buffer->buffer()->size());
++    std::vector<drm_mode_rect> clips;
++    const auto addClip = [&clips](const Rect &rect) {
++        clips.push_back(drm_mode_rect{
++            .x1 = rect.left(),
++            .y1 = rect.top(),
++            .x2 = rect.left() + rect.width(),
++            .y2 = rect.top() + rect.height(),
++        });
++    };
++    if (clipped.isEmpty()) {
++        // there's no way to say "nothing"; one pixel is the closest to it
++        addClip(Rect(0, 0, 1, 1));
++    } else if (clipped.rects().size() > s_maxDamageClips) {
++        addClip(clipped.boundingRect());
++    } else {
++        for (const Rect &rect : clipped.rects()) {
++            addClip(rect);
++        }
++    }
++    addBlob(plane->fbDamage, DrmBlob::create(m_gpu, clips.data(), clips.size() * sizeof(drm_mode_rect)));
++}
++
+ void DrmAtomicCommit::setVrr(DrmCrtc *crtc, bool vrr)
+ {
+     addProperty(crtc->vrrEnabled, vrr ? 1 : 0);
+@@ -172,6 +206,9 @@ void DrmAtomicCommit::pageFlipped(std::chrono::nanoseconds timestamp)
+     for (const auto &[plane, buffer] : m_buffers) {
+         plane->setCurrentBuffer(buffer);
+     }
++    for (const auto &[plane, serial] : m_frameSerials) {
++        plane->setPresentedFrameSerial(serial);
++    }
+     if (m_defunct) {
+         return;
+     }
+@@ -235,6 +272,11 @@ void DrmAtomicCommit::merge(DrmAtomicCommit *onTop)
+     for (const auto &[prop, blob] : onTop->m_blobs) {
+         m_blobs[prop] = blob;
+     }
++    // the damage of a later frame includes that of the earlier ones that
++    // weren't presented yet, so there's nothing to add up here
++    for (const auto &[plane, serial] : onTop->m_frameSerials) {
++        m_frameSerials[plane] = serial;
++    }
+     if (onTop->m_vrr) {
+         m_vrr = onTop->m_vrr;
+     }
+diff --git a/src/backends/drm/drm_commit.h b/src/backends/drm/drm_commit.h
+index 337ea460ba..2bc504907d 100644
+--- a/src/backends/drm/drm_commit.h
++++ b/src/backends/drm/drm_commit.h
+@@ -16,6 +16,7 @@
+ #include <unordered_map>
+ #include <unordered_set>
+ 
++#include "core/region.h"
+ #include "core/renderloop.h"
+ #include "drm_pointer.h"
+ #include "drm_property.h"
+@@ -65,6 +66,12 @@ public:
+     }
+     void addBlob(const DrmProperty &prop, const std::shared_ptr<DrmBlob> &blob);
+     void addBuffer(DrmPlane *plane, const std::shared_ptr<DrmFramebuffer> &buffer, const std::shared_ptr<OutputFrame> &frame);
++    /**
++     * Sets FB_DAMAGE_CLIPS for the buffer of @p plane. @p damage is what differs from the
++     * frame that's on the screen, in buffer coordinates, std::nullopt for everything.
++     * @p frameSerial is reported to the plane once the buffer is on the screen
++     */
++    void addDamage(DrmPlane *plane, const std::optional<Region> &damage, uint64_t frameSerial);
+     void setVrr(DrmCrtc *crtc, bool vrr);
+     void setPresentationMode(PresentationMode mode);
+ 
+@@ -98,6 +105,7 @@ private:
+     std::unordered_map<const DrmProperty *, std::shared_ptr<DrmBlob>> m_blobs;
+     std::unordered_map<DrmPlane *, std::shared_ptr<DrmFramebuffer>> m_buffers;
+     std::unordered_map<DrmPlane *, std::shared_ptr<OutputFrame>> m_frames;
++    std::unordered_map<DrmPlane *, uint64_t> m_frameSerials;
+     std::unordered_set<DrmPlane *> m_planes;
+     std::optional<bool> m_vrr;
+     std::unordered_map<uint32_t /* object */, std::unordered_map<uint32_t /* property */, uint64_t /* value */>> m_properties;
+diff --git a/src/backends/drm/drm_egl_layer.cpp b/src/backends/drm/drm_egl_layer.cpp
+index ea30287da3..9c7506b0f7 100644
+--- a/src/backends/drm/drm_egl_layer.cpp
++++ b/src/backends/drm/drm_egl_layer.cpp
+@@ -66,7 +66,16 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayer::doBeginFrame()
+ 
+ bool EglGbmLayer::doEndFrame(const Region &renderedDeviceRegion, const Region &damagedDeviceRegion, OutputFrame *frame)
+ {
+-    return m_surface.endRendering(damagedDeviceRegion, frame);
++    if (!m_surface.endRendering(damagedDeviceRegion, frame)) {
++        return false;
++    }
++    if (drmOutput()->transform() == OutputTransform::Normal) {
++        addFrameDamage(damagedDeviceRegion);
++    } else {
++        // TODO map the damage to the rotated buffer
++        addFrameDamage(std::nullopt);
++    }
++    return true;
+ }
+ 
+ bool EglGbmLayer::preparePresentationTest()
+@@ -74,8 +83,14 @@ bool EglGbmLayer::preparePresentationTest()
+     if (m_type != OutputLayerType::Primary && drmOutput()->shouldDisableNonPrimaryPlanes()) {
+         return false;
+     }
++    const auto previousBuffer = currentBuffer();
+     m_scanoutBuffer.reset();
+-    return m_surface.renderTestBuffer(targetRect().size(), supportedDrmFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
++    const bool ret = m_surface.renderTestBuffer(targetRect().size(), supportedDrmFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
++    if (currentBuffer() != previousBuffer) {
++        // a test buffer, or the last rendered one instead of a client's
++        addFrameDamage(std::nullopt);
++    }
++    return ret;
+ }
+ 
+ bool EglGbmLayer::importScanoutBuffer(GraphicsBuffer *buffer, const std::shared_ptr<OutputFrame> &frame)
+@@ -121,6 +136,7 @@ bool EglGbmLayer::importScanoutBuffer(GraphicsBuffer *buffer, const std::shared_
+     }
+     m_scanoutBuffer = gpu()->importBuffer(buffer, FileDescriptor{});
+     if (m_scanoutBuffer) {
++        addFrameDamage(std::nullopt);
+         m_surface.forgetDamage(); // TODO: Use absolute frame sequence numbers for indexing the DamageJournal. It's more flexible and less error-prone
+     }
+     return m_scanoutBuffer != nullptr;
+@@ -134,6 +150,7 @@ std::shared_ptr<DrmFramebuffer> EglGbmLayer::currentBuffer() const
+ void EglGbmLayer::releaseBuffers()
+ {
+     m_scanoutBuffer.reset();
++    addFrameDamage(std::nullopt);
+     m_surface.destroyResources();
+ }
+ }
+diff --git a/src/backends/drm/drm_layer.cpp b/src/backends/drm/drm_layer.cpp
+index 8a210d4fab..a78cb2c9c9 100644
+--- a/src/backends/drm/drm_layer.cpp
++++ b/src/backends/drm/drm_layer.cpp
+@@ -99,6 +99,49 @@ DrmPlane *DrmPipelineLayer::plane() const
+     return m_plane;
+ }
+ 
++static const size_t s_maxFrameDamage = 16;
++
++uint64_t DrmPipelineLayer::frameSerial() const
++{
++    return m_frameSerial;
++}
++
++std::optional<Region> DrmPipelineLayer::bufferDamage() const
++{
++    if (!m_plane) {
++        return std::nullopt;
++    }
++    Region ret;
++    for (const auto &frame : m_frameDamage) {
++        if (frame.serial <= m_plane->presentedFrameSerial()) {
++            continue;
++        }
++        if (!frame.damage) {
++            return std::nullopt;
++        }
++        ret |= *frame.damage;
++    }
++    return ret;
++}
++
++void DrmPipelineLayer::addFrameDamage(const std::optional<Region> &damage)
++{
++    if (!m_plane) {
++        return;
++    }
++    while (!m_frameDamage.empty() && m_frameDamage.front().serial <= m_plane->presentedFrameSerial()) {
++        m_frameDamage.pop_front();
++    }
++    m_frameSerial++;
++    if (m_frameDamage.size() >= s_maxFrameDamage) {
++        // nothing gets presented, don't collect damage forever
++        m_frameDamage.clear();
++        m_frameDamage.push_back(FrameDamage{.serial = m_frameSerial, .damage = std::nullopt});
++    } else {
++        m_frameDamage.push_back(FrameDamage{.serial = m_frameSerial, .damage = damage});
++    }
++}
++
+ DrmPipeline *DrmPipelineLayer::pipeline() const
+ {
+     return drmOutput()->pipeline();
+diff --git a/src/backends/drm/drm_layer.h b/src/backends/drm/drm_layer.h
+index 8ea5e64639..b0ff5eba9d 100644
+--- a/src/backends/drm/drm_layer.h
++++ b/src/backends/drm/drm_layer.h
+@@ -11,6 +11,7 @@
+ #include "core/outputlayer.h"
+ #include "drm_plane.h"
+ 
++#include <deque>
+ #include <memory>
+ #include <optional>
+ 
+@@ -46,11 +47,40 @@ public:
+ 
+     DrmPlane *plane() const;
+ 
++    /**
++     * Identifies the contents of currentBuffer(). A commit that puts them on
++     * the screen reports the serial back through DrmPlane::setPresentedFrameSerial()
++     */
++    uint64_t frameSerial() const;
++    /**
++     * What differs between currentBuffer() and the frame that is on the screen,
++     * in buffer coordinates; std::nullopt if that's not known.
++     * Frames that are still on their way to the screen count as not presented,
++     * so this may be more than necessary, but never less
++     */
++    std::optional<Region> bufferDamage() const;
++
+ protected:
++    /**
++     * To be called whenever currentBuffer() gets new contents, with what changed
++     * relative to the previous contents, or std::nullopt if that's not known
++     */
++    void addFrameDamage(const std::optional<Region> &damage);
++
+     DrmPipeline *pipeline() const;
+     DrmGpu *gpu() const;
+     DrmOutput *drmOutput() const;
+ 
+     DrmPlane *m_plane = nullptr;
++
++private:
++    struct FrameDamage
++    {
++        uint64_t serial;
++        std::optional<Region> damage;
++    };
++    // nothing is known about what's on the screen before the first frame
++    std::deque<FrameDamage> m_frameDamage = {FrameDamage{.serial = 1, .damage = std::nullopt}};
++    uint64_t m_frameSerial = 1;
+ };
+ }
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index 72630e0aa9..7af09285e3 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -268,6 +268,9 @@ DrmPipeline::Error DrmPipeline::prepareAtomicPlane(DrmAtomicCommit *commit, DrmP
+     if (plane->zpos.isValid() && !plane->zpos.isImmutable()) {
+         commit->addProperty(plane->zpos, layer->zpos());
+     }
++    if (plane->fbDamage.isValid()) {
++        commit->addDamage(plane, layer->bufferDamage(), layer->frameSerial());
++    }
+ 
+     const auto colorPipelines = plane->colorPipelines();
+     if (layer->colorPipeline().isIdentity()) {
+diff --git a/src/backends/drm/drm_plane.cpp b/src/backends/drm/drm_plane.cpp
+index 41e5f9861c..265b77c4c9 100644
+--- a/src/backends/drm/drm_plane.cpp
++++ b/src/backends/drm/drm_plane.cpp
+@@ -68,6 +68,7 @@ DrmPlane::DrmPlane(DrmGpu *gpu, uint32_t planeId)
+                                                          })
+     , vmHotspotX(this, QByteArrayLiteral("HOTSPOT_X"))
+     , vmHotspotY(this, QByteArrayLiteral("HOTSPOT_Y"))
++    , fbDamage(this, QByteArrayLiteral("FB_DAMAGE_CLIPS"))
+     , inFenceFd(this, QByteArrayLiteral("IN_FENCE_FD"))
+     , sizeHints(this, QByteArrayLiteral("SIZE_HINTS"))
+     , inFormatsForTearing(this, QByteArrayLiteral("IN_FORMATS_ASYNC"))
+@@ -108,6 +109,7 @@ bool DrmPlane::updateProperties()
+     colorRange.update(props);
+     vmHotspotX.update(props);
+     vmHotspotY.update(props);
++    fbDamage.update(props);
+     inFenceFd.update(props);
+     sizeHints.update(props);
+     inFormatsForTearing.update(props);
+@@ -240,6 +242,16 @@ std::shared_ptr<DrmFramebuffer> DrmPlane::currentBuffer() const
+     return m_current;
+ }
+ 
++uint64_t DrmPlane::presentedFrameSerial() const
++{
++    return m_presentedFrameSerial;
++}
++
++void DrmPlane::setPresentedFrameSerial(uint64_t serial)
++{
++    m_presentedFrameSerial = std::max(m_presentedFrameSerial, serial);
++}
++
+ void DrmPlane::setCurrentBuffer(const std::shared_ptr<DrmFramebuffer> &b)
+ {
+     if (m_current == b) {
+diff --git a/src/backends/drm/drm_plane.h b/src/backends/drm/drm_plane.h
+index 036e66146c..d4fb423abc 100644
+--- a/src/backends/drm/drm_plane.h
++++ b/src/backends/drm/drm_plane.h
+@@ -47,6 +47,13 @@ public:
+     void setCurrentBuffer(const std::shared_ptr<DrmFramebuffer> &b);
+     void releaseCurrentBuffer();
+ 
++    /**
++     * The serial of the last frame of this plane's layer that reached the
++     * screen, see DrmPipelineLayer::frameSerial()
++     */
++    uint64_t presentedFrameSerial() const;
++    void setPresentedFrameSerial(uint64_t serial);
++
+     void set(DrmAtomicCommit *commit, const Rect &src, const Rect &dst);
+ 
+     QList<QSize> recommendedSizes() const;
+@@ -102,6 +109,7 @@ public:
+     DrmEnumProperty<ColorRange> colorRange;
+     DrmProperty vmHotspotX;
+     DrmProperty vmHotspotY;
++    DrmProperty fbDamage;
+     DrmProperty inFenceFd;
+     DrmProperty sizeHints;
+     DrmProperty inFormatsForTearing;
+@@ -110,6 +118,7 @@ public:
+ 
+ private:
+     std::shared_ptr<DrmFramebuffer> m_current;
++    uint64_t m_presentedFrameSerial = 0;
+     QList<std::shared_ptr<DrmFramebufferData>> m_lastBuffers;
+ 
+     QHash<uint32_t, QList<uint64_t>> m_supportedFormats;

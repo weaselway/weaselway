@@ -15,12 +15,12 @@
 
 #define N_BUTTONS (BTN_TASK - BTN_LEFT + 1)
 
-/* The touchpad's surface: 110 x 65 mm, which is about what a laptop has, at 40
+/* The touchpad's surface: 150 x 100 mm, which is about what a large laptop pad has, at 40
  * units a millimetre. libinput's gesture thresholds are in millimetres, so the
  * size matters; the real pad's is not known here. */
 #define TOUCHPAD_RESOLUTION 40
-#define TOUCHPAD_MAX_X (110 * TOUCHPAD_RESOLUTION)
-#define TOUCHPAD_MAX_Y (65 * TOUCHPAD_RESOLUTION)
+#define TOUCHPAD_MAX_X (150 * TOUCHPAD_RESOLUTION)
+#define TOUCHPAD_MAX_Y (100 * TOUCHPAD_RESOLUTION)
 #define TOUCHPAD_SLOTS 5
 
 struct input {

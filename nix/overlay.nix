@@ -99,6 +99,32 @@ in
     ];
   });
 
+  # kms-wsl spike: KWin that tells the kernel what changed in a frame
+  # (FB_DAMAGE_CLIPS), so the presenter does not read back the whole screen
+  # for every frame. The patches are backports (branches weaselway-6.6.6 and
+  # weaselway-6.7.5) of the commit on master of github.com/weaselway/kde-kwin;
+  # which one depends on the Plasma release in nixpkgs. Replaced in the scope,
+  # so Plasma runs it; what links KWin is rebuilt.
+  kdePackages = prev.kdePackages.overrideScope (
+    kfinal: kprev: {
+      kwin = kprev.kwin.overrideAttrs (old: {
+        # builtins.path, so that the patch is a store path of its own: as
+        # ./file it would be a path into this flake's source, and every
+        # change to the repo would rebuild KWin and Plasma.
+        patches = (old.patches or [ ]) ++ [
+          (builtins.path {
+            name = "kwin-fb-damage-clips.patch";
+            path =
+              if lib.versionOlder old.version "6.7" then
+                ./kwin-6.6-fb-damage-clips.patch
+              else
+                ./kwin-6.7-fb-damage-clips.patch;
+          })
+        ];
+      });
+    }
+  );
+
   # kms-wsl spike: the userspace half of dxgdrm's virtual display. Built
   # against nixpkgs' libglvnd and libgbm; at run time those load the patched
   # mesa from /run/opengl-driver like everything else.

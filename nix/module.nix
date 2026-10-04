@@ -215,7 +215,8 @@ in
     };
 
     # Plasma is only here for the kms-wsl spike (`start-kms-session plasma`,
-    # or `kwin` for the bare compositor); it comes from cache.nixos.org.
+    # or `kwin` for the bare compositor). KWin is patched, see the overlay, so
+    # it and what links it are built; the rest comes from cache.nixos.org.
     services.desktopManager.plasma6.enable = true;
     # Both desktops want to be the one that asks for ssh passphrases.
     programs.ssh.askPassword = lib.mkForce "${pkgs.seahorse}/libexec/seahorse/ssh-askpass";
