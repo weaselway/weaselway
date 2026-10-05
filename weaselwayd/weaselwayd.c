@@ -12,9 +12,8 @@
  * object is the CopyTextureRegion + map a D3D12 presenter would do.
  *
  * One thread running a GLib main loop: the DRM node (readable when there is a
- * commit to fetch), the RDP server's source, a one millisecond tick while a
- * readback's fence is outstanding, and the session's clipboard on D-Bus
- * (selection.c).
+ * commit to fetch), the RDP server's source, the fence of the readback that
+ * is outstanding, and the session's clipboard on D-Bus (selection.c).
  */
 
 #define G_LOG_DOMAIN "weaselwayd"
@@ -63,7 +62,14 @@ struct import {
  * next one. */
 struct readback {
     bool active;
+    /* The fence behind the copy: an EGL one that has a descriptor to wait on
+     * (@fence_fd, watched by @fence_watch), or failing that a GL one that can
+     * only be asked. */
+    EGLSync egl_sync;
     GLsync sync;
+    int fence_fd;
+    guint fence_watch;
+    bool fence_fired;
     struct rdp_rect rect;
     /* The buffer of the client's pool the pixels go to. */
     struct rdp_frame frame;
@@ -120,8 +126,11 @@ struct weaselwayd {
     GLuint pbo;
     size_t pbo_size;
     struct readback readback;
-    /* The source that looks at the readback's fence every millisecond; 0
-     * while there is nothing to look at. */
+    /* EGL_ANDROID_native_fence_sync: a readback's fence can be waited for. */
+    bool fence_fds;
+    /* The source that looks at the readback's fence: every millisecond if
+     * that is the only way to learn that it has signalled, and otherwise once,
+     * when it should long have. 0 while there is nothing to look at. */
     guint readback_tick;
 
     bool verbose;
@@ -134,8 +143,13 @@ struct weaselwayd {
     uint64_t stat_primary_seq;
 };
 
-/* An extension entry point, which libglvnd's libGLESv2 does not export. */
+/* Extension entry points, which libglvnd's libraries do not export. */
 static void (*image_target_texture_2d)(GLenum target, void *image);
+static EGLint (*dup_native_fence_fd)(EGLDisplay display, EGLSync sync);
+
+/* Set to 1 to look at the readback's fence every millisecond instead of
+ * waiting on its descriptor, for when a stall has to be pinned on that. */
+#define NO_FENCE_FD_ENV "WEASELWAY_NO_FENCE_FD"
 
 static double
 ms_since(gint64 since, gint64 now)
@@ -220,6 +234,13 @@ init_egl(struct weaselwayd *p, GError **error)
     }
 
     p->read_bgra = strstr((const char *)glGetString(GL_EXTENSIONS), "GL_EXT_read_format_bgra") != NULL;
+
+    dup_native_fence_fd =
+        (EGLint (*)(EGLDisplay, EGLSync))eglGetProcAddress("eglDupNativeFenceFDANDROID");
+    p->fence_fds = dup_native_fence_fd && strstr(extensions, "EGL_ANDROID_native_fence_sync") &&
+                   g_strcmp0(g_getenv(NO_FENCE_FD_ENV), "1") != 0;
+    g_message("a readback is %s", p->fence_fds ? "waited for on its fence"
+                                               : "looked at every millisecond");
 
     /* Every readback is tightly packed. These are GL's defaults, and nothing
      * here changes them. */
@@ -406,6 +427,76 @@ frame_failed(struct weaselwayd *p)
  * not block.
  */
 static gboolean on_readback_tick(gpointer data);
+static gboolean on_readback_fence(gint fd, GIOCondition condition, gpointer data);
+
+/*
+ * A fence behind the commands issued so far, and something to wake the main
+ * loop when it signals.
+ *
+ * With a descriptor that is the fence itself. The EGL fence has to be the one
+ * that flushes the copy: d3d12 gives a fence asked for with nothing to flush
+ * one of its own, that stands for no work. Without, a GL fence and a look at
+ * it every millisecond, which is as fine as GLib's timeouts get; the fence of
+ * a damage-sized readback takes about two.
+ */
+static void
+readback_arm(struct weaselwayd *p)
+{
+    struct readback *rb = &p->readback;
+
+    rb->egl_sync = EGL_NO_SYNC;
+    rb->sync = NULL;
+    rb->fence_fd = -1;
+    rb->fence_fired = false;
+
+    if (p->fence_fds)
+        rb->egl_sync = eglCreateSync(p->display, EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
+    if (rb->egl_sync != EGL_NO_SYNC)
+        rb->fence_fd = dup_native_fence_fd(p->display, rb->egl_sync);
+    else
+        rb->sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();
+
+    if (rb->fence_fd >= 0)
+        rb->fence_watch = g_unix_fd_add(rb->fence_fd, G_IO_IN, on_readback_fence, p);
+    p->readback_tick =
+        g_timeout_add(rb->fence_fd >= 0 ? 1000 : 1, on_readback_tick, p);
+}
+
+static bool
+readback_signalled(struct weaselwayd *p)
+{
+    struct readback *rb = &p->readback;
+    GLenum status;
+
+    /* The descriptor said so. Asked no further: it would be polled readable
+     * again and again if the fence disagreed. */
+    if (rb->fence_fired)
+        return true;
+    if (rb->egl_sync != EGL_NO_SYNC)
+        return eglClientWaitSync(p->display, rb->egl_sync, 0, 0) == EGL_CONDITION_SATISFIED;
+
+    status = glClientWaitSync(rb->sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+    return status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED;
+}
+
+/* The readback is over, one way or another. */
+static void
+readback_disarm(struct weaselwayd *p)
+{
+    struct readback *rb = &p->readback;
+
+    g_clear_handle_id(&p->readback_tick, g_source_remove);
+    g_clear_handle_id(&rb->fence_watch, g_source_remove);
+    g_clear_fd(&rb->fence_fd, NULL);
+    if (rb->egl_sync != EGL_NO_SYNC)
+        eglDestroySync(p->display, rb->egl_sync);
+    if (rb->sync)
+        glDeleteSync(rb->sync);
+    rb->egl_sync = EGL_NO_SYNC;
+    rb->sync = NULL;
+    rb->active = false;
+}
 
 static bool
 readback_begin(struct weaselwayd *p)
@@ -430,14 +521,11 @@ readback_begin(struct weaselwayd *p)
     /* Tightly packed at offset 0: the transfer is exactly the rect. */
     glReadPixels(rb->rect.x, rb->rect.y, rb->rect.width, rb->rect.height,
                  p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    rb->sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    glFlush();
+    readback_arm(p);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
     rb->issued = g_get_monotonic_time();
     rb->active = true;
-    if (!p->readback_tick)
-        p->readback_tick = g_timeout_add(1, on_readback_tick, p);
     return true;
 }
 
@@ -472,25 +560,25 @@ readback_copy(struct weaselwayd *p, uint8_t *pixels)
     return true;
 }
 
-/* Called every millisecond while a readback is outstanding. */
+/* Called with every turn of the main loop: collect the readback if its fence
+ * has signalled. */
 static void
 readback_poll(struct weaselwayd *p)
 {
     struct readback *rb = &p->readback;
+    bool signalled;
     uint8_t *pixels;
-    GLenum status;
 
     if (!rb->active)
         return;
 
-    status = glClientWaitSync(rb->sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
-    if (status == GL_TIMEOUT_EXPIRED && g_get_monotonic_time() - rb->issued < G_TIME_SPAN_SECOND)
+    signalled = readback_signalled(p);
+    if (!signalled && g_get_monotonic_time() - rb->issued < G_TIME_SPAN_SECOND)
         return;
 
-    glDeleteSync(rb->sync);
-    rb->active = false;
+    readback_disarm(p);
 
-    if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED) {
+    if (!signalled) {
         g_warning("the readback did not finish within a second");
         frame_failed(p);
         return;
@@ -955,18 +1043,25 @@ on_drm_ready(gint fd, GIOCondition condition, gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
-/* GLib's timeouts are no finer than a millisecond; the fence of a
- * damage-sized readback takes about two. */
+/* The readback that is over takes this source with it (readback_disarm()),
+ * and what is returned for a source that is gone does not matter. */
 static gboolean
 on_readback_tick(gpointer data)
 {
+    pump(data);
+    return G_SOURCE_CONTINUE;
+}
+
+/* The fence has signalled. Once: the pump may already have started the next
+ * readback, with a watch of its own. */
+static gboolean
+on_readback_fence(gint fd, GIOCondition condition, gpointer data)
+{
     struct weaselwayd *p = data;
 
+    p->readback.fence_fired = true;
+    p->readback.fence_watch = 0;
     pump(p);
-    if (p->readback.active)
-        return G_SOURCE_CONTINUE;
-
-    p->readback_tick = 0;
     return G_SOURCE_REMOVE;
 }
 
@@ -1108,9 +1203,8 @@ main(int argc, char **argv)
 
     g_main_loop_run(p.loop);
 
-    g_clear_handle_id(&p.readback_tick, g_source_remove);
     if (p.readback.active)
-        glDeleteSync(p.readback.sync);
+        readback_disarm(&p);
     rdp_server_free(p.rdp);
     selection_free(p.selection);
     input_free(p.input);
