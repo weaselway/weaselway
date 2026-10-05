@@ -14,9 +14,9 @@
 
 #define N_BUTTONS (BTN_TASK - BTN_LEFT + 1)
 
-/* The touchpad's surface: 150 x 100 mm, which is about what a large laptop pad has, at 40
- * units a millimetre. libinput's gesture thresholds are in millimetres, so the
- * size matters; the real pad's is not known here. */
+/* The touchpad's surface: 150 x 100 mm, which is about what a large laptop pad
+ * has, at 40 units a millimetre. libinput's gesture thresholds are in
+ * millimetres, so the size matters; the real pad's is not known here. */
 #define TOUCHPAD_RESOLUTION 40
 #define TOUCHPAD_MAX_X (150 * TOUCHPAD_RESOLUTION)
 #define TOUCHPAD_MAX_Y (100 * TOUCHPAD_RESOLUTION)
@@ -27,8 +27,9 @@ struct input {
     int keyboard_fd;
     int touchpad_fd; /* -1 if it could not be created */
 
-    /* The RDP callbacks and the simulated pointer write from different
-     * threads; an event and its SYN_REPORT have to stay together. */
+    /* The RDP callbacks write from different threads, the touch channel
+     * having one of its own; an event and its SYN_REPORT have to stay
+     * together. */
     GMutex lock;
 
     /* What is held down, so that a repeated press is not sent twice and a

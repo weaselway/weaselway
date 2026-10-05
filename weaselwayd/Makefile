@@ -51,9 +51,19 @@ gfxredir/%.o: gfxredir/%.c $(HEADERS)
 
 # For development: every out-of-bounds access, use-after-free and undefined
 # operation aborts with a report. Slow; not for the image.
-asan:
-	$(CC) $(CFLAGS) -w -Igfxredir -O1 -fno-omit-frame-pointer -fsanitize=address,undefined \
-		$(LDFLAGS) -o weaselwayd-asan $(SOURCES) $(GFXREDIR) $(LDLIBS)
+ASAN := -O1 -fno-omit-frame-pointer -fsanitize=address,undefined
+ASAN_OBJECTS := $(OBJECTS:.o=.asan.o)
+
+asan: weaselwayd-asan
+
+weaselwayd-asan: $(ASAN_OBJECTS)
+	$(CC) $(CFLAGS) $(ASAN) $(LDFLAGS) -o $@ $(ASAN_OBJECTS) $(LDLIBS)
+
+%.asan.o: %.c $(HEADERS)
+	$(CC) $(CFLAGS) $(ASAN) -c -o $@ $<
+
+gfxredir/%.asan.o: gfxredir/%.c $(HEADERS)
+	$(CC) $(CFLAGS) $(ASAN) -w -Igfxredir -c -o $@ $<
 
 # GCC's static analyzer; reports leaks, double frees and NULL dereferences on
 # paths it can prove.
@@ -84,7 +94,7 @@ install: weaselwayd
 	install -D -m 0755 weaselwayd $(DESTDIR)$(PREFIX)/bin/weaselwayd
 
 clean:
-	rm -f weaselwayd weaselwayd-asan $(OBJECTS) tests/test-formats tests/selection-tool \
+	rm -f weaselwayd weaselwayd-asan $(OBJECTS) $(ASAN_OBJECTS) tests/test-formats tests/selection-tool \
 		tests/rdp-harness
 
 .PHONY: install clean asan analyze check

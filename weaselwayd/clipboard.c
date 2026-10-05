@@ -520,20 +520,6 @@ on_client_format_list_response(CliprdrServerContext *context,
     return CHANNEL_RC_OK;
 }
 
-static UINT
-on_client_capabilities(CliprdrServerContext *context, const CLIPRDR_CAPABILITIES *capabilities)
-{
-    /* FreeRDP has already taken note of what matters, long format names. */
-    return CHANNEL_RC_OK;
-}
-
-static UINT
-on_client_temp_directory(CliprdrServerContext *context,
-                         const CLIPRDR_TEMP_DIRECTORY *temp_directory)
-{
-    return CHANNEL_RC_OK;
-}
-
 /* ------------------------------------------------------------------ */
 /* The channel                                                         */
 /* ------------------------------------------------------------------ */
@@ -615,8 +601,8 @@ clipboard_new(HANDLE vcm, rdpContext *context, struct selection *selection)
 
     cliprdr->custom = clipboard;
     cliprdr->rdpcontext = context;
-    cliprdr->ClientCapabilities = on_client_capabilities;
-    cliprdr->TempDirectory = on_client_temp_directory;
+    /* The client's capabilities need no callback: FreeRDP takes note of what
+     * matters, long format names, by itself. */
     cliprdr->ClientFormatList = on_client_format_list;
     cliprdr->ClientFormatListResponse = on_client_format_list_response;
     cliprdr->ClientFormatDataRequest = on_client_format_data_request;
