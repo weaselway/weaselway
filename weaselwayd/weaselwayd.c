@@ -696,7 +696,6 @@ fetch_frame(struct weaselwayd *p, GError **error)
     p->height = (int)frame.height;
     p->buffer_id = frame.buffer_id;
     p->dumb = !(frame.flags & DXGDRM_FRAME_SHARED);
-    rdp_server_set_screen_size(p->rdp, p->width, p->height);
 
     /* Imported while the fd is at hand; the readback finds it by its id. */
     if (!p->dumb && !get_import(p, &frame)) {
