@@ -1,10 +1,10 @@
 #!/usr/bin/env nix-shell
 #!nix-shell -I nixpkgs=flake:nixpkgs -i bash -p sway foot
 
-# An example custom-weaselway-session: sway, for `start-session custom`.
+# An example custom-weaselway-session: sway, for `ww-start-session custom`.
 #
 # Copy it to a directory on the PATH and make it executable, or name its
-# directory for the one run: PATH=~/bin:$PATH start-session custom. nix-shell
+# directory for the one run: PATH=~/bin:$PATH ww-start-session custom. nix-shell
 # fetches sway and foot, the terminal of sway's default configuration, on the
 # first run; nothing has to be installed.
 #

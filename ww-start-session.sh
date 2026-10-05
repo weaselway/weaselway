@@ -5,15 +5,15 @@
 # The compositor is an ordinary one on its native backend: it takes the dxgdrm
 # KMS node and the input devices from logind, page-flips like on real
 # hardware, and knows nothing about Windows. weaselwayd picks the frames up
-# and serves them to the viewer (start-viewer).
+# and serves them to the viewer (ww-start-viewer).
 #
 # The native backend wants what a display manager normally provides: a logind
 # session on seat0 that owns the devices. So the session runs in a transient
 # system unit with a PAM session, not under the user manager, and starting it
 # takes sudo.
 #
-# Usage: start-session.sh [--adapter NAME] [SESSION] [-- arguments]
-#        start-session.sh stop
+# Usage: ww-start-session.sh [--adapter NAME] [SESSION] [-- arguments]
+#        ww-start-session.sh stop
 #
 #   gnome        the GNOME desktop (gnome-session): the shell plus the services
 #                a desktop needs -- settings daemon, keyring, portals, polkit
@@ -36,8 +36,8 @@ UNIT=weaselway-session
 
 usage() {
     cat >&2 <<USAGE
-usage: start-session [--adapter NAME] [gnome|gnome-shell|plasma|kwin|custom] [-- arguments]
-       start-session stop
+usage: ww-start-session [--adapter NAME] [gnome|gnome-shell|plasma|kwin|custom] [-- arguments]
+       ww-start-session stop
 USAGE
     exit 1
 }
@@ -104,7 +104,7 @@ case "${SESSION}" in
 esac
 
 if systemctl --quiet is-active "${UNIT}.service"; then
-    echo "error: a session is running already; stop it with: start-session stop" >&2
+    echo "error: a session is running already; stop it with: ww-start-session stop" >&2
     exit 1
 fi
 
@@ -168,7 +168,7 @@ if [ "${SESSION}" = "kwin" ]; then
     PROPERTIES+=(--property=Environment=XCURSOR_THEME=Adwaita)
 fi
 # Extra variables for the session, space separated, for debugging:
-#   WEASELWAY_SESSION_ENV="QT_LOGGING_RULES=kwin_*.debug=true" start-session kwin
+#   WEASELWAY_SESSION_ENV="QT_LOGGING_RULES=kwin_*.debug=true" ww-start-session kwin
 for ASSIGNMENT in ${WEASELWAY_SESSION_ENV:-}; do
     PROPERTIES+=(--property="Environment=${ASSIGNMENT}")
 done
@@ -215,9 +215,9 @@ if ! systemctl --quiet is-active "${UNIT}.service"; then
 fi
 
 cat <<MSG
-The ${SESSION} session is up. Show it on Windows with: start-viewer
+The ${SESSION} session is up. Show it on Windows with: ww-start-viewer
 
 Follow the session:   journalctl -fu ${UNIT}
 Follow weaselwayd:    journalctl --user -fu weaselwayd
-Stop:                 start-session stop
+Stop:                 ww-start-session stop
 MSG

@@ -2,7 +2,7 @@
 
 # Show the session on Windows. weaselwayd binds the vsock port, and this is
 # the FreeRDP client on the Windows side that displays what it serves. It can
-# be started before start-session.sh: the window stays empty until a
+# be started before ww-start-session.sh: the window stays empty until a
 # compositor is up.
 
 set -eu -o pipefail

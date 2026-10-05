@@ -60,7 +60,7 @@ in
       description = ''
         GPU d3d12 renders on, matched against a substring of the adapter
         description. Null leaves the choice to d3d12, which takes the first
-        adapter Windows lists. `start-session --adapter` still overrides
+        adapter Windows lists. `ww-start-session --adapter` still overrides
         it for a single session.
       '';
     };
@@ -74,11 +74,11 @@ in
         "custom"
       ];
       default = "gnome";
-      description = "Session that `start-session` starts when given none.";
+      description = "Session that `ww-start-session` starts when given none.";
     };
 
     plasma.enable = lib.mkEnableOption ''
-      Plasma next to GNOME, for `start-session plasma`. KWin is patched (see
+      Plasma next to GNOME, for `ww-start-session plasma`. KWin is patched (see
       the overlay), so it and what links it are built or come from
       weaselway.cachix.org'';
   };
@@ -115,7 +115,7 @@ in
         # drivers resolve their own dependencies by name too. NixOS has no
         # search path they would be found on, so LD_LIBRARY_PATH names the
         # directory outright: for shells in the session variables at the end
-        # (start-session hands it on to the session), and for the user manager
+        # (ww-start-session hands it on to the session), and for the user manager
         # in environment.d below.
 
         # WSL configures the network itself. GNOME turns NetworkManager on, and
@@ -124,7 +124,7 @@ in
         networking.networkmanager.enable = false;
         networking.wireless.enable = false;
 
-        # GNOME without a display manager: start-session does what one would do.
+        # GNOME without a display manager: ww-start-session does what one would do.
         services.desktopManager.gnome.enable = true;
         services.displayManager.gdm.enable = false;
 
@@ -164,7 +164,7 @@ in
 
         # systemd mounts its own binfmt_misc at boot, after WSL registered its
         # handler for Windows executables, and the handler is gone. Without it
-        # start-viewer cannot run sdl-freerdp.exe. Register it again after the
+        # ww-start-viewer cannot run sdl-freerdp.exe. Register it again after the
         # mount.
         wsl.interop.register = true;
 
@@ -252,7 +252,7 @@ in
           WEASELWAY_DEFAULT_SESSION = cfg.session;
         }
         // lib.optionalAttrs (cfg.adapter != null) {
-          # For start-session, which hands it to the session's unit.
+          # For ww-start-session, which hands it to the session's unit.
           MESA_D3D12_DEFAULT_ADAPTER_NAME = cfg.adapter;
         };
       }

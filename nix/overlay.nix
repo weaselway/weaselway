@@ -159,13 +159,13 @@ in
     final.symlinkJoin {
       name = "weaselway-scripts";
       paths = [
-        (script "start-session" [
+        (script "ww-start-session" [
           final.coreutils
           final.gnugrep
           final.systemd
         ])
         (final.writeShellApplication {
-          name = "start-viewer";
+          name = "ww-start-viewer";
           runtimeInputs = [
             final.gnused
             final.systemd
@@ -177,15 +177,15 @@ in
             : "''${WEASELWAY_VIEWER:=${final.weaselway-viewer}/bin/sdl-freerdp.exe}"
             export WEASELWAY_VIEWER
           ''
-          + builtins.readFile ../start-viewer.sh;
+          + builtins.readFile ../ww-start-viewer.sh;
           checkPhase = "";
           bashOptions = [ ];
         })
-        (script "install-viewer-link" [
+        (script "ww-install-viewer-link" [
           final.bash
           final.coreutils
         ])
-        (script "install-system-image" [
+        (script "ww-install-system-image" [
           final.coreutils
           final.curl
           final.gzip

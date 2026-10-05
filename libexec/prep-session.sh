@@ -19,7 +19,7 @@ set -xeuo pipefail
 # The path carries the kernel release, so after a WSL kernel update the module
 # built for the old one is not silently picked up and rejected -- it is just not
 # there, and the message says so. Only a warning: the rest of this script has
-# nothing to do with the module, and start-session.sh refuses to start without
+# nothing to do with the module, and ww-start-session.sh refuses to start without
 # the KMS node.
 #
 # First, and regardless of the system distro below: the render node is needed

@@ -20,7 +20,7 @@
   environment.gnome.excludePackages = [ pkgs.orca ];
   services.speechd.enable = false;
 
-  # Plasma as a second desktop, for `start-session plasma`. Off: it roughly
+  # Plasma as a second desktop, for `ww-start-session plasma`. Off: it roughly
   # doubles what the image has to carry.
   # weaselway.plasma.enable = true;
 
