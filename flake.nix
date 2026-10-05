@@ -100,17 +100,23 @@
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.tarballBuilder;
       });
 
-      # Nothing else here compiles; the scripts run inside the target distro.
+      # The scripts run inside the target distro; weaselwayd is what compiles
+      # here, with what its package is built from.
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
+          inputsFrom = [ wsl.pkgs.weaselwayd ];
           packages = with pkgs; [
             bash
             shellcheck
             git
           ];
 
+          # dxgdrm_drm.h, for weaselwayd's Makefile.
+          DXGDRM_INCLUDE = "${dxgdrm}";
+
           shellHook = ''
             echo "lint with: shellcheck --shell=bash \$(git ls-files '*.sh')"
+            echo "build weaselwayd with: make -C weaselwayd"
           '';
         };
       });
