@@ -310,12 +310,14 @@ channel(guint32 pixel, guint32 mask)
 GBytes *
 formats_png_from_dib(GBytes *dib_bytes)
 {
-    gsize size, png_size = 0;
+    gsize size;
     const guint8 *data = g_bytes_get_data(dib_bytes, &size);
     g_autofree guint8 *rgb = NULL;
     g_autofree guint8 *png = NULL;
     png_image image = { .version = PNG_IMAGE_VERSION };
+    png_alloc_size_t png_size;
     struct dib dib;
+    bool plain;
 
     if (!data || !dib_parse(data, size, &dib))
         return NULL;
@@ -328,17 +330,23 @@ formats_png_from_dib(GBytes *dib_bytes)
         return NULL;
     }
 
+    /* B G R in memory, with or without a fourth byte: nearly every bitmap,
+     * and no arithmetic per pixel. */
+    plain = dib.bits == 24 || (dib.masks[0] == 0x00ff0000 && dib.masks[1] == 0x0000ff00 &&
+                               dib.masks[2] == 0x000000ff);
+
     rgb = g_malloc((gsize)dib.width * 3 * (gsize)dib.height);
     for (int y = 0; y < dib.height; y++) {
         int row = dib.top_down ? y : dib.height - 1 - y;
         const guint8 *src = data + dib.offset + (gsize)row * dib.stride;
         guint8 *dst = rgb + (gsize)y * (gsize)dib.width * 3;
+        int step = dib.bits / 8;
 
         for (int x = 0; x < dib.width; x++, dst += 3) {
-            if (dib.bits == 24) {
-                dst[0] = src[x * 3 + 2];
-                dst[1] = src[x * 3 + 1];
-                dst[2] = src[x * 3];
+            if (plain) {
+                dst[0] = src[x * step + 2];
+                dst[1] = src[x * step + 1];
+                dst[2] = src[x * step];
             } else {
                 guint32 pixel = le32(src + x * 4);
 
@@ -352,12 +360,16 @@ formats_png_from_dib(GBytes *dib_bytes)
     image.width = (png_uint_32)dib.width;
     image.height = (png_uint_32)dib.height;
     image.format = PNG_FORMAT_RGB;
-    if (!png_image_write_get_memory_size(image, png_size, 0, rgb, 0, NULL))
+    /* This runs on the main loop, between two frames, and the client is
+     * waiting for it: a large file soon rather than a small one late. Hence
+     * also the buffer for the worst case, where asking libpng for the size
+     * would have it compress everything once more. */
+    image.flags |= PNG_IMAGE_FLAG_FAST;
+    png_size = PNG_IMAGE_PNG_SIZE_MAX(image);
+    png = g_try_malloc(png_size);
+    if (!png || !png_image_write_to_memory(&image, png, &png_size, 0, rgb, 0, NULL))
         return NULL;
-    png = g_malloc(png_size);
-    if (!png_image_write_to_memory(&image, png, &png_size, 0, rgb, 0, NULL))
-        return NULL;
-    return g_bytes_new_take(g_steal_pointer(&png), png_size);
+    return g_bytes_new_take(g_realloc(g_steal_pointer(&png), png_size), png_size);
 }
 
 GBytes *
