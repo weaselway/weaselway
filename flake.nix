@@ -1,5 +1,5 @@
 {
-  description = "weaselway: a GPU-accelerated GNOME or Plasma desktop on WSL2, as a NixOS-WSL image";
+  description = "weaselway: a GPU-accelerated Wayland desktop on WSL2, as a NixOS-WSL image";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -22,8 +22,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # The mesa fork, on the branch that matches the mesa release nixpkgs has.
-    # It carries no flake.nix, so only its source is used. Fetched with git
+    # The mesa fork, on the release branch the image is built from. It carries
+    # no flake.nix, so only its source is used. Fetched with git
     # rather than as a GitHub tarball: mesa's .gitattributes has eol=crlf
     # rules, and whether those are applied to the tarball differs between Nix
     # versions, which breaks the locked hash.
