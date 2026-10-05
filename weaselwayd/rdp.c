@@ -116,7 +116,7 @@ struct peer_context {
      * is the old size, and nothing may be presented. */
     bool resize_pending;
     /* gfxredir turned out to be unusable; the peer is dropped at the end of
-     * the dispatch. */
+     * the next dispatch. */
     bool failed;
 
     DrdynvcServerContext *drdynvc;
@@ -276,6 +276,8 @@ peer_fail(struct peer_context *peer_ctx, const char *reason)
 
     g_warning("no shared-memory graphics for this client, dropping it: %s", reason);
     peer_ctx->failed = true;
+    /* Not every caller is in the dispatch that drops it. */
+    wake(peer_ctx->server);
 }
 
 /* ------------------------------------------------------------------ */
