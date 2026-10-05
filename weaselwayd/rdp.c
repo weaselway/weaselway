@@ -238,8 +238,8 @@ wake(struct rdp_server *server)
     g_main_context_wakeup(server->context);
 }
 
-static void
-rect_union(struct rdp_rect *into, const struct rdp_rect *rect)
+void
+rdp_rect_union(struct rdp_rect *into, const struct rdp_rect *rect)
 {
     int x1 = MIN(into->x, rect->x);
     int y1 = MIN(into->y, rect->y);
@@ -261,7 +261,7 @@ static void
 buffer_add_stale(struct buffer *buffer, const struct rdp_rect *rect)
 {
     if (buffer->is_stale) {
-        rect_union(&buffer->stale, rect);
+        rdp_rect_union(&buffer->stale, rect);
     } else {
         buffer->stale = *rect;
         buffer->is_stale = true;

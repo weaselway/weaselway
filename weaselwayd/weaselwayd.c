@@ -217,6 +217,11 @@ init_egl(struct weaselwayd *p, GError **error)
 
     p->read_bgra = strstr((const char *)glGetString(GL_EXTENSIONS), "GL_EXT_read_format_bgra") != NULL;
 
+    /* Every readback is tightly packed. These are GL's defaults, and nothing
+     * here changes them. */
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+
     /* Only worth anything on the GPU: llvmpipe cannot open a D3D12 shared
      * handle. */
     g_message("EGL %d.%d, renderer: %s", major, minor, (const char *)glGetString(GL_RENDERER));
@@ -235,13 +240,23 @@ destroy_import(struct weaselwayd *p, struct import *import)
     memset(import, 0, sizeof(*import));
 }
 
-/* Import the frame's shared handle, or find the import made for it earlier.
- * Leaves its framebuffer bound for reading. */
 static struct import *
-get_import_buffer(struct weaselwayd *p, uint64_t buffer_id, int fd,
-                  uint32_t width, uint32_t height, uint32_t format, uint32_t pitch)
+find_import(struct weaselwayd *p, uint64_t buffer_id)
 {
-    struct import *import = NULL, *oldest = &p->imports[0];
+    for (int i = 0; i < MAX_IMPORTS; i++) {
+        if (p->imports[i].buffer_id == buffer_id)
+            return &p->imports[i];
+    }
+    return NULL;
+}
+
+/* Import a shared handle, or find the import made for it earlier. Leaves its
+ * framebuffer bound for reading. */
+static struct import *
+get_import(struct weaselwayd *p, uint64_t buffer_id, int fd, uint32_t width, uint32_t height,
+           uint32_t format, uint32_t pitch)
+{
+    struct import *import = find_import(p, buffer_id);
     EGLAttrib attribs[] = {
         EGL_WIDTH, (EGLAttrib)width,
         EGL_HEIGHT, (EGLAttrib)height,
@@ -252,17 +267,13 @@ get_import_buffer(struct weaselwayd *p, uint64_t buffer_id, int fd,
         EGL_NONE,
     };
 
-    for (int i = 0; i < MAX_IMPORTS; i++) {
-        if (p->imports[i].buffer_id == buffer_id) {
-            import = &p->imports[i];
-            break;
-        }
-        if (p->imports[i].last_used < oldest->last_used)
-            oldest = &p->imports[i];
-    }
-
     if (!import) {
-        import = oldest;
+        /* In place of the one that has not been used for the longest. */
+        import = &p->imports[0];
+        for (int i = 1; i < MAX_IMPORTS; i++) {
+            if (p->imports[i].last_used < import->last_used)
+                import = &p->imports[i];
+        }
         destroy_import(p, import);
 
         import->image = eglCreateImage(p->display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
@@ -298,26 +309,11 @@ get_import_buffer(struct weaselwayd *p, uint64_t buffer_id, int fd,
     return import;
 }
 
-static struct import *
-get_import(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
-{
-    return get_import_buffer(p, frame->buffer_id, frame->fd, frame->width, frame->height,
-                             frame->format, frame->pitch);
-}
-
-static struct import *
-find_import(struct weaselwayd *p, uint64_t buffer_id)
-{
-    for (int i = 0; i < MAX_IMPORTS; i++) {
-        if (p->imports[i].buffer_id == buffer_id)
-            return &p->imports[i];
-    }
-    return NULL;
-}
-
 static void
 add_damage(struct weaselwayd *p, int x1, int y1, int x2, int y2)
 {
+    struct rdp_rect rect;
+
     x1 = MAX(x1, 0);
     y1 = MAX(y1, 0);
     x2 = MIN(x2, p->width);
@@ -325,16 +321,36 @@ add_damage(struct weaselwayd *p, int x1, int y1, int x2, int y2)
     if (x2 <= x1 || y2 <= y1)
         return;
 
-    if (p->pending) {
-        const struct rdp_rect *r = &p->pending_rect;
-
-        x1 = MIN(x1, r->x);
-        y1 = MIN(y1, r->y);
-        x2 = MAX(x2, r->x + r->width);
-        y2 = MAX(y2, r->y + r->height);
-    }
-    p->pending_rect = (struct rdp_rect){ x1, y1, x2 - x1, y2 - y1 };
+    rect = (struct rdp_rect){ x1, y1, x2 - x1, y2 - y1 };
+    if (p->pending)
+        rdp_rect_union(&p->pending_rect, &rect);
+    else
+        p->pending_rect = rect;
     p->pending = true;
+}
+
+/* @rows rows of @row_bytes, between two buffers whose rows are @dst_stride
+ * and @src_stride bytes apart. */
+static void
+copy_rows(uint8_t *dst, size_t dst_stride, const uint8_t *src, size_t src_stride,
+          size_t row_bytes, int rows)
+{
+    for (int y = 0; y < rows; y++)
+        memcpy(dst + (size_t)y * dst_stride, src + (size_t)y * src_stride, row_bytes);
+}
+
+/* R G B A as B G R A, for a GL that cannot read the latter. In place too. */
+static void
+swap_red_blue(uint8_t *dst, const uint8_t *src, size_t pixels)
+{
+    for (size_t i = 0; i < pixels; i++, dst += 4, src += 4) {
+        uint8_t r = src[0], b = src[2];
+
+        dst[0] = b;
+        dst[1] = src[1];
+        dst[2] = r;
+        dst[3] = src[3];
+    }
 }
 
 static void
@@ -408,8 +424,6 @@ readback_begin(struct weaselwayd *p)
     }
 
     /* Tightly packed at offset 0: the transfer is exactly the rect. */
-    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     glReadPixels(rb->rect.x, rb->rect.y, rb->rect.width, rb->rect.height,
                  p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     rb->sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -440,20 +454,13 @@ readback_copy(struct weaselwayd *p, uint8_t *pixels)
         return false;
     }
 
-    for (int y = 0; y < rect->height; y++) {
-        uint8_t *dst = pixels + (size_t)(rect->y + y) * stride + (size_t)rect->x * 4;
-        const uint8_t *row = src + (size_t)y * row_bytes;
-
-        if (p->read_bgra) {
-            memcpy(dst, row, row_bytes);
-        } else {
-            for (int x = 0; x < rect->width; x++, dst += 4, row += 4) {
-                dst[0] = row[2];
-                dst[1] = row[1];
-                dst[2] = row[0];
-                dst[3] = row[3];
-            }
-        }
+    pixels += (size_t)rect->y * stride + (size_t)rect->x * 4;
+    if (p->read_bgra) {
+        copy_rows(pixels, stride, src, row_bytes, row_bytes, rect->height);
+    } else {
+        for (int y = 0; y < rect->height; y++)
+            swap_red_blue(pixels + (size_t)y * stride, src + (size_t)y * row_bytes,
+                          (size_t)rect->width);
     }
 
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
@@ -521,9 +528,7 @@ read_dumb(struct weaselwayd *p, uint8_t *pixels)
         read.pitch < read.width * 4)
         return false;
 
-    for (int y = 0; y < p->height; y++)
-        memcpy(pixels + (size_t)y * (size_t)p->width * 4, data + (size_t)y * read.pitch,
-               (size_t)p->width * 4);
+    copy_rows(pixels, (size_t)p->width * 4, data, read.pitch, (size_t)p->width * 4, p->height);
     return true;
 }
 
@@ -540,26 +545,17 @@ read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
     g_autofree uint8_t *pixels = g_malloc((size_t)width * (size_t)height * 4);
 
     if (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) {
-        if (!get_import_buffer(p, frame->cursor_buffer_id, frame->cursor_fd, frame->cursor_width,
-                               frame->cursor_height, frame->cursor_format, frame->cursor_pitch))
+        if (!get_import(p, frame->cursor_buffer_id, frame->cursor_fd, frame->cursor_width,
+                        frame->cursor_height, frame->cursor_format, frame->cursor_pitch))
             return NULL;
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
         glReadPixels(0, 0, width, height, p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE,
                      pixels);
         if (glGetError() != GL_NO_ERROR)
             return NULL;
-        if (!p->read_bgra) {
-            for (uint8_t *px = pixels, *end = pixels + (size_t)width * (size_t)height * 4;
-                 px < end; px += 4) {
-                uint8_t r = px[0];
-
-                px[0] = px[2];
-                px[2] = r;
-            }
-        }
+        if (!p->read_bgra)
+            swap_red_blue(pixels, pixels, (size_t)width * (size_t)height);
     } else {
         struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_CURSOR };
         size_t size = (size_t)frame->cursor_pitch * (size_t)height;
@@ -574,9 +570,7 @@ read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
             (int)read.width != width || (int)read.height != height ||
             read.pitch < read.width * 4)
             return NULL;
-        for (int y = 0; y < height; y++)
-            memcpy(pixels + (size_t)y * (size_t)width * 4, data + (size_t)y * read.pitch,
-                   (size_t)width * 4);
+        copy_rows(pixels, (size_t)width * 4, data, read.pitch, (size_t)width * 4, height);
     }
     return g_steal_pointer(&pixels);
 }
@@ -698,7 +692,8 @@ fetch_frame(struct weaselwayd *p, GError **error)
     p->dumb = !(frame.flags & DXGDRM_FRAME_SHARED);
 
     /* Imported while the fd is at hand; the readback finds it by its id. */
-    if (!p->dumb && !get_import(p, &frame)) {
+    if (!p->dumb && !get_import(p, frame.buffer_id, frame.fd, frame.width, frame.height,
+                                frame.format, frame.pitch)) {
         if (frame.fd >= 0)
             close(frame.fd);
         p->have_frame = false;

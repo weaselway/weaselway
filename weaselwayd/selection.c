@@ -413,6 +413,27 @@ selection_offer(struct selection *selection, const char *const *mime_types)
 /* Handing data to the session                                         */
 /* ------------------------------------------------------------------ */
 
+/* The pipe that came with the reply to SelectionWrite or SelectionRead, set
+ * not to block: the other end takes its time, and the main loop must not wait
+ * for it. -1 with @error if there is none. */
+static int
+take_pipe(GVariant *ret, GUnixFDList *fds, GError **error)
+{
+    g_autofd int fd = -1;
+    gint32 handle;
+
+    g_variant_get(ret, "(h)", &handle);
+    if (!fds) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "no descriptor in the reply");
+        return -1;
+    }
+
+    fd = g_unix_fd_list_get(fds, handle, error);
+    if (fd < 0 || !g_unix_set_fd_nonblocking(fd, TRUE, error))
+        return -1;
+    return g_steal_fd(&fd);
+}
+
 struct reply {
     GDBusProxy *session;
     uint32_t serial;
@@ -458,8 +479,7 @@ on_reply_fd(GObject *source, GAsyncResult *result, gpointer data)
     g_autoptr(GUnixFDList) fds = NULL;
     g_autoptr(GVariant) ret =
         g_dbus_proxy_call_with_unix_fd_list_finish(G_DBUS_PROXY(source), &fds, result, &error);
-    g_autofd int fd = -1;
-    gint32 handle;
+    int fd;
 
     if (!ret) {
         /* mutter gave up on the request before we had the data. */
@@ -469,17 +489,14 @@ on_reply_fd(GObject *source, GAsyncResult *result, gpointer data)
         return;
     }
 
-    g_variant_get(ret, "(h)", &handle);
-    fd = fds ? g_unix_fd_list_get(fds, handle, &error) : -1;
-    /* The reader takes its time; the main loop must not wait for it. */
-    if (fd < 0 || !g_unix_set_fd_nonblocking(fd, TRUE, &error)) {
-        g_warning("no pipe for request %u: %s", reply->serial,
-                  error ? error->message : "no descriptor in the reply");
+    fd = take_pipe(ret, fds, &error);
+    if (fd < 0) {
+        g_warning("no pipe for request %u: %s", reply->serial, error->message);
         reply_finish(reply, false);
         return;
     }
 
-    reply->stream = g_unix_output_stream_new(g_steal_fd(&fd), TRUE);
+    reply->stream = g_unix_output_stream_new(fd, TRUE);
     g_output_stream_write_all_async(reply->stream, g_bytes_get_data(reply->data, NULL),
                                     g_bytes_get_size(reply->data), G_PRIORITY_DEFAULT, NULL,
                                     on_reply_written, reply);
@@ -536,8 +553,7 @@ on_read_fd(GObject *source, GAsyncResult *result, gpointer data)
         g_dbus_proxy_call_with_unix_fd_list_finish(G_DBUS_PROXY(source), &fds, result, &error);
     g_autoptr(GInputStream) in = NULL;
     g_autoptr(GOutputStream) out = NULL;
-    g_autofd int fd = -1;
-    gint32 handle;
+    int fd;
 
     if (!ret) {
         g_dbus_error_strip_remote_error(error);
@@ -545,19 +561,14 @@ on_read_fd(GObject *source, GAsyncResult *result, gpointer data)
         return;
     }
 
-    g_variant_get(ret, "(h)", &handle);
-    fd = fds ? g_unix_fd_list_get(fds, handle, &error) : -1;
-    if (fd < 0 || !g_unix_set_fd_nonblocking(fd, TRUE, &error)) {
-        if (error)
-            g_task_return_error(task, error);
-        else
-            g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                                    "no descriptor in the reply");
+    fd = take_pipe(ret, fds, &error);
+    if (fd < 0) {
+        g_task_return_error(task, error);
         return;
     }
 
     /* Until the owner closes its end of the pipe. */
-    in = g_unix_input_stream_new(g_steal_fd(&fd), TRUE);
+    in = g_unix_input_stream_new(fd, TRUE);
     out = g_memory_output_stream_new_resizable();
     g_output_stream_splice_async(out, in,
                                  G_OUTPUT_STREAM_SPLICE_CLOSE_SOURCE |

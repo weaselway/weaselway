@@ -45,6 +45,9 @@ struct rdp_rect {
     int x, y, width, height;
 };
 
+/* Grow @into to the bounding box of itself and @rect. */
+void rdp_rect_union(struct rdp_rect *into, const struct rdp_rect *rect);
+
 /* A buffer in the client's pool that a frame is being written to. */
 struct rdp_frame {
     uint64_t generation;
