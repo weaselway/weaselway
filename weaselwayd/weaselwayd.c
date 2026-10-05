@@ -100,6 +100,10 @@ struct weaselwayd {
     uint64_t buffer_id;
     bool dumb;
     int width, height;
+    uint32_t pitch;
+    /* Where DXGDRM_READ_PIXELS puts a dumb frame; NULL until there is one. */
+    uint8_t *dumb_data;
+    size_t dumb_size;
 
     /* While no compositor owns the display the client gets placeholder.c's
      * screen, as large as the window it asked for. @placeholder_owed: it has
@@ -511,24 +515,36 @@ readback_poll(struct weaselwayd *p)
         frame_failed(p);
 }
 
-/* A dumb-buffer frame (a compositor rendering without the GPU): copy all of
- * it out of the kernel. XRGB8888 is B, G, R, X in memory, as wanted. */
+/* A dumb-buffer frame (a compositor rendering without the GPU). The kernel
+ * only hands out all of it, into a buffer that is kept between frames; what
+ * goes on to the client is @rect. XRGB8888 is B, G, R, X in memory, as
+ * wanted. */
 static bool
-read_dumb(struct weaselwayd *p, uint8_t *pixels)
+read_dumb(struct weaselwayd *p, uint8_t *pixels, const struct rdp_rect *rect)
 {
     struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_PRIMARY };
-    size_t size = (size_t)p->width * (size_t)p->height * 4 * 2;
-    g_autofree uint8_t *data = g_malloc(size);
+    size_t size = (size_t)p->pitch * (size_t)p->height;
+    size_t stride = (size_t)p->width * 4;
+    size_t offset = (size_t)rect->x * 4;
 
-    read.size = (uint32_t)size;
-    read.data = (uintptr_t)data;
+    if (p->dumb_size < size) {
+        g_free(p->dumb_data);
+        p->dumb_data = g_malloc(size);
+        p->dumb_size = size;
+    }
+    read.size = (uint32_t)p->dumb_size;
+    read.data = (uintptr_t)p->dumb_data;
 
+    /* The plane may have moved on to another buffer since the frame was
+     * fetched; the next fetch then says so. */
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read) ||
         (int)read.width != p->width || (int)read.height != p->height ||
         read.pitch < read.width * 4)
         return false;
 
-    copy_rows(pixels, (size_t)p->width * 4, data, read.pitch, (size_t)p->width * 4, p->height);
+    copy_rows(pixels + (size_t)rect->y * stride + offset, stride,
+              p->dumb_data + (size_t)rect->y * read.pitch + offset, read.pitch,
+              (size_t)rect->width * 4, rect->height);
     return true;
 }
 
@@ -690,6 +706,11 @@ fetch_frame(struct weaselwayd *p, GError **error)
     p->height = (int)frame.height;
     p->buffer_id = frame.buffer_id;
     p->dumb = !(frame.flags & DXGDRM_FRAME_SHARED);
+    p->pitch = frame.pitch;
+    if (!p->dumb) {
+        g_clear_pointer(&p->dumb_data, g_free);
+        p->dumb_size = 0;
+    }
 
     /* Imported while the fd is at hand; the readback finds it by its id. */
     if (!p->dumb && !get_import(p, frame.buffer_id, frame.fd, frame.width, frame.height,
@@ -853,9 +874,7 @@ try_present(struct weaselwayd *p)
     }
 
     rect = p->pending_rect;
-    if (p->dumb) {
-        rect = (struct rdp_rect){ 0, 0, p->width, p->height };
-    } else {
+    if (!p->dumb) {
         /* Widen to a multiple of 64 pixels, moving left where the right edge
          * is in the way. A screen narrower than that takes the slow path. */
         int w = MIN((rect.width + 63) & ~63, p->width);
@@ -883,7 +902,7 @@ try_present(struct weaselwayd *p)
 
     rb->issued = rb->started;
     pixels = rdp_server_frame_pixels(p->rdp, &rb->frame);
-    if (pixels && read_dumb(p, pixels))
+    if (pixels && read_dumb(p, pixels, &rect))
         frame_done(p);
     else
         frame_failed(p);
@@ -1090,6 +1109,7 @@ main(int argc, char **argv)
     input_free(p.input);
     for (int i = 0; i < MAX_IMPORTS; i++)
         destroy_import(&p, &p.imports[i]);
+    g_free(p.dumb_data);
     g_main_loop_unref(p.loop);
     g_message("%u frame(s)", p.frames);
     return p.exit_status;
