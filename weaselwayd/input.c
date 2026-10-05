@@ -22,6 +22,16 @@
 #define TOUCHPAD_MAX_Y (100 * TOUCHPAD_RESOLUTION)
 #define TOUCHPAD_SLOTS 5
 
+/* The locks the client's keyboard has too, in the order of
+ * input_sync_locks()'s arguments. */
+static const struct {
+    uint16_t key, led;
+} locks[] = {
+    { KEY_NUMLOCK, LED_NUML },
+    { KEY_CAPSLOCK, LED_CAPSL },
+    { KEY_SCROLLLOCK, LED_SCROLLL },
+};
+
 struct input {
     int pointer_fd;
     int keyboard_fd;
@@ -36,6 +46,11 @@ struct input {
      * client that disappears does not leave a key stuck. */
     bool buttons[N_BUTTONS];
     bool keys[KEY_MAX + 1];
+
+    /* Which locks are on in the session, as far as is known: what the
+     * compositor last set the LEDs to, and until it says, every press of a
+     * lock key taken to have toggled it. */
+    bool locks[G_N_ELEMENTS(locks)];
 
     /* Wheel travel that did not add up to a whole notch yet. */
     int wheel_rest[2];
@@ -104,13 +119,19 @@ create_keyboard(void)
         .id = { .bustype = BUS_VIRTUAL, .vendor = 0x1d6b, .product = 0x0105 },
         .name = "Weaselway keyboard",
     };
-    int fd = open("/dev/uinput", O_WRONLY | O_CLOEXEC);
+    /* Read too, and without waiting: the compositor says which lock is on by
+     * setting the keyboard's LEDs, which arrive here as events. */
+    int fd = open("/dev/uinput", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 
     if (fd < 0)
         return -1;
 
-    if (ioctl(fd, UI_SET_EVBIT, EV_KEY))
+    if (ioctl(fd, UI_SET_EVBIT, EV_KEY) || ioctl(fd, UI_SET_EVBIT, EV_LED))
         goto fail;
+    for (size_t i = 0; i < G_N_ELEMENTS(locks); i++) {
+        if (ioctl(fd, UI_SET_LEDBIT, locks[i].led))
+            goto fail;
+    }
     /* Everything below the button range, which is where keyboards live. */
     for (int key = KEY_ESC; key < BTN_MISC; key++) {
         if (ioctl(fd, UI_SET_KEYBIT, key))
@@ -272,6 +293,37 @@ input_pointer_wheel(struct input *input, int value120, bool horizontal)
     g_mutex_unlock(&input->lock);
 }
 
+/* Take in what the compositor has set the LEDs to since the last time. Often,
+ * because uinput keeps no more than a handful of events. With the lock held. */
+static void
+read_leds_locked(struct input *input)
+{
+    struct input_event event;
+
+    while (read(input->keyboard_fd, &event, sizeof(event)) == sizeof(event)) {
+        if (event.type != EV_LED)
+            continue;
+        for (size_t i = 0; i < G_N_ELEMENTS(locks); i++) {
+            if (event.code == locks[i].led)
+                input->locks[i] = event.value != 0;
+        }
+    }
+}
+
+/* With the lock held. */
+static void
+key_locked(struct input *input, uint16_t key, bool pressed)
+{
+    input->keys[key] = pressed;
+    emit(input->keyboard_fd, EV_KEY, key, pressed);
+    emit(input->keyboard_fd, EV_SYN, SYN_REPORT, 0);
+
+    for (size_t i = 0; pressed && i < G_N_ELEMENTS(locks); i++) {
+        if (key == locks[i].key)
+            input->locks[i] = !input->locks[i];
+    }
+}
+
 void
 input_key(struct input *input, uint16_t key, bool pressed)
 {
@@ -279,11 +331,26 @@ input_key(struct input *input, uint16_t key, bool pressed)
         return;
 
     g_mutex_lock(&input->lock);
+    read_leds_locked(input);
     /* A repeat arrives as another press; the compositor repeats by itself. */
-    if (input->keys[key] != pressed) {
-        input->keys[key] = pressed;
-        emit(input->keyboard_fd, EV_KEY, key, pressed);
-        emit(input->keyboard_fd, EV_SYN, SYN_REPORT, 0);
+    if (input->keys[key] != pressed)
+        key_locked(input, key, pressed);
+    g_mutex_unlock(&input->lock);
+}
+
+void
+input_sync_locks(struct input *input, bool num, bool caps, bool scroll)
+{
+    const bool wanted[G_N_ELEMENTS(locks)] = { num, caps, scroll };
+
+    g_mutex_lock(&input->lock);
+    read_leds_locked(input);
+    for (size_t i = 0; i < G_N_ELEMENTS(locks); i++) {
+        /* A key that is held down is being dealt with by its owner. */
+        if (input->locks[i] == wanted[i] || input->keys[locks[i].key])
+            continue;
+        key_locked(input, locks[i].key, true);
+        key_locked(input, locks[i].key, false);
     }
     g_mutex_unlock(&input->lock);
 }

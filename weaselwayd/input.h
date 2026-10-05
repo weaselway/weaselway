@@ -25,6 +25,9 @@ void input_pointer_button(struct input *input, uint16_t button, bool pressed);
 void input_pointer_wheel(struct input *input, int value120, bool horizontal);
 /* An evdev key code (KEY_A, ...). */
 void input_key(struct input *input, uint16_t key, bool pressed);
+/* Which locks are on at the client's keyboard. One that is not in the same
+ * state in the session gets its key tapped. */
+void input_sync_locks(struct input *input, bool num, bool caps, bool scroll);
 
 /*
  * The touchpad gets the fingers as they are on the client's pad, and libinput

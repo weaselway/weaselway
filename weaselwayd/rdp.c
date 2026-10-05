@@ -1033,9 +1033,19 @@ on_unicode_keyboard_event(rdpInput *rdp_input, UINT16 flags, UINT16 code)
     return TRUE;
 }
 
+/* The state of the client's lock keys, which it sends when its window gets the
+ * keyboard: they may have been pressed while it was somewhere else. */
 static BOOL
 on_synchronize_event(rdpInput *rdp_input, UINT32 flags)
 {
+    struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
+    struct input *input = peer_ctx->server->config.input;
+
+    if (!peer_ctx->activated || !input)
+        return TRUE;
+
+    input_sync_locks(input, flags & KBD_SYNC_NUM_LOCK, flags & KBD_SYNC_CAPS_LOCK,
+                     flags & KBD_SYNC_SCROLL_LOCK);
     return TRUE;
 }
 
