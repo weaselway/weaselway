@@ -712,6 +712,13 @@ fetch_frame(struct weaselwayd *p, GError **error)
         p->dumb_size = 0;
     }
 
+    /* The compositor has new buffers for the new size. Imports of the old
+     * ones would keep those alive until they had all been pushed out. */
+    if (resized) {
+        for (int i = 0; i < MAX_IMPORTS; i++)
+            destroy_import(p, &p->imports[i]);
+    }
+
     /* Imported while the fd is at hand; the readback finds it by its id. */
     if (!p->dumb && !get_import(p, frame.buffer_id, frame.fd, frame.width, frame.height,
                                 frame.format, frame.pitch)) {
