@@ -688,10 +688,14 @@ on_audin_data(audin_server_context *context, const SNDIN_DATA *data)
         GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(audio_in->source));
         g_autoptr(GError) error = NULL;
 
-        if (!g_output_stream_write_all(out, samples, bytes, NULL, NULL, &error)) {
+        /* Cancellable: a PipeWire that stopped reading would otherwise hold
+         * this thread, and the lock, through teardown. */
+        if (!g_output_stream_write_all(out, samples, bytes, NULL, audio_in->cancellable,
+                                       &error)) {
             /* Drop it and let the capture thread connect again; a PipeWire
              * that restarted is the usual reason to get here. */
-            g_warning("capture send failed: %s", error->message);
+            if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+                g_warning("capture send failed: %s", error->message);
             g_clear_object(&audio_in->source);
         }
     }
