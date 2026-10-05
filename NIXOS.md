@@ -253,7 +253,8 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 - To test unpushed commits of the other repos, add
   `--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.1-wsl'` (similarly `freerdp`, `dxgdrm`).
 - weaselwayd alone builds with `make` in [weaselwayd/](weaselwayd), given `DXGDRM_INCLUDE` (a dxgdrm
-  checkout) and FreeRDP 3, GLib, libpng, EGL, GLES, gbm and libdrm from pkg-config.
+  checkout) and FreeRDP 3, GLib, libpng, EGL, GLES, gbm and libdrm from pkg-config. `nix develop`
+  has all of that.
   - `make check` tests the clipboard's format conversions.
   - [tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh) copies and pastes text, HTML and an
     image in both directions without Windows or a GPU: xfreerdp on an Xvfb plays the client, a
