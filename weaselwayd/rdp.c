@@ -115,6 +115,9 @@ struct peer_context {
     /* Between our DesktopResize and the client's re-activation its surface
      * is the old size, and nothing may be presented. */
     bool resize_pending;
+    /* The client has said that it shows nothing just now: its window is
+     * minimised. Frames would be read back for nobody. */
+    bool suppressed;
     /* gfxredir turned out to be unusable; the peer is dropped at the end of
      * the next dispatch. */
     bool failed;
@@ -1248,6 +1251,23 @@ rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int str
 /* The peer                                                           */
 /* ------------------------------------------------------------------ */
 
+/* Suppress Output: the client's window was minimised, or is back. What
+ * changed on the screen in between was not sent, so all of it is owed. */
+static BOOL
+on_suppress_output(rdpContext *context, BYTE allow, const RECTANGLE_16 *area)
+{
+    struct peer_context *peer_ctx = (struct peer_context *)context;
+
+    if (peer_ctx->suppressed == !allow)
+        return TRUE;
+
+    g_debug("the client %s", allow ? "shows the screen again" : "stopped showing the screen");
+    peer_ctx->suppressed = !allow;
+    if (allow)
+        peer_ctx->server->full_requested = true;
+    return TRUE;
+}
+
 static void
 peer_destroy(struct peer_context *peer_ctx)
 {
@@ -1603,6 +1623,8 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     /* Without this one FreeRDP takes the connection for failed. */
     client->PostConnect = on_peer_post_connect;
     client->Activate = on_peer_activate;
+    /* FreeRDP's default is the client's half, which sends the PDU. */
+    client->context->update->SuppressOutput = on_suppress_output;
 
     input = client->context->input;
     input->SynchronizeEvent = on_synchronize_event;
@@ -2033,7 +2055,7 @@ rdp_server_state(struct rdp_server *server)
 {
     struct peer_context *peer_ctx = server->peer;
 
-    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed)
+    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed || peer_ctx->suppressed)
         return RDP_NO_CLIENT;
     if (server->screen_width <= 0 || server->screen_height <= 0)
         return RDP_CONNECTING;

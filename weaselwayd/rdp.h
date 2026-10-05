@@ -55,7 +55,8 @@ struct rdp_frame {
 };
 
 enum rdp_state {
-    /* Nobody to present to. */
+    /* Nobody to present to: no client, or one whose window is minimised.
+     * Damage need not be kept; whoever looks next asks for the whole screen. */
     RDP_NO_CLIENT,
     /* A client is there but not ready for frames yet: still connecting, or
      * being resized. Damage has to be kept. */
@@ -87,7 +88,7 @@ bool rdp_server_client_size(struct rdp_server *server, int *width, int *height);
 enum rdp_state rdp_server_state(struct rdp_server *server);
 
 /* True, once, when the client needs the whole screen rather than the damage:
- * it has just connected, or come back from a resize. */
+ * it has just connected, come back from a resize, or shows its window again. */
 bool rdp_server_take_full_request(struct rdp_server *server);
 
 /*
