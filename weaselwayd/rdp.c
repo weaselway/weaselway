@@ -192,6 +192,7 @@ struct rdp_server {
     struct rdp_config config;
 
     freerdp_listener *listener;
+    /* The vsock until the listener has taken it, -1 after that. */
     int owned_listen_fd;
     char *cert_pem;
     char *key_pem;
@@ -1955,6 +1956,8 @@ rdp_server_new(const struct rdp_config *config, GError **error)
                                 "cannot listen on the vsock");
             goto fail;
         }
+        /* The listener's now, which closes it with the others. */
+        server->owned_listen_fd = -1;
         g_message("listening on vsock port %d (FreeRDP %s), frames go to %s", config->vsock_port,
                   FREERDP_VERSION_FULL, config->shm_dir);
     }
