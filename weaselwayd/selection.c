@@ -529,6 +529,19 @@ selection_reply(struct selection *selection, uint32_t serial, GBytes *data)
 /* Reading from the session                                            */
 /* ------------------------------------------------------------------ */
 
+/* More than this is not read from the clipboard's owner, which decides how
+ * much it writes: an 8K screenshot as a bitmap is half of it. A power of two,
+ * as the stream's sizes are. */
+#define MAX_READ_SIZE ((gsize)256 << 20)
+
+/* Lets the stream that collects a read grow no further than that; the write
+ * that would then fails with G_IO_ERROR_NO_SPACE. */
+static gpointer
+realloc_limited(gpointer data, gsize size)
+{
+    return size <= MAX_READ_SIZE ? g_try_realloc(data, size) : NULL;
+}
+
 static void
 on_read_spliced(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -569,7 +582,7 @@ on_read_fd(GObject *source, GAsyncResult *result, gpointer data)
 
     /* Until the owner closes its end of the pipe. */
     in = g_unix_input_stream_new(fd, TRUE);
-    out = g_memory_output_stream_new_resizable();
+    out = g_memory_output_stream_new(NULL, 0, realloc_limited, g_free);
     g_output_stream_splice_async(out, in,
                                  G_OUTPUT_STREAM_SPLICE_CLOSE_SOURCE |
                                      G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
