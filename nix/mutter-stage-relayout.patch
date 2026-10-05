@@ -10,8 +10,6 @@ a monitor reconfiguration, leaving the newly exposed area unpainted.
 
 Queue a relayout on the stage's direct children after resizing the stage
 so their cached size requests are dropped.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/backends/meta-stage.c | 10 ++++++++++
  1 file changed, 10 insertions(+)
