@@ -81,6 +81,11 @@
           nixos-wsl.nixosModules.default
           self.nixosModules.weaselway
           self.nixosModules.image
+          # The desktop, as in nix/image/flake.nix: keep the two in step.
+          {
+            services.desktopManager.gnome.enable = true;
+            services.displayManager.gdm.enable = false;
+          }
           ./nix/image/configuration.nix
           { wsl.tarball.configPath = ./nix/image; }
         ];
