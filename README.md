@@ -3,10 +3,7 @@
 Weaselway runs a GPU-accelerated Linux desktop on WSL2 and shows it in a
 window on Windows. It is distributed as a NixOS-WSL image.
 
-<!-- VIDEO (hero, 10-15 s, looping mp4 or GIF): a Windows desktop with the
-     taskbar visible and GNOME in a window. Open Chromium, resize the window to
-     show the session following it, copy text and paste it into Notepad. The
-     taskbar matters: it shows at a glance that this is a window on Windows. -->
+https://github.com/user-attachments/assets/421018ab-684a-4c09-afc2-350e0ffb5089
 
 The compositor runs unmodified. The `dxgdrm` kernel module provides a virtual
 display that it drives like a monitor, and Mesa's `d3d12` driver renders on the
@@ -66,12 +63,7 @@ wsl -d Weaselway                           # Weaselway must be the first distro
 then `ww-start-session` and `ww-start-viewer` inside the distro. The steps
 below explain each of them.
 
-<!-- VIDEO (install screencast, 60-90 s, linked from here or embedded): from an
-     empty PowerShell window to the desktop. Show the import, the
-     `ww-install-system-image` output, the `.wslconfig` edit, `wsl --shutdown`,
-     the two ww-start-* commands and the window appearing. Install is the
-     highest-friction part, and a recording shows the order and what success
-     looks like. An asciinema or a screen recording both work. -->
+<video src="doc/install.mp4" controls muted width="720"></video>
 
 ### 1. Get the image
 
@@ -142,9 +134,7 @@ it is running. `ww-start-viewer` opens it in a window on Windows. The viewer,
 Windows side. Closing the window does not end the session; run
 `ww-start-viewer` again to reconnect.
 
-<!-- IMAGE (first successful start): a screenshot of the finished result, the
-     GNOME desktop in its Windows window, with the PowerShell/WSL terminal that
-     started it next to it. Tells the visitor what "done" looks like. -->
+![The GNOME desktop in its Windows window, showing Chromium's GPU status page and NetQuake](doc/screenshot.png)
 
 To stop the session:
 
