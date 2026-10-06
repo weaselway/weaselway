@@ -6,22 +6,23 @@
 set -xeuo pipefail
 
 # dxgdrm provides the render node d3d12 clients need and the KMS node the
-# compositor drives; nothing loads it at boot. Loaded by path because it lives
-# in the Nix store, not in WSL's /lib/modules overlay. That skips modules.dep,
-# which is fine: it only needs DRM core, and CONFIG_DRM=y. The path carries the
-# kernel release, so after a WSL kernel update the module is simply missing.
-# Not fatal here: ww-start-session.sh refuses to start without the KMS node.
+# compositor drives; nothing loads it at boot. It lives in the Nix store, not in
+# WSL's /lib/modules overlay, so modprobe gets that as its root. On kernels
+# built without DRM core the package brings it along as modules, and its
+# modules.dep loads them first. The path carries the kernel release, so after
+# a WSL kernel update the module is simply missing. Not fatal here:
+# ww-start-session.sh refuses to start without the KMS node.
 #
 # /proc/modules rather than `lsmod | grep`, which trips pipefail.
-: "${DXGDRM_KO:?set by weaselway-prep.service}"
+: "${DXGDRM_ROOT:?set by weaselway-prep.service}"
 
 if ! grep -q '^dxgdrm ' /proc/modules; then
-    if [ -e "${DXGDRM_KO}" ]; then
-        modprobe "${DXGDRM_KO}"
+    if [ -e "${DXGDRM_ROOT}/lib/modules/$(uname -r)/extra/dxgdrm.ko" ]; then
+        modprobe -d "${DXGDRM_ROOT}" dxgdrm
         udevadm trigger --subsystem-match=drm
         udevadm settle
     else
-        echo "error: ${DXGDRM_KO} missing -- the dxgdrm flake has no module for this WSL kernel yet" >&2
+        echo "error: no dxgdrm.ko for $(uname -r) in ${DXGDRM_ROOT} -- the dxgdrm flake has no module for this WSL kernel yet" >&2
     fi
 fi
 

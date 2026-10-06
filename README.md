@@ -42,8 +42,9 @@ installation instructions.
 - Windows with WSL2, on an x86_64 machine. The image is x86_64 only.
 - A GPU with a Windows driver that supports WSL GPU compute (the same driver
   that provides GPU access to other WSL distros).
-- The WSL kernel `6.18.33.2-microsoft-standard-WSL2`. The `dxgdrm` module is
-  built for exactly this kernel release, and another release cannot load it.
+- One of the WSL kernels `6.18.33.2-microsoft-standard-WSL2` (WSL 2.7) or
+  `6.18.40.1-microsoft-standard-WSL2` (WSL 3.0). The `dxgdrm` module is built
+  for these kernel releases, and another release cannot load it.
   Check yours with `uname -r` inside any WSL distro, and see
   [Limitations](#limitations) for what happens when WSL updates its kernel.
 - About 1.4 GiB of disk space for the image, plus the system distro VHD.
@@ -194,12 +195,13 @@ Then delete the `systemDistro=` line from `%USERPROFILE%\.wslconfig`, delete
 
 ## Limitations
 
-- Weaselway supports one WSL kernel release at a time, currently
-  `6.18.33.2-microsoft-standard-WSL2`. After `wsl --update` installs a
-  different kernel, the module is missing and no session starts until a
-  Weaselway release adds that kernel. Each kernel needs its own build of
-  `dxgdrm`, with the kernel's configuration and compiler. Consider holding off
-  on `wsl --update` while you rely on Weaselway.
+- Weaselway supports the WSL kernel releases it was built for, currently
+  `6.18.33.2-microsoft-standard-WSL2` and `6.18.40.1-microsoft-standard-WSL2`.
+  After `wsl --update` installs a kernel that is not among them, the module is
+  missing and no session starts until a Weaselway release adds that kernel.
+  Each kernel needs its own build of `dxgdrm`, with the kernel's configuration
+  and compiler. Consider holding off on `wsl --update` while you rely on
+  Weaselway.
 - The clipboard is shared with Windows only in GNOME sessions. Text, formatted
   text and images can be copied; files cannot.
 - The scale factor of the Windows display is not passed on. Set the scale in

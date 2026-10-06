@@ -12,7 +12,7 @@
 let
   cfg = config.weaselway;
 
-  # Every WSL kernel the dxgdrm flake knows, as
+  # Every WSL kernel the dxgdrm flake knows, as a module root with
   # lib/modules/<release>/extra/dxgdrm.ko, plus the udev rules.
   dxgdrm-all = dxgdrm.packages.${pkgs.stdenv.hostPlatform.system}.dxgdrm-all;
 
@@ -27,10 +27,9 @@ let
       systemd # udevadm
       util-linux # mount, umount, mountpoint
     ];
-    # The script loads the module by path, keyed on the running kernel.
+    # The script loads the module from here, keyed on the running kernel.
     text = ''
-      DXGDRM_KO="${dxgdrm-all}/lib/modules/$(uname -r)/extra/dxgdrm.ko"
-      export DXGDRM_KO
+      export DXGDRM_ROOT="${dxgdrm-all}"
       exec ${pkgs.bash}/bin/bash ${../libexec/prep-session.sh}
     '';
   };
@@ -172,6 +171,20 @@ in
         # compositor creates its own X socket there, which weaselway-prep.service
         # makes room for; this mount would sit on top of it.
         systemd.units."tmp-.X11\\x2dunix-X0.mount".enable = lib.mkForce false;
+
+        # logind may only open the device classes that exist when it starts
+        # (DeviceAllow=char-drm), and orders itself after modprobe@drm.service
+        # for that reason. On kernels where DRM core is a module it is in the
+        # dxgdrm package, not where that unit looks; loaded any later, logind
+        # refuses the compositor /dev/dri/card0. Fails quietly on kernels that
+        # have DRM built in.
+        systemd.services."modprobe@drm" = {
+          overrideStrategy = "asDropin";
+          serviceConfig.ExecStart = [
+            ""
+            "-${pkgs.kmod}/bin/modprobe -abq -d ${dxgdrm-all} drm"
+          ];
+        };
 
         # Loads dxgdrm, evdev and uinput, takes /tmp/.X11-unix back, and mounts
         # the WSLg shared-memory share. The last fails the unit when the weaselway

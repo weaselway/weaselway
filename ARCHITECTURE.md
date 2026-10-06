@@ -215,19 +215,29 @@ on a WSL installation. This section records those failures.
 
 - The module is keyed on the kernel release. `weaselway-prep` loads
   `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and the `dxgdrm` flake
-  lists the releases it is built for in its `kernels` attribute, currently only
-  `6.18.33.2-microsoft-standard-WSL2`. On any other kernel the file does not
+  lists the releases it is built for in its `kernels` attribute, currently
+  `6.18.33.2-microsoft-standard-WSL2` and `6.18.40.1-microsoft-standard-WSL2`.
+  On any other kernel the file does not
   exist, the unit logs that, and `ww-start-session` refuses to start for lack of
   the KMS node. Supporting a new WSL kernel means adding its captured config
   and source hash to that flake (see dxgdrm's WEASELWAY.md).
+- From `6.18.40.1` on the WSL kernel has no DRM core. For those kernels the
+  package also contains `hdmi.ko`, `drm.ko` and `drm_kms_helper.ko`, built from
+  the same kernel source, and a `modules.dep` that loads them before `dxgdrm`.
+  `drm.ko` has to be loaded before systemd-logind starts: logind's device
+  policy (`DeviceAllow=char-drm`) only covers device classes that are
+  registered at that moment, and without it logind refuses to open
+  `/dev/dri/card0` for the compositor. A drop-in for `modprobe@drm.service`,
+  which logind already orders itself after, loads it from the package.
 - `services.udev.enable` is set because NixOS-WSL disables udev, and dxgdrm's rule, which sets mode
   0666 on its nodes, needs it.
 - The user is a member of `render` and `video` in case a node appears before udev applies the rule.
   The user is also in `input`: a udev rule assigns `/dev/uinput` to that group, so that weaselwayd
   can create its devices without root.
 - `weaselway-prep.service` runs [libexec/prep-session.sh](libexec/prep-session.sh) once per boot,
-  with `DXGDRM_KO` set to the store path of the module for `uname -r`. The script:
-  - loads dxgdrm by path, because WSL's `/lib/modules` is an overlay that does not contain it;
+  with `DXGDRM_ROOT` set to the store path of the `dxgdrm-all` package. The script:
+  - loads dxgdrm with `modprobe -d "$DXGDRM_ROOT"`, because WSL's `/lib/modules` is an overlay
+    that does not contain it;
   - loads `evdev` and `uinput` from WSL's own `/lib/modules`, where both are modules that nothing
     else loads;
   - takes `/tmp/.X11-unix` back from WSL's read-only bind mount, so that the compositor can create
