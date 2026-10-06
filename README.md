@@ -3,6 +3,11 @@
 Weaselway runs a GPU-accelerated Linux desktop on WSL2 and shows it in a
 window on Windows. It is distributed as a NixOS-WSL image.
 
+<!-- VIDEO (hero, 10-15 s, looping mp4 or GIF): a Windows desktop with the
+     taskbar visible and GNOME in a window. Open Chromium, resize the window to
+     show the session following it, copy text and paste it into Notepad. The
+     taskbar matters: it shows at a glance that this is a window on Windows. -->
+
 The compositor runs unmodified. The `dxgdrm` kernel module provides a virtual
 display that it drives like a monitor, and Mesa's `d3d12` driver renders on the
 GPU that Windows exposes to WSL. The `weaselwayd` daemon reads each finished
@@ -19,18 +24,60 @@ WSLg system distro ([weaselway/wslg](https://github.com/weaselway/wslg)): WSL
 creates the shared memory region used for the frames only when a system distro
 is configured.
 
-[NIXOS.md](NIXOS.md) describes the architecture, the build and how to debug it.
+[ARCHITECTURE.md](ARCHITECTURE.md) describes the architecture, the build and
+how to debug it. Known [limitations](#limitations) are listed below the
+installation instructions.
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Limitations](#limitations)
+- [Sessions](#sessions)
+- [The viewer](#the-viewer)
+- [Configuration](#configuration)
+- [Updating](#updating)
+- [Troubleshooting](#troubleshooting)
+
+## Requirements
+
+- Windows with WSL2, on an x86_64 machine. The image is x86_64 only.
+- A GPU with a Windows driver that supports WSL GPU compute (the same driver
+  that provides GPU access to other WSL distros).
+- The WSL kernel `6.18.33.2-microsoft-standard-WSL2`. The `dxgdrm` module is
+  built for exactly this kernel release, and another release cannot load it.
+  Check yours with `uname -r` inside any WSL distro, and see
+  [Limitations](#limitations) for what happens when WSL updates its kernel.
+- About 1.4 GiB of disk space for the image, plus the system distro VHD.
+
+<!-- TODO(maintainer): add the minimum Windows build and WSL version that have
+     been tested (the output of `wsl --version`), and a rough RAM figure. -->
 
 ## Installation
 
-The image is x86_64 only.
+In short, in PowerShell:
+
+```powershell
+wsl --install --from-file nixos-weaselway-<version>.wsl --name Weaselway
+wsl -d Weaselway ww-install-system-image   # then edit .wslconfig, see step 3
+wsl --shutdown
+wsl -d Weaselway                           # Weaselway must be the first distro
+```
+
+then `ww-start-session` and `ww-start-viewer` inside the distro. The steps
+below explain each of them.
+
+<!-- VIDEO (install screencast, 60-90 s, linked from here or embedded): from an
+     empty PowerShell window to the desktop. Show the import, the
+     `ww-install-system-image` output, the `.wslconfig` edit, `wsl --shutdown`,
+     the two ww-start-* commands and the window appearing. Install is the
+     highest-friction part, and a recording shows the order and what success
+     looks like. An asciinema or a screen recording both work. -->
 
 ### 1. Get the image
 
 Download `nixos-weaselway-<version>.wsl` from the
-[releases](https://github.com/weaselway/weaselway/releases) page. Each CI run
-also uploads an image as the artifact `nixos-wsl-<commit>`. To build one
-yourself, see [Building](NIXOS.md#building).
+[latest release](https://github.com/weaselway/weaselway/releases/latest). Each
+CI run also uploads an image as the artifact `nixos-wsl-<commit>`. To build one
+yourself, see [Building](ARCHITECTURE.md#building).
 
 ### 2. Import it
 
@@ -67,6 +114,16 @@ WSL from PowerShell:
 wsl --shutdown
 ```
 
+The setting is global. It replaces the system distro that WSL starts for all
+distros, so WSLg's own application windows do not work in your other distros
+while it is set. <!-- TODO(maintainer): confirm this behaviour on a machine
+with a second distro, and say what a user has to do to switch back. -->
+
+> [!IMPORTANT]
+> Weaselway must be the first distro started after `wsl --shutdown`. WSL sets
+> up `/run/user/1000` only for the first distro it starts. If another distro
+> was started first, run `wsl --shutdown` and start Weaselway first.
+
 ### 4. Start the session
 
 ```powershell
@@ -84,16 +141,31 @@ it is running. `ww-start-viewer` opens it in a window on Windows. The viewer,
 Windows side. Closing the window does not end the session; run
 `ww-start-viewer` again to reconnect.
 
-> [!IMPORTANT]
-> Weaselway must be the first distro started after `wsl --shutdown`. WSL sets
-> up `/run/user/1000` only for the first distro it starts. If another distro
-> was started first, run `wsl --shutdown` and start Weaselway first.
+<!-- IMAGE (first successful start): a screenshot of the finished result, the
+     GNOME desktop in its Windows window, with the PowerShell/WSL terminal that
+     started it next to it. Tells the visitor what "done" looks like. -->
 
 To stop the session:
 
 ```sh
 ww-start-session stop
 ```
+
+### 5. Check that the GPU is used
+
+Inside the distro:
+
+```sh
+GALLIUM_DRIVER=d3d12 nix shell nixpkgs#mesa-demos -c eglinfo -B -p surfaceless
+```
+
+The renderer line should name your GPU, for example
+`D3D12 (Intel(R) HD Graphics 630)`. If it says `llvmpipe`, everything renders
+on the CPU; see [Troubleshooting](#everything-renders-in-software-llvmpipe).
+
+<!-- IMAGE (good vs bad): two terminal screenshots side by side. One shows the
+     eglinfo line with `D3D12 (<GPU>)`, the other shows `llvmpipe`. It lets a
+     visitor recognise both outcomes without reading the troubleshooting. -->
 
 ### Desktop shortcut
 
@@ -105,6 +177,40 @@ This puts a shortcut named "Weaselway" on the Windows desktop;
 `ww-install-viewer-link <name>` uses another name. The shortcut starts the
 distro and the session if they are not running, then opens the viewer. A
 minimized console window stays open next to the viewer and closes with it.
+
+<!-- IMAGE (small): the "Weaselway" shortcut on the Windows desktop. -->
+
+### Uninstalling
+
+In PowerShell:
+
+```powershell
+wsl --unregister Weaselway
+```
+
+Then delete the `systemDistro=` line from `%USERPROFILE%\.wslconfig`, delete
+`C:\Weaselway`, delete the desktop shortcut if you installed it, and run
+`wsl --shutdown`.
+
+## Limitations
+
+- Weaselway supports one WSL kernel release at a time, currently
+  `6.18.33.2-microsoft-standard-WSL2`. After `wsl --update` installs a
+  different kernel, the module is missing and no session starts until a
+  Weaselway release adds that kernel. Each kernel needs its own build of
+  `dxgdrm`, with the kernel's configuration and compiler. Consider holding off
+  on `wsl --update` while you rely on Weaselway.
+- The clipboard is shared with Windows only in GNOME sessions. Text, formatted
+  text and images can be copied; files cannot.
+- The scale factor of the Windows display is not passed on. Set the scale in
+  the desktop's display settings.
+- Audio from web browsers can crackle. Other players are not affected.
+- Touchscreens are not forwarded. Touchpad gestures are.
+- Compositors other than GNOME and Plasma have seen little testing. If one
+  does not start on the virtual display, please open an issue.
+
+[Known issues](ARCHITECTURE.md#known-issues) in ARCHITECTURE.md has the
+details.
 
 ## Sessions
 
@@ -119,6 +225,10 @@ you change it.
 | `custom` | The compositor of your choice, through `custom-weaselway-session`. |
 | `gnome-shell` | GNOME Shell alone, for debugging. |
 | `kwin` | KWin with a terminal, for debugging. Requires `weaselway.plasma.enable`. |
+
+<!-- IMAGE (three thumbnails in a row, same width): GNOME, Plasma and sway, each
+     in its Windows window. Shows the "any compositor" claim, which is only text
+     today. Put them right above or below this table. -->
 
 The two debugging sessions leave out the services that `gnome-session` and
 Plasma start (settings daemon, keyring, portals and so on). Much of the
@@ -160,6 +270,11 @@ The viewer forwards touchpad gestures with three or more fingers, audio
 playback and the microphone. The session sees a touchpad of its own, so the
 desktop's swipe and pinch gestures work.
 
+<!-- VIDEO (short GIF, 5 s): a three-finger swipe opening the GNOME overview in
+     the viewer. Touchpad gestures are unusual for a remote desktop and hard to
+     explain in words. A screen recording of the trackpad is not needed, the
+     desktop reacting is enough. -->
+
 Two options help when investigating display problems. They can be combined.
 
 ```sh
@@ -168,6 +283,13 @@ ww-start-viewer /sdl-show-damage    # tint the regions updated in each frame
 ```
 
 The value after `/sdl-show-stats` is the text scale and is optional.
+
+<!-- IMAGE + VIDEO: (1) a screenshot of a 2560x1440 session with the
+     /sdl-show-stats overlay showing 60 fps, with the GPU named in the caption.
+     That backs the performance claim on the profile page with numbers.
+     (2) a short GIF of /sdl-show-damage while scrolling a page or moving a
+     window: only the tinted rectangles are updated, which shows why the
+     transfer is cheap. -->
 
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
@@ -257,17 +379,6 @@ rebuild. Run `ww-install-system-image` again after an update. If it downloads
 a new image, change the `systemDistro=` line to the one it prints and run
 `wsl --shutdown`.
 
-## Limitations
-
-- The clipboard is shared with Windows only in GNOME sessions. Text, formatted
-  text and images can be copied; files cannot.
-- The scale factor of the Windows display is not passed on. Set the scale in
-  the desktop's display settings.
-- Audio from web browsers can crackle. Other players are not affected.
-- Touchscreens are not forwarded. Touchpad gestures are.
-- Compositors other than GNOME and Plasma have seen little testing. If one
-  does not start on the virtual display, please open an issue.
-
 ## Troubleshooting
 
 ### The viewer window stays empty or closes immediately
@@ -285,14 +396,18 @@ afterwards, and that Weaselway was the first distro started.
 
 `journalctl -u weaselway-session` contains the compositor's output.
 
+If `systemctl status weaselway-prep` says that the dxgdrm module is missing for
+this WSL kernel, `uname -r` differs from the kernel the release was built for.
+See [Requirements](#requirements).
+
 ### Everything renders in software (llvmpipe)
 
 The Windows GPU driver did not load. The known causes are listed under
-[Graphics](NIXOS.md#graphics) in NIXOS.md.
+[Graphics](ARCHITECTURE.md#graphics) in ARCHITECTURE.md.
 
 ### The desktop shows no audio devices
 
 `wpctl status` should list "Remote Desktop Audio", and
 `/run/user/1000/pulse/native` should be a socket, not a symbolic link.
 
-[Debugging](NIXOS.md#debugging) in NIXOS.md lists further checks.
+[Debugging](ARCHITECTURE.md#debugging) in ARCHITECTURE.md lists further checks.

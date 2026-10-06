@@ -72,7 +72,7 @@
       # the same system.
       nixosModules.image = import ./nix/image-lock.nix { inherit self; };
 
-      # A NixOS-WSL distro running the session. See NIXOS.md. Built from
+      # A NixOS-WSL distro running the session. See ARCHITECTURE.md. Built from
       # the same configuration.nix the image ships in /etc/nixos, together with
       # nix/image/flake.nix, so a nixos-rebuild inside the distro rebuilds this
       # system rather than NixOS-WSL's generic default.
@@ -88,7 +88,7 @@
 
       # The distro is x86_64 whatever the build machine is, so these are the
       # x86_64 builds on every system; elsewhere they need an x86_64 builder,
-      # see NIXOS.md.
+      # see ARCHITECTURE.md.
       packages = forAllSystems (pkgs: {
         weaselway-mesa = wsl.pkgs.weaselway-mesa;
         mutter = wsl.pkgs.mutter;

@@ -6,16 +6,25 @@ installation and day-to-day use, see the [README](README.md).
 
 ## Architecture
 
-```
-compositor (mutter, KWin, sway, ...) on its KMS backend
-   | gbm + EGL (mesa d3d12)            | libinput
-   v                                   v
-dxgdrm: card0 + renderD128        /dev/input/event*  (uinput)
-   | commit: buffer, damage,           ^
-   | cursor, mode                      |
-   v                                   |
-weaselwayd -- GL readback -> shared memory -- RDP on a vsock --> sdl-freerdp.exe
-           \- audio (PipeWire)
+<!-- IMAGE: optional. If the Mermaid diagram below renders too small on GitHub,
+     export it as an SVG (docs/images/frame-path.svg) and link that instead. -->
+
+```mermaid
+flowchart TD
+    comp["compositor (mutter, KWin, sway, ...)<br/>on its KMS backend"]
+    dxgdrm["dxgdrm<br/>card0 + renderD128"]
+    input["/dev/input/event*<br/>(uinput)"]
+    wwd["weaselwayd"]
+    audio["PipeWire<br/>(audio)"]
+    viewer["sdl-freerdp.exe<br/>(Windows)"]
+
+    comp -- "gbm + EGL (mesa d3d12)" --> dxgdrm
+    dxgdrm -- "commit: buffer, damage,<br/>cursor, mode" --> wwd
+    wwd -- "GL readback into shared memory,<br/>RDP on a vsock" --> viewer
+    viewer -- "keyboard, mouse, touchpad" --> wwd
+    wwd -- "creates uinput devices" --> input
+    input -- "libinput" --> comp
+    wwd <--> audio
 ```
 
 The compositor runs on its regular KMS backend and has no knowledge of Windows. dxgdrm presents one
@@ -204,6 +213,13 @@ on a WSL installation. This section records those failures.
 
 ### Kernel modules and device nodes
 
+- The module is keyed on the kernel release. `weaselway-prep` loads
+  `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and the `dxgdrm` flake
+  lists the releases it is built for in its `kernels` attribute, currently only
+  `6.18.33.2-microsoft-standard-WSL2`. On any other kernel the file does not
+  exist, the unit logs that, and `ww-start-session` refuses to start for lack of
+  the KMS node. Supporting a new WSL kernel means adding its captured config
+  and source hash to that flake (see dxgdrm's WEASELWAY.md).
 - `services.udev.enable` is set because NixOS-WSL disables udev, and dxgdrm's rule, which sets mode
   0666 on its nodes, needs it.
 - The user is a member of `render` and `video` in case a node appears before udev applies the rule.
@@ -446,6 +462,10 @@ These decisions and fixes are easy to undo by accident.
   the shift and confirmed byte-identical output with the fix.
 
 ## Known issues
+
+The limitations that affect users are listed in the
+[README](README.md#limitations). This section adds the detail that matters
+when working on the code.
 
 - Two features of the RDP backend that mutter used to carry have not been ported: the client's
   scale factor, and the error frame (a client is disconnected instead, with the reason in the log).
