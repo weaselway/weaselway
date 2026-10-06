@@ -5,25 +5,14 @@
 
 set -xeuo pipefail
 
-# dxgdrm provides the DRM nodes: the render node d3d12 clients need, and the
-# KMS node with the virtual display the compositor drives. Nothing loads the
-# module at boot. Read /proc/modules directly rather than piping lsmod, so
-# pipefail has nothing to trip over. The udevadm calls are what turn the module
-# into /dev/dri/card0 and renderD128 with their permissions.
+# dxgdrm provides the render node d3d12 clients need and the KMS node the
+# compositor drives; nothing loads it at boot. Loaded by path because it lives
+# in the Nix store, not in WSL's /lib/modules overlay. That skips modules.dep,
+# which is fine: it only needs DRM core, and CONFIG_DRM=y. The path carries the
+# kernel release, so after a WSL kernel update the module is simply missing.
+# Not fatal here: ww-start-session.sh refuses to start without the KMS node.
 #
-# The module is loaded by path, not by name: /lib/modules is an overlay WSL
-# mounts itself, and the module lives in the Nix store. A path with a slash in
-# it makes modprobe load that file. That skips modules.dep, which costs
-# nothing here -- dxgdrm links only against DRM core, and CONFIG_DRM=y.
-#
-# The path carries the kernel release, so after a WSL kernel update the module
-# built for the old one is not silently picked up and rejected -- it is just not
-# there, and the message says so. Only a warning: the rest of this script has
-# nothing to do with the module, and ww-start-session.sh refuses to start without
-# the KMS node.
-#
-# First, and regardless of the system distro below: the render node is needed
-# by anything using the d3d12 driver, not only by the session.
+# /proc/modules rather than `lsmod | grep`, which trips pipefail.
 : "${DXGDRM_KO:?set by weaselway-prep.service}"
 
 if ! grep -q '^dxgdrm ' /proc/modules; then
@@ -36,12 +25,10 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
     fi
 fi
 
-# Input reaches the compositor as ordinary evdev devices that weaselwayd
-# creates through uinput. Both are modules in the WSL kernel
-# (CONFIG_INPUT_EVDEV=m, CONFIG_INPUT_UINPUT=m), and nothing loads them. They
-# come from WSL's own /lib/modules, by path for the same reason as dxgdrm above
-# and because NixOS' modprobe does not search there. Neither depends on another
-# module. A warning only: the session works without them, just without input.
+# weaselwayd creates the input devices through uinput and the compositor reads
+# them as evdev. Both are modules in the WSL kernel and nothing loads them.
+# By path from WSL's own /lib/modules, which NixOS' modprobe does not search.
+# Not fatal: the session works without them, just without input.
 for MODULE in evdev uinput; do
     if grep -q "^${MODULE} " /proc/modules; then
         continue
@@ -55,34 +42,18 @@ for MODULE in evdev uinput; do
     fi
 done
 
-# Take /tmp/.X11-unix back from WSL, so the socket the compositor creates there
-# (it binds the socket itself and hands Xwayland the fd) is not landing in
-# something read-only or unwritable.
-#
-# WSL generates wslg.service for this path, ordered After=tmp.mount, whose whole
-# body is:
-#
-#   mount -o bind,ro,X-mount.mkdir -t none /mnt/wslg/.X11-unix /tmp/.X11-unix
-#
-# Two things there matter. The mount is read-only, and X-mount.mkdir creates the
-# mountpoint first -- as root, mode 0755. So undoing the mount is not enough:
-# the directory it made stays behind, owned by root and writable by nobody else,
-# and a compositor running as the user cannot create its socket in it.
-#
-# Hence rm -rf rather than umount alone, and a fresh 1777 directory after it --
-# sticky and world-writable, which is what /usr/lib/tmpfiles.d/x11.conf asks for
-# on any normal desktop and what makes the owner question moot.
-#
-# The unit is ordered After=wslg.service so this runs once WSL has had its turn;
-# wslg.service carries ConditionPathExists=!/tmp/.X11-unix/X0 and so does not
-# come back and redo it afterwards.
+# Take /tmp/.X11-unix back from WSL, so the compositor can create its X socket
+# there. WSL's wslg.service bind-mounts /mnt/wslg/.X11-unix over it read-only,
+# and X-mount.mkdir creates the mountpoint as root, mode 0755 -- so umount
+# alone leaves a directory the user cannot write to. Hence rm -rf and a fresh
+# 1777 directory. The unit is ordered After=wslg.service, so WSL has had its
+# turn by now.
 if [ -L /tmp/.X11-unix ]; then
     rm -f /tmp/.X11-unix
 fi
 
-# Stacked mounts are possible here, and each umount pops one. Bounded rather
-# than `while true` so a mount that will not go away fails the unit below
-# instead of spinning.
+# Mounts can be stacked, and each umount pops one. Bounded so a mount that
+# will not go away fails the check below instead of spinning.
 for _ in 1 2 3 4 5; do
     mountpoint -q /tmp/.X11-unix || break
     umount /tmp/.X11-unix || break
@@ -91,23 +62,11 @@ done
 rm -rf /tmp/.X11-unix
 mkdir -m 1777 /tmp/.X11-unix
 
-# Prove the takeover worked, because the failure is otherwise silent until much
-# later: Xwayland cannot bind its socket, and X11 applications do not start.
-# Nothing else checks this.
-#
-# Note this cannot be a `touch` probe: that runs as root, which can write into a
-# root-owned 0755 directory perfectly well, and so passes in exactly the broken
-# case it is meant to catch. Check the state itself instead.
-#
-# Nor can it be `mountpoint`: that reads /proc/self/mountinfo, and WSL's bind is
-# still listed there long after it stopped being reachable. tmp.mount covers
-# /tmp with a fresh tmpfs *after* wslg.service mounted onto the old one, which
-# leaves the bind shadowed -- present in the table, mounted over, affecting
-# nothing. `mountpoint` calls that a mountpoint and `umount` calls it "not
-# mounted", and only the latter is telling the truth.
-#
-# Comparing device numbers asks the question that actually matters: if our
-# directory is on the same filesystem as /tmp, then nothing is mounted over it.
+# Verify the takeover, because the failure is otherwise silent until X11
+# applications do not start. Not a `touch` probe: root can write into a
+# root-owned 0755 directory. Not `mountpoint`: tmp.mount covers /tmp after
+# wslg.service mounted onto the old one, and the shadowed bind is still listed
+# in mountinfo. Same device as /tmp means nothing is mounted over it.
 if [ "$(stat -c %d /tmp/.X11-unix)" != "$(stat -c %d /tmp)" ]; then
     echo "error: something is still mounted over /tmp/.X11-unix" >&2
     exit 1
@@ -119,15 +78,11 @@ if [ "${MODE}" != "1777" ]; then
     exit 1
 fi
 
-# The shared-memory share gfxredir allocates its buffers on. WSL creates it,
-# as the virtiofs tag "wslg", only when GUI apps are on *and* a system distro is
-# configured -- which is why the weaselway system image has to be in
-# .wslconfig at all. Nothing in the system distro mounts it any more; the share
-# is VM-wide, and this is the only place that uses it. The mount point is
-# weaselwayd's default (--shm).
-#
-# Last, and fatal: without it weaselwayd has nowhere to put the frames, and
-# this unit failing is the place that says why.
+# The share gfxredir allocates its buffers on. WSL exposes it as the virtiofs
+# tag "wslg" only when GUI apps are on and a system distro is configured, which
+# is why the weaselway system image has to be in .wslconfig. The mount point is
+# weaselwayd's default (--shm). Fatal: without it weaselwayd has nowhere to put
+# the frames.
 SHARED_MEMORY_MOUNT_POINT=/mnt/wslg-shared-memory
 
 if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then
