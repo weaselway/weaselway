@@ -408,3 +408,9 @@ The Windows GPU driver did not load. The known causes are listed under
 `/run/user/1000/pulse/native` should be a socket, not a symbolic link.
 
 [Debugging](ARCHITECTURE.md#debugging) in ARCHITECTURE.md lists further checks.
+
+## A note on AI
+
+AI was used heavily throughout this project. This is not meant to be a
+beautiful piece of software — it is meant to solve a problem I have: I want
+to be able to use GNOME on my Windows machine.
