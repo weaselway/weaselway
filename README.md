@@ -1,5 +1,10 @@
 # Weaselway
 
+[![Release](https://img.shields.io/github/v/release/weaselway/weaselway?include_prereleases)](https://github.com/weaselway/weaselway/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/weaselway/weaselway/build-image.yml?branch=main)](https://github.com/weaselway/weaselway/actions/workflows/build-image.yml)
+[![License](https://img.shields.io/github/license/weaselway/weaselway)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Join%20the%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/6HG8ac8XWZ)
+
 Weaselway runs a GPU-accelerated Linux desktop on WSL2 and shows it in a
 window on Windows. It is distributed as a NixOS-WSL image.
 
