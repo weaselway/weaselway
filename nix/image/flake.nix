@@ -16,6 +16,12 @@
           weaselway.inputs.nixos-wsl.nixosModules.default
           weaselway.nixosModules.weaselway
           weaselway.nixosModules.image
+          {
+            # GNOME without a display manager: ww-start-session does what one
+            # would do. Swap these for another desktop, e.g. COSMIC.
+            services.desktopManager.gnome.enable = true;
+            services.displayManager.gdm.enable = false;
+          }
           ./configuration.nix
         ];
       };

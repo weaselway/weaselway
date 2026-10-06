@@ -123,10 +123,6 @@ in
         networking.networkmanager.enable = false;
         networking.wireless.enable = false;
 
-        # GNOME without a display manager: ww-start-session does what one would do.
-        services.desktopManager.gnome.enable = true;
-        services.displayManager.gdm.enable = false;
-
         # NixOS-WSL turns udev off; the render node needs it for its permissions.
         services.udev.enable = true;
         services.udev.packages = [ dxgdrm-all ];
