@@ -2,10 +2,10 @@
  * The session's clipboard, as weaselwayd sees it: what its owner offers, a way
  * to read that, and a way to own it on behalf of the Windows client.
  *
- * There is no Wayland protocol for this that every compositor has. The one
- * implementation here talks to mutter, over the D-Bus interface that
- * gnome-remote-desktop uses (org.gnome.Mutter.RemoteDesktop); KWin would be
- * reached through ext-data-control-v1 instead. Without a compositor that
+ * There is no Wayland protocol for this that every compositor has. mutter is
+ * reached over the D-Bus interface that gnome-remote-desktop uses
+ * (org.gnome.Mutter.RemoteDesktop), KWin and the wlroots compositors through
+ * ext-data-control-v1; see selection-backends.h. Without a compositor that
  * answers, nothing is offered and nothing can be read, and that changes as
  * soon as one shows up.
  *

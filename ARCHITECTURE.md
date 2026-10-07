@@ -43,11 +43,18 @@ The client's keyboard, mouse and touchpad become uinput devices, which libinput 
 others. The size of the session follows the viewer's window: weaselwayd sets the mode on dxgdrm, and
 the compositor sees a hotplug event.
 
-The clipboard is the only feature that needs the compositor's cooperation. With mutter, weaselwayd
-uses the D-Bus interface that gnome-remote-desktop uses (`org.gnome.Mutter.RemoteDesktop`). It
-creates a session object with the clipboard enabled and never starts it, so gnome-shell shows no
-screen-sharing indicator. Text, HTML and images are converted between Windows clipboard formats and
-MIME types. Other compositors have no clipboard integration yet.
+The clipboard is the only feature that needs the compositor's cooperation, and there is no protocol
+for it that every compositor implements. weaselwayd runs two backends and uses the one that finds
+its compositor:
+
+- With mutter, it uses the D-Bus interface that gnome-remote-desktop uses
+  (`org.gnome.Mutter.RemoteDesktop`). It creates a session object with the clipboard enabled and
+  never starts it, so gnome-shell shows no screen-sharing indicator.
+- With KWin and the wlroots compositors, it is a Wayland client with `ext-data-control-v1`. It
+  watches `$XDG_RUNTIME_DIR` for `wayland-*` sockets and connects to the first compositor that
+  offers the protocol. mutter does not, and is left alone.
+
+Text, HTML and images are converted between Windows clipboard formats and MIME types.
 
 A KMS compositor needs a logind session on `seat0` that owns the devices. `ww-start-session` creates
 one by running the compositor in a transient system unit with a PAM session, as a display manager
@@ -147,8 +154,9 @@ affected.
   and libgbm (which load the patched mesa at run time), `weaselway-freerdp`, and the uapi header from
   the dxgdrm input. The gfxredir server channel is compiled in from
   [weaselwayd/gfxredir](weaselwayd/gfxredir), because distributions build FreeRDP without it.
-  weaselwayd is a GLib program with one main loop. It uses GIO for D-Bus and sockets and libpng for
-  images on the clipboard. The build runs `make check`.
+  weaselwayd is a GLib program with one main loop. It uses GIO for D-Bus and sockets, libpng for
+  images on the clipboard, and libwayland-client for the clipboard of compositors other than mutter.
+  The build runs `make check`.
 - `weaselway-freerdp`: nixpkgs' freerdp plus
   [nix/freerdp-dsp-ffmpeg-pcm-s16.patch](nix/freerdp-dsp-ffmpeg-pcm-s16.patch). Only weaselwayd
   links it.
@@ -365,17 +373,21 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 ### Building weaselwayd alone
 
 Run `make` in [weaselwayd/](weaselwayd). It needs `DXGDRM_INCLUDE` set to a dxgdrm checkout, and
-FreeRDP 3, GLib, libpng, EGL, GLES, gbm and libdrm from pkg-config. `nix develop` provides all of
-these.
+FreeRDP 3, GLib, libpng, EGL, GLES, gbm, libdrm, wayland-client and wayland-protocols from
+pkg-config, and `wayland-scanner`. `nix develop` provides all of these.
 
 - `make check` tests the format conversions of the clipboard.
 - [tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh) copies and pastes text, HTML and an
   image in both directions without Windows or a GPU. xfreerdp on Xvfb acts as the client, a headless
   mutter as the session, and `tests/rdp-harness` is weaselwayd's RDP server and clipboard without
-  the screen.
+  the screen. `CLIPBOARD_TEST_COMPOSITOR=kwin` runs a virtual KWin instead of mutter.
 - [tests/selection-mutter.sh](weaselwayd/tests/selection-mutter.sh) tests the mutter side alone.
+- [tests/selection-kwin.sh](weaselwayd/tests/selection-kwin.sh) tests the `ext-data-control-v1`
+  side alone against KWin, with `wl-copy` and `wl-paste` as the other clients. It also restarts
+  KWin to check that weaselwayd finds the new one.
 
-The two shell tests are not part of the build. They need mutter, D-Bus and an X server.
+The shell tests are not part of the build. They need mutter or KWin, D-Bus and, for
+`clipboard-rdp.sh`, an X server.
 
 ## CI
 
@@ -446,10 +458,15 @@ To run weaselwayd by hand, stop the unit first with `systemctl --user stop wease
 listens on 127.0.0.1 instead of the vsock, for a client on the Linux side. `--no-clipboard` keeps the
 two clipboards separate.
 
-For clipboard problems, the log states whether mutter granted access ("sharing the session's
-clipboard"), and `busctl --user tree org.gnome.Mutter.RemoteDesktop` shows the session object.
-mutter closes the session object when the screen is locked. weaselwayd requests a new one every three
-seconds until it succeeds.
+For clipboard problems, the log states whether a compositor granted access ("sharing the session's
+clipboard"), and through which backend.
+
+- With mutter, `busctl --user tree org.gnome.Mutter.RemoteDesktop` shows the session object. mutter
+  closes the session object when the screen is locked. weaselwayd requests a new one every three
+  seconds until it succeeds.
+- With KWin, the message names the socket. `G_MESSAGES_DEBUG=clipboard` also logs the sockets that
+  were skipped because their compositor lacks `ext-data-control-v1`, and `WAYLAND_DEBUG=client` on
+  weaselwayd shows the protocol traffic.
 
 `ww-start-viewer /sdl-show-stats:2` and `/sdl-show-damage` show the client's view of the same data.
 
@@ -502,14 +519,19 @@ when working on the code.
 - Two features of the RDP backend that mutter used to carry have not been ported: the client's
   scale factor, and the error frame (a client is disconnected instead, with the reason in the log).
   There is no touchscreen device, only the touchpad.
-- The clipboard works with mutter only and does not carry files.
-  - There is no compositor-neutral API. KWin and the wlroots compositors implement
-    ext-data-control-v1, which would be a second implementation of
-    [weaselwayd/selection.h](weaselwayd/selection.h). mutter does not implement it.
+- The clipboard does not carry files, and needs mutter or a compositor with `ext-data-control-v1`.
   - A client that connects with text or an image on its clipboard replaces the session's clipboard
     content.
-  - Tested against mutter 50.4 with xfreerdp as the client
-    ([tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh)).
+  - weaselwayd decides whether the clipboard is its own by whether its data source was cancelled.
+    This relies on the compositor cancelling the old source before it announces the new selection,
+    which KWin does but the protocol does not require.
+  - Klipper takes the clipboard over when the application that owned it exits. The client then
+    receives the same formats a second time.
+  - Tested against mutter 50.4 and KWin 6.7.5 with xfreerdp as the client
+    ([tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh)), and against Plasma with KWin
+    6.6.6 on WSL with the Windows viewer. wlroots compositors are untested.
+  - KWin gives X11 clients a clipboard that a Wayland client owns only while an X11 window has
+    focus. This applies to what comes from Windows too.
 - Audio from browsers crackles (Chromium, Firefox and GNOME Web on YouTube); mpv is not affected.
   weaselwayd's log shows no dropped backlog and no stalls while it happens. `pw-top` showed errors on
   the playback stream, and the graph running at 48 kHz against the sink's 44.1 kHz. Raising

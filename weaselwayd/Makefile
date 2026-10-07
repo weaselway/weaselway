@@ -2,19 +2,32 @@
 DXGDRM_INCLUDE ?= ../../dxgdrm
 
 PKGS    := egl glesv2 gbm libdrm freerdp3 freerdp-server3 winpr3 libcrypto \
-           glib-2.0 gio-2.0 gio-unix-2.0 libpng
+           glib-2.0 gio-2.0 gio-unix-2.0 libpng wayland-client
 CFLAGS  ?= -O2 -g
 # -isystem: FreeRDP's headers warn about their own deprecated declarations.
 CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread \
            -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
-SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c selection.c formats.c placeholder.c log.c
+SELECTION := selection.c selection-mutter.c selection-wayland.c ext-data-control-v1-protocol.c
+SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c formats.c placeholder.c log.c \
+           $(SELECTION)
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
-HEADERS := rdp.h input.h audio.h clipboard.h selection.h formats.h placeholder.h log.h $(wildcard gfxredir/*.h)
+HEADERS := rdp.h input.h audio.h clipboard.h selection.h selection-backends.h formats.h \
+           placeholder.h log.h ext-data-control-v1-client-protocol.h $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
+
+# The clipboard protocol of KWin and the wlroots compositors.
+DATA_CONTROL_XML := $(shell pkg-config --variable=pkgdatadir wayland-protocols)/staging/ext-data-control/ext-data-control-v1.xml
+WAYLAND_SCANNER ?= wayland-scanner
+
+ext-data-control-v1-client-protocol.h: $(DATA_CONTROL_XML)
+	$(WAYLAND_SCANNER) client-header $< $@
+
+ext-data-control-v1-protocol.c: $(DATA_CONTROL_XML)
+	$(WAYLAND_SCANNER) private-code $< $@
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes
 # into a crash instead of something exploitable.
@@ -67,11 +80,11 @@ gfxredir/%.asan.o: gfxredir/%.c $(HEADERS)
 
 # GCC's static analyzer; reports leaks, double frees and NULL dereferences on
 # paths it can prove.
-analyze:
+analyze: ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
 	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $(SOURCES)
 
 # The clipboard's conversions, which need nothing but GLib and libpng to run.
-TEST_PKGS := glib-2.0 gio-2.0 gio-unix-2.0 libpng
+TEST_PKGS := glib-2.0 gio-2.0 gio-unix-2.0 libpng wayland-client
 TEST_CFLAGS := -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -g -I. \
                $(shell pkg-config --cflags $(TEST_PKGS))
 TEST_LIBS := $(shell pkg-config --libs $(TEST_PKGS))
@@ -79,9 +92,11 @@ TEST_LIBS := $(shell pkg-config --libs $(TEST_PKGS))
 tests/test-formats: tests/test-formats.c formats.c formats.h
 	$(CC) $(TEST_CFLAGS) -o $@ tests/test-formats.c formats.c $(TEST_LIBS)
 
-# For trying selection.c against a running mutter; see tests/selection-mutter.sh.
-tests/selection-tool: tests/selection-tool.c selection.c selection.h
-	$(CC) $(TEST_CFLAGS) -o $@ tests/selection-tool.c selection.c $(TEST_LIBS)
+# For trying the selection against a running compositor; see
+# tests/selection-mutter.sh and tests/selection-kwin.sh.
+tests/selection-tool: tests/selection-tool.c $(SELECTION) selection.h selection-backends.h \
+                      ext-data-control-v1-client-protocol.h
+	$(CC) $(TEST_CFLAGS) -o $@ tests/selection-tool.c $(SELECTION) $(TEST_LIBS)
 
 # The RDP server and the clipboard without dxgdrm; see tests/clipboard-rdp.sh.
 tests/rdp-harness: tests/rdp-harness.c $(filter-out weaselwayd.o,$(OBJECTS))
@@ -95,6 +110,6 @@ install: weaselwayd
 
 clean:
 	rm -f weaselwayd weaselwayd-asan $(OBJECTS) $(ASAN_OBJECTS) tests/test-formats tests/selection-tool \
-		tests/rdp-harness
+		tests/rdp-harness ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
 
 .PHONY: install clean asan analyze check

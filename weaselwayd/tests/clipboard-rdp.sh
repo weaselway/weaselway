@@ -4,11 +4,12 @@
 #   xclip <-> Xvfb <-> xfreerdp == RDP ==> rdp-harness <-> mutter <-> selection-tool
 #
 # xfreerdp on an X server of its own plays the Windows side, a headless mutter
-# is the session.
+# is the session. With CLIPBOARD_TEST_COMPOSITOR=kwin a virtual KWin is.
 #
 # Text, HTML and an image are copied on each side and pasted on the other.
 #
-# Needs mutter, dbus-run-session, Xvfb, xclip, xfreerdp, and the two programs:
+# Needs mutter or kwin_wayland, dbus-run-session, Xvfb, xclip, xfreerdp, and the
+# two programs:
 #   make tests/rdp-harness tests/selection-tool && tests/clipboard-rdp.sh
 set -euo pipefail
 
@@ -18,6 +19,8 @@ if [ -z "${CLIPBOARD_TEST_INNER:-}" ]; then
     XDG_RUNTIME_DIR=$(mktemp -d)
     export XDG_RUNTIME_DIR
     trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
+    # With this set KWin would run nested.
+    unset WAYLAND_DISPLAY
     CLIPBOARD_TEST_INNER=1 dbus-run-session \
         ${DBUS_SESSION_CONF:+--config-file="$DBUS_SESSION_CONF"} -- "$0"
     exit
@@ -44,7 +47,18 @@ retry() {
     fail "$*"
 }
 
-mutter --headless --wayland --no-x11 --virtual-monitor 640x480 >"$log.mutter" 2>&1 &
+case ${CLIPBOARD_TEST_COMPOSITOR:-mutter} in
+    mutter)
+        mutter --headless --wayland --no-x11 --virtual-monitor 640x480 >"$log.compositor" 2>&1 &
+        ;;
+    kwin)
+        kwin_wayland --virtual --no-lockscreen --width 640 --height 480 >"$log.compositor" 2>&1 &
+        ;;
+    *)
+        echo "CLIPBOARD_TEST_COMPOSITOR is mutter or kwin" >&2
+        exit 2
+        ;;
+esac
 pids+=($!)
 Xvfb "$display" -screen 0 800x600x24 >"$log.xvfb" 2>&1 &
 pids+=($!)

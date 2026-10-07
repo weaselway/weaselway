@@ -113,7 +113,10 @@ in
     version = "0";
     src = ../weaselwayd;
 
-    nativeBuildInputs = [ final.pkg-config ];
+    nativeBuildInputs = [
+      final.pkg-config
+      final.wayland-scanner
+    ];
     buildInputs = [
       final.libglvnd
       final.libgbm
@@ -126,6 +129,9 @@ in
       # The main loop, D-Bus for the clipboard, and its images.
       final.glib
       final.libpng
+      # The clipboard with compositors other than mutter.
+      final.wayland
+      final.wayland-protocols
     ];
 
     # The clipboard's conversions.
