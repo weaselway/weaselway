@@ -93,8 +93,9 @@ Start the distro, in PowerShell:
 wsl -d Weaselway
 ```
 
-The shell runs as the user `nixos`. The account has no password, and `sudo`
-does not ask for one.
+The shell runs as the user `nixos`, with the password `nixos`. The desktop
+asks for it on the lock screen; `sudo` does not ask for it. Change it with
+`passwd`.
 
 Inside the distro:
 
@@ -292,7 +293,7 @@ Everything else is standard NixOS: add packages to
 deviates from the NixOS defaults in two places:
 
 - sshd is disabled. To log in over SSH, uncomment `services.openssh.enable`,
-  and set a password with `passwd` or add a key first. With mirrored WSL
+  and change the password with `passwd` or add a key first. With mirrored WSL
   networking the distro is reachable from the LAN.
 - The screen reader is not installed, because Orca's voices add about 650 MB.
   Delete the two lines marked in `configuration.nix` to install it.
