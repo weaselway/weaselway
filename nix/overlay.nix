@@ -162,6 +162,7 @@ in
         (script "ww-start-session" [
           final.coreutils
           final.gnugrep
+          final.kbd
           final.systemd
         ])
         (final.writeShellApplication {
