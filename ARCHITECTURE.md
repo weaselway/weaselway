@@ -91,7 +91,7 @@ gets in the way of weaselwayd.
 | vsock port | fixed: `WEASELWAY_VSOCK_PORT=3389` in [environment.d/10-weaselway.conf](environment.d/10-weaselway.conf) |
 | VM ID | `wslinfo --vm-id -n`. NixOS-WSL has no `/bin/wslinfo`, so the scripts call `exec -a wslinfo /init --vm-id -n` |
 | shared-memory NT path for the client | `WSL\<VM ID, upper case, no braces>\wslg` |
-| virtiofs tag | always `wslg`. `prep-session.sh` mounts it at `/mnt/wslg-shared-memory` |
+| virtiofs tag | always `wslg`. `prep-session.sh` mounts it at `/run/wsl/virtiofs-mounts/weaselway-wslg`, private, with `/mnt/wslg-shared-memory` a link to it: WSL unmounts other virtiofs mounts when the first `wsl.exe` of the other elevation starts |
 
 ### Compositor patches
 
@@ -539,8 +539,13 @@ when working on the code.
 - PipeWire leaves "Remote Desktop Microphone" nodes behind after a viewer reconnects, because
   protocol-simple keeps the node of the closed socket.
 - The microphone opens, but samples from a real microphone have not been verified.
-- Plasma locks the screen after a while, and there is no password to unlock it with unless one was
-  set.
+- The section objects of the shared memory live in the namespace of the Windows logon session that
+  started the VM (`\Sessions\<n>\BaseNamedObjects\WSL\<VM ID>\wslg`), and a client in another
+  session cannot open them, not even by that full path. `ww-start-viewer` checks for the directory
+  and refuses with a message box instead of showing a white window.
+- WSL stops a distro 15 seconds after its last `wsl.exe` exits, and the session with it. A viewer
+  started in the background counts as attached; once it is closed, the next start is a cold one.
+  `general.instanceIdleTimeout` in `.wslconfig` sets the delay; untested here.
 - KWin's patch on `master` has only been compiled as the 6.6 and 6.7 backports. Rotated outputs and
   direct scanout are untested with it.
 - PipeWire runs without realtime scheduling. rtkit is enabled and running, but `data-loop.0` stays

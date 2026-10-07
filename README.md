@@ -159,6 +159,12 @@ Then delete the desktop shortcut if you installed it.
   the desktop's display settings.
 - Audio from web browsers can crackle. Other players are not affected.
 - Touchscreens are not forwarded. Touchpad gestures are.
+- The viewer works only in the Windows session that started WSL. After WSL
+  was started over SSH, from Remote Desktop or by a scheduled task,
+  `ww-start-viewer` says so; run `wsl --shutdown` and start the distro from
+  the desktop.
+- Closing the viewer ends the session when no other WSL window is open: WSL
+  stops an idle distro after 15 seconds.
 - Compositors other than GNOME and Plasma have seen little testing. If one
   does not start on the virtual display, please open an issue.
 

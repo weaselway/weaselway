@@ -81,9 +81,18 @@ fi
 
 # The share gfxredir allocates its buffers on. WSL exposes it as the virtiofs
 # tag "wslg" only when GUI apps are on, which they are unless .wslconfig says
-# guiApplications=false. The mount point is weaselwayd's default (--shm). Fatal: without it weaselwayd has nowhere to put
-# the frames.
-SHARED_MEMORY_MOUNT_POINT=/mnt/wslg-shared-memory
+# guiApplications=false. Fatal: without it weaselwayd has nowhere to put the
+# frames.
+#
+# The first wsl.exe of the other elevation (a desktop shortcut after an admin
+# terminal, or the reverse) makes WSL unmount every virtiofs mount it finds and
+# ask the host to remount it as a drive; for this share that times out after
+# 30 seconds and leaves it unmounted. WSL leaves mounts below its own
+# virtiofs-mounts directory alone (2.9 and later), and a private mount does not
+# lose its copy in systemd's namespace when WSL unmounts it in a new one
+# (earlier versions). weaselwayd's default (--shm) is a link to it.
+SHARED_MEMORY_MOUNT_POINT=/run/wsl/virtiofs-mounts/weaselway-wslg
+SHARED_MEMORY_LINK=/mnt/wslg-shared-memory
 
 if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then
     mkdir -p "${SHARED_MEMORY_MOUNT_POINT}"
@@ -91,5 +100,13 @@ if ! mountpoint -q "${SHARED_MEMORY_MOUNT_POINT}"; then
         echo "error: cannot mount the WSLg shared-memory share -- is guiApplications=false set in .wslconfig? Remove it and run wsl --shutdown." >&2
         exit 1
     fi
+    mount --make-private "${SHARED_MEMORY_MOUNT_POINT}"
     chmod 0777 "${SHARED_MEMORY_MOUNT_POINT}"
 fi
+
+# Where earlier versions mounted it: an empty directory now.
+if [ -d "${SHARED_MEMORY_LINK}" ] && [ ! -L "${SHARED_MEMORY_LINK}" ]; then
+    umount "${SHARED_MEMORY_LINK}" 2>/dev/null || true
+    rmdir "${SHARED_MEMORY_LINK}"
+fi
+ln -sfnT "${SHARED_MEMORY_MOUNT_POINT}" "${SHARED_MEMORY_LINK}"
