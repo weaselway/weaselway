@@ -170,6 +170,7 @@ in
           runtimeInputs = [
             final.gnused
             final.systemd
+            final.util-linux
           ];
           # Run the viewer from the store rather than C:\Weaselway, so it is
           # updated with the flake. WSL interop starts it over
