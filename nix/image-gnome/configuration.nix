@@ -15,6 +15,11 @@
   # against a substring of the adapter description.
   # weaselway.adapter = "nvidia";
 
+  # The desktop: GNOME, without a display manager, since ww-start-session does
+  # what one would do. Swap these for another desktop, e.g. COSMIC.
+  services.desktopManager.gnome.enable = true;
+  services.displayManager.gdm.enable = false;
+
   # No screen reader: orca needs speech-dispatcher, whose voices are ~650 MB of
   # the image. To get them back, delete both lines and rebuild.
   environment.gnome.excludePackages = [ pkgs.orca ];

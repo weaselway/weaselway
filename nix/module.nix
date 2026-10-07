@@ -77,7 +77,7 @@ in
     };
 
     plasma.enable = lib.mkEnableOption ''
-      Plasma next to GNOME, for `ww-start-session plasma`. KWin is patched (see
+      Plasma, next to GNOME or alone, for `ww-start-session plasma`. KWin is patched (see
       the overlay), so it and what links it are built or come from
       weaselway.cachix.org'';
   };
@@ -145,15 +145,17 @@ in
 
         # WSL generates a wslg-session user unit that symlinks pulse/native,
         # wayland-0 and wayland-0.lock in $XDG_RUNTIME_DIR into /mnt/wslg, for the
-        # PulseAudio and Weston the stock system distro runs. Ours runs neither,
-        # and the pulse/native link replaces pipewire-pulse's socket, so no
-        # PulseAudio client -- GNOME's sound settings among them -- finds a server.
+        # PulseAudio and Weston the system distro runs. The session uses
+        # neither, and the pulse/native link replaces pipewire-pulse's socket, so
+        # no PulseAudio client -- GNOME's sound settings among them -- finds it.
         systemd.user.units."wslg-session.service".enable = false;
 
-        # WSL points every shell it starts at the stock system distro's PulseAudio.
+        # WSL points every shell it starts at the system distro's PulseAudio.
         # Unset, libpulse clients find pipewire-pulse's socket on their own. The
-        # session's unit starts with a clean environment and never has it.
-        environment.extraInit = ''
+        # session's unit starts with a clean environment and never has it. Not
+        # in extraInit: NixOS-WSL's shell wrapper has run set-environment before
+        # the shell starts, and an unset in there does not reach the shell.
+        environment.loginShellInit = ''
           unset PULSE_SERVER
         '';
 
@@ -162,6 +164,23 @@ in
         # ww-start-viewer cannot run sdl-freerdp.exe. Register it again after the
         # mount.
         wsl.interop.register = true;
+
+        # WSL bind-mounts a read-only file over binfmt_misc's status file.
+        # systemd-binfmt starts by flushing all rules through that file, and
+        # exits with the error although the registration then goes through; the
+        # unit is failed at every boot and nixos-rebuild switch reports it.
+        # Given the file to apply, it does not flush. The same goes for
+        # --unregister on stop.
+        systemd.services.systemd-binfmt = {
+          overrideStrategy = "asDropin";
+          serviceConfig = {
+            ExecStart = [
+              ""
+              "${config.systemd.package}/lib/systemd/systemd-binfmt /etc/binfmt.d/nixos.conf"
+            ];
+            ExecStop = [ "" ];
+          };
+        };
 
         # NixOS-WSL bind-mounts WSLg's X0 socket into /tmp/.X11-unix. The
         # compositor creates its own X socket there, which weaselway-prep.service
@@ -183,8 +202,8 @@ in
         };
 
         # Loads dxgdrm, evdev and uinput, takes /tmp/.X11-unix back, and mounts
-        # the WSLg shared-memory share. The last fails the unit when the weaselway
-        # system distro is not the one in use. After wslg.service, which WSL
+        # the WSLg shared-memory share. The last fails the unit when WSLg is
+        # turned off. After wslg.service, which WSL
         # generates at every boot and which mounts over /tmp/.X11-unix.
         systemd.services.weaselway-prep = {
           description = "Weaselway host preparation for the session";
@@ -269,7 +288,9 @@ in
       (lib.mkIf cfg.plasma.enable {
         services.desktopManager.plasma6.enable = true;
         # Both desktops want to be the one that asks for ssh passphrases.
-        programs.ssh.askPassword = lib.mkForce "${pkgs.seahorse}/libexec/seahorse/ssh-askpass";
+        programs.ssh.askPassword = lib.mkIf config.services.desktopManager.gnome.enable (
+          lib.mkForce "${pkgs.seahorse}/libexec/seahorse/ssh-askpass"
+        );
         # And they disagree about the screen reader.
         services.orca.enable = lib.mkForce false;
         # Plasma runs KWin through a setcap wrapper, for CAP_SYS_NICE. NixOS's
@@ -279,12 +300,14 @@ in
         # create its gbm device. Realtime scheduling is not worth that here.
         security.wrappers.kwin_wayland.enable = lib.mkForce false;
         # For the bare KWin, which looks for a cursor theme called "default" and
-        # shows no pointer without one.
+        # shows no pointer without one. The theme comes with GNOME, and is
+        # installed here for a system that has only Plasma.
         xdg.icons.fallbackCursorThemes = [ "Adwaita" ];
 
         environment.systemPackages = [
           pkgs.kdePackages.kwin
           pkgs.kdePackages.konsole
+          pkgs.adwaita-icon-theme
         ];
       })
     ]

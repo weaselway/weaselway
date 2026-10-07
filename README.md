@@ -16,15 +16,12 @@ GPU that Windows exposes to WSL. The `weaselwayd` daemon reads each finished
 frame and passes it through shared memory to a FreeRDP-based viewer on Windows.
 Keyboard, mouse, touchpad and audio travel over the same connection.
 
-Any Wayland compositor with a KMS backend can run this way. The image includes
-GNOME, Plasma is a single option away, and sway, Weston, Hyprland and others
-start through a session script you provide. See [Sessions](#sessions).
+Any Wayland compositor with a KMS backend can run this way. There is an image
+with GNOME and one with Plasma, and sway, Weston, Hyprland and others start
+through a session script you provide. See [Sessions](#sessions).
 
-The image contains the patched Mesa, the kernel module, weaselwayd, the audio
-configuration and the Windows viewer. The only separate download is a minimal
-WSLg system distro ([weaselway/wslg](https://github.com/weaselway/wslg)): WSL
-creates the shared memory region used for the frames only when a system distro
-is configured.
+Each image contains the patched Mesa, the kernel module, weaselwayd, the audio
+configuration and the Windows viewer. Nothing else has to be installed.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes the architecture, the build and
 how to debug it. Known [limitations](#limitations) are listed below the
@@ -49,7 +46,10 @@ installation instructions.
   for these kernel releases, and another release cannot load it.
   Check yours with `uname -r` inside any WSL distro, and see
   [Limitations](#limitations) for what happens when WSL updates its kernel.
-- About 1.4 GiB of disk space for the image, plus the system distro VHD.
+- WSLg enabled, which is the default. The frames are passed through a shared
+  memory region that WSL creates only then, so `guiApplications=false` in
+  `%USERPROFILE%\.wslconfig` does not work.
+- About 1.4 GiB of disk space for the image.
 
 <!-- TODO(maintainer): add the minimum Windows build and WSL version that have
      been tested (the output of `wsl --version`), and a rough RAM figure. -->
@@ -59,10 +59,9 @@ installation instructions.
 In short, in PowerShell:
 
 ```powershell
-wsl --install --from-file nixos-weaselway-<version>.wsl --name Weaselway
-wsl -d Weaselway ww-install-system-image   # then edit .wslconfig, see step 3
+wsl --install --from-file nixos-weaselway-<desktop>-<version>.wsl --name Weaselway
 wsl --shutdown
-wsl -d Weaselway                           # Weaselway must be the first distro
+wsl -d Weaselway   # Weaselway must be the first distro
 ```
 
 then `ww-start-session` and `ww-start-viewer` inside the distro. The steps
@@ -72,61 +71,39 @@ below explain each of them.
 
 ### 1. Get the image
 
-Download `nixos-weaselway-<version>.wsl` from the
-[latest release](https://github.com/weaselway/weaselway/releases/latest). Each
-CI run also uploads an image as the artifact `nixos-wsl-<commit>`. To build one
-yourself, see [Building](ARCHITECTURE.md#building).
+Download `nixos-weaselway-gnome-<version>.wsl` or
+`nixos-weaselway-plasma-<version>.wsl` from the
+[latest release](https://github.com/weaselway/weaselway/releases/latest). The
+two differ only in the desktop they carry. Each CI run also uploads both as
+the artifacts `nixos-wsl-<desktop>-<commit>`, which are kept for a day. To
+build one yourself, see [Building](ARCHITECTURE.md#building).
 
 ### 2. Import it
 
 In PowerShell:
 
 ```powershell
-wsl --install --from-file nixos-weaselway-<version>.wsl --name Weaselway
+wsl --install --from-file nixos-weaselway-<desktop>-<version>.wsl --name Weaselway
+```
+
+### 3. Start the session
+
+Restart WSL and start the distro, in PowerShell:
+
+```powershell
+wsl --shutdown
 wsl -d Weaselway
 ```
 
 The shell runs as the user `nixos`. The account has no password, and `sudo`
 does not ask for one.
 
-### 3. Install the system distro
-
-Inside the distro:
-
-```sh
-ww-install-system-image
-```
-
-This downloads the system image to `C:\Weaselway\system_x64-<version>.vhd` and
-prints the setting to add to `%USERPROFILE%\.wslconfig`:
-
-```ini
-[wsl2]
-systemDistro=C:\\Weaselway\\system_x64-<version>.vhd
-```
-
-If the file already has a `[wsl2]` section, add the line there. Then restart
-WSL from PowerShell:
-
-```powershell
-wsl --shutdown
-```
-
-The setting is global. It replaces the system distro that WSL starts for all
-distros, so WSLg's own application windows do not work in your other distros
-while it is set. <!-- TODO(maintainer): confirm this behaviour on a machine
-with a second distro, and say what a user has to do to switch back. -->
-
 > [!IMPORTANT]
 > Weaselway must be the first distro started after `wsl --shutdown`. WSL sets
 > up `/run/user/1000` only for the first distro it starts. If another distro
 > was started first, run `wsl --shutdown` and start Weaselway first.
 
-### 4. Start the session
-
-```powershell
-wsl -d Weaselway
-```
+Inside the distro:
 
 ```sh
 ww-start-session
@@ -146,22 +123,6 @@ To stop the session:
 ```sh
 ww-start-session stop
 ```
-
-### 5. Check that the GPU is used
-
-Inside the distro:
-
-```sh
-GALLIUM_DRIVER=d3d12 nix shell nixpkgs#mesa-demos -c eglinfo -B -p surfaceless
-```
-
-The renderer line should name your GPU, for example
-`D3D12 (Intel(R) HD Graphics 630)`. If it says `llvmpipe`, everything renders
-on the CPU; see [Troubleshooting](#everything-renders-in-software-llvmpipe).
-
-<!-- IMAGE (good vs bad): two terminal screenshots side by side. One shows the
-     eglinfo line with `D3D12 (<GPU>)`, the other shows `llvmpipe`. It lets a
-     visitor recognise both outcomes without reading the troubleshooting. -->
 
 ### Desktop shortcut
 
@@ -184,9 +145,7 @@ In PowerShell:
 wsl --unregister Weaselway
 ```
 
-Then delete the `systemDistro=` line from `%USERPROFILE%\.wslconfig`, delete
-`C:\Weaselway`, delete the desktop shortcut if you installed it, and run
-`wsl --shutdown`.
+Then delete the desktop shortcut if you installed it.
 
 ## Limitations
 
@@ -212,8 +171,8 @@ details.
 ## Sessions
 
 `ww-start-session [session]` accepts the following sessions. Without an
-argument it starts the one set in `weaselway.session`, which is `gnome` unless
-you change it.
+argument it starts the one set in `weaselway.session`: `gnome` in the GNOME
+image and `plasma` in the Plasma image.
 
 | Session | What it starts |
 |---|---|
@@ -301,7 +260,10 @@ The image ships its own NixOS configuration as a flake in `/etc/nixos`:
 - `flake.nix` takes weaselway (`github:weaselway/weaselway`) as an input, and
   with it the matching nixpkgs and NixOS-WSL.
 - `configuration.nix` is the system configuration, the same file the image
-  was built from ([nix/image/configuration.nix](nix/image/configuration.nix)).
+  was built from
+  ([nix/image-gnome/configuration.nix](nix/image-gnome/configuration.nix) or
+  [nix/image-plasma/configuration.nix](nix/image-plasma/configuration.nix)).
+  It also selects the desktop.
 
 Edit `configuration.nix` and rebuild to change the system:
 
@@ -320,7 +282,7 @@ Weaselway adds these options:
 | `weaselway.enable` | `false` (`true` in the image) | Enables everything: Mesa, dxgdrm, weaselwayd, audio and the scripts. |
 | `weaselway.adapter` | `null` | The GPU to render on, as a substring of its name (`"nvidia"`, `"Intel"`). `null` selects the first adapter Windows lists. |
 | `weaselway.session` | `"gnome"` | The session `ww-start-session` starts when none is given. |
-| `weaselway.plasma.enable` | `false` | Installs Plasma for `ww-start-session plasma`. |
+| `weaselway.plasma.enable` | `false` (`true` in the Plasma image) | Installs Plasma for `ww-start-session plasma`. |
 
 `ww-start-session --adapter <name>` overrides the adapter for one session
 without a rebuild.
@@ -371,11 +333,6 @@ To undo an update, switch back to the previous generation:
 sudo nixos-rebuild switch --rollback
 ```
 
-The system distro VHD is stored on the Windows side and is not replaced by a
-rebuild. Run `ww-install-system-image` again after an update. If it downloads
-a new image, change the `systemDistro=` line to the one it prints and run
-`wsl --shutdown`.
-
 ## Troubleshooting
 
 ### The viewer window stays empty or closes immediately
@@ -386,8 +343,9 @@ compositor's first commit" means that no session is running; start one with
 
 weaselwayd does not start without the shared memory region, and
 `systemctl status weaselway-prep` reports why it is missing. Check that
-`.wslconfig` contains the `systemDistro=` line, that you ran `wsl --shutdown`
-afterwards, and that Weaselway was the first distro started.
+`.wslconfig` does not contain `guiApplications=false`, that you ran
+`wsl --shutdown` after changing it, and that Weaselway was the first distro
+started.
 
 ### `ww-start-session` fails
 
@@ -396,11 +354,6 @@ afterwards, and that Weaselway was the first distro started.
 If `systemctl status weaselway-prep` says that the dxgdrm module is missing for
 this WSL kernel, `uname -r` differs from the kernel the release was built for.
 See [Requirements](#requirements).
-
-### Everything renders in software (llvmpipe)
-
-The Windows GPU driver did not load. The known causes are listed under
-[Graphics](ARCHITECTURE.md#graphics) in ARCHITECTURE.md.
 
 ### The desktop shows no audio devices
 

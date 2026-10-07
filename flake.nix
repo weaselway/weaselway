@@ -48,7 +48,24 @@
       forAllSystems =
         f: lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: f nixpkgs.legacyPackages.${system});
 
-      wsl = self.nixosConfigurations.wsl;
+      # The packages are the same in every image.
+      wsl = self.nixosConfigurations.wsl-gnome;
+
+      # An image, built from the configuration.nix it ships in /etc/nixos and
+      # the modules that the flake.nix next to it imports, so a nixos-rebuild
+      # inside the distro rebuilds this system rather than NixOS-WSL's generic
+      # default.
+      image =
+        configPath:
+        lib.nixosSystem {
+          modules = [
+            nixos-wsl.nixosModules.default
+            self.nixosModules.weaselway
+            self.nixosModules.image
+            (configPath + "/configuration.nix")
+            { wsl.tarball.configPath = configPath; }
+          ];
+        };
     in
     {
       overlays.default = import ./nix/overlay.nix {
@@ -68,28 +85,14 @@
       # Gives the image's /etc/nixos a flake.lock that pins weaselway to the
       # commit the system was built from, so the first nixos-rebuild stays on
       # it rather than jumping to whatever main is by then. Imported by both
-      # nixosConfigurations.wsl and nix/image/flake.nix, so the two still build
-      # the same system.
+      # the nixosConfigurations below and the flake.nix of each image, so the
+      # two still build the same system.
       nixosModules.image = import ./nix/image-lock.nix { inherit self; };
 
-      # A NixOS-WSL distro running the session. See ARCHITECTURE.md. Built from
-      # the same configuration.nix the image ships in /etc/nixos, together with
-      # nix/image/flake.nix, so a nixos-rebuild inside the distro rebuilds this
-      # system rather than NixOS-WSL's generic default.
-      nixosConfigurations.wsl = lib.nixosSystem {
-        modules = [
-          nixos-wsl.nixosModules.default
-          self.nixosModules.weaselway
-          self.nixosModules.image
-          # The desktop, as in nix/image/flake.nix: keep the two in step.
-          {
-            services.desktopManager.gnome.enable = true;
-            services.displayManager.gdm.enable = false;
-          }
-          ./nix/image/configuration.nix
-          { wsl.tarball.configPath = ./nix/image; }
-        ];
-      };
+      # The NixOS-WSL distros running the session, one per desktop. See
+      # ARCHITECTURE.md.
+      nixosConfigurations.wsl-gnome = image ./nix/image-gnome;
+      nixosConfigurations.wsl-plasma = image ./nix/image-plasma;
 
       # The distro is x86_64 whatever the build machine is, so these are the
       # x86_64 builds on every system; elsewhere they need an x86_64 builder,
@@ -100,9 +103,9 @@
         weaselway-scripts = wsl.pkgs.weaselway-scripts;
         weaselway-viewer = wsl.pkgs.weaselway-viewer;
         weaselwayd = wsl.pkgs.weaselwayd;
-        # sudo nix run .#tarballBuilder -> nixos.wsl
-        tarballBuilder = wsl.config.system.build.tarballBuilder;
-        default = self.packages.${pkgs.stdenv.hostPlatform.system}.tarballBuilder;
+        # sudo nix run .#tarballBuilder-gnome -> nixos.wsl
+        tarballBuilder-gnome = self.nixosConfigurations.wsl-gnome.config.system.build.tarballBuilder;
+        tarballBuilder-plasma = self.nixosConfigurations.wsl-plasma.config.system.build.tarballBuilder;
       });
 
       # The scripts run inside the target distro; weaselwayd is what compiles

@@ -55,7 +55,7 @@ would.
 
 ## Components
 
-Everything except the system distro VHD comes from the flake.
+Everything comes from the flake.
 
 | Component | Source | Where it runs |
 |---|---|---|
@@ -65,18 +65,17 @@ Everything except the system distro VHD comes from the flake.
 | mutter | nixpkgs, plus [one patch](nix/mutter-stage-relayout.patch) | user distro (gnome-shell links it) |
 | KWin (optional) | nixpkgs, plus a [damage patch](nix/kwin-6.7-fb-damage-clips.patch) | user distro |
 | Windows viewer `sdl-freerdp.exe` | `weaselway/freerdp` flake, `packages.sdl-freerdp` | Windows, started from the store through interop |
-| system distro VHD | `weaselway/wslg` releases (`ww-install-system-image`) | WSL's system distro, `systemDistro=` in `.wslconfig` |
 
-### The system distro
+### The shared-memory share
 
-WSL creates the `wslg` shared-memory device only when GUI applications are enabled and a
-`systemDistro` VHD is configured (`WslCoreVm.cpp`, `LXSS_ENABLE_GUI_APPS`). The device is virtiofs
-with DAX, and nothing in the guest can create it. The frames are handed over through it. Without the
-share, weaselwayd logs "the shared-memory share is not mounted" and exits.
+WSL creates the `wslg` shared-memory device only when GUI applications are enabled, which is the
+default (`guiApplications` in `.wslconfig`). The device is virtiofs with DAX, and nothing in the
+guest can create it. The frames are handed over through it. Without the share, weaselwayd logs "the
+shared-memory share is not mounted" and exits.
 
-The weaselway system image is minimal. Its WSLGd creates `/mnt/wslg/.X11-unix` and
-`/mnt/wslg/runtime-dir`, which WSL's init in the user distro expects, bind mounts `versions.txt`, and
-then idles. It publishes nothing to the user distro.
+WSL's system distro keeps running its own Weston and PulseAudio next to the session. Weston
+allocates on the same share and takes its RDP connection on a socket that WSL hands it, so neither
+gets in the way of weaselwayd.
 
 ### Values the guest derives
 
@@ -119,8 +118,6 @@ problems that show up there but are unrelated to RDP:
   code was ported.
 - **kde-kwin**: see [Compositor patches](#compositor-patches). The image applies the backport as a
   patch.
-- **wslg**: the system image. Releases are named `v1.0.79-N`, and `ww-install-system-image.sh` pins
-  one by its SHA-256.
 - **NixOS-WSL**: upstream, used unmodified as a flake input.
 
 ## Flake layout
@@ -157,17 +154,23 @@ affected.
   links it.
 - `weaselway-viewer`: `freerdp.packages.<build system>.sdl-freerdp`. The outputs are Windows
   binaries, so the build platform does not matter.
-- `weaselway-scripts`: `ww-start-session`, `ww-start-viewer`, `ww-install-viewer-link` and
-  `ww-install-system-image`, wrapped with `writeShellApplication`. The wrapper for `ww-start-viewer`
-  sets `WEASELWAY_VIEWER` to the executable in the store.
+- `weaselway-scripts`: `ww-start-session`, `ww-start-viewer` and `ww-install-viewer-link`, wrapped
+  with `writeShellApplication`. The wrapper for `ww-start-viewer` sets `WEASELWAY_VIEWER` to the
+  executable in the store.
 
 ### Modules and configurations
 
 - [nix/module.nix](nix/module.nix) is `nixosModules.weaselway`. See
   [The NixOS module](#the-nixos-module).
-- [nix/image/](nix/image) contains `configuration.nix` and `flake.nix`, which the image ships as its
-  `/etc/nixos`. The image flake takes nixpkgs and NixOS-WSL from weaselway's lock and builds the same
-  toplevel as `nixosConfigurations.wsl`. The hostname is `nixos`, so `nixos-rebuild` builds `#nixos`.
+- [nix/image-gnome/](nix/image-gnome) and [nix/image-plasma/](nix/image-plasma) each contain a
+  `configuration.nix` and a `flake.nix`, which the image ships as its `/etc/nixos`. The image flake
+  takes nixpkgs and NixOS-WSL from weaselway's lock and builds the same toplevel as
+  `nixosConfigurations.wsl-gnome` or `wsl-plasma`. The hostname is `nixos`, so `nixos-rebuild`
+  builds `#nixos`.
+- The two `flake.nix` files are identical, and the desktop is selected in `configuration.nix`. The
+  Plasma one sets `weaselway.plasma.enable` and `weaselway.session`, and does not install GNOME.
+  There are two directories because `wsl.tarball.configPath` takes a source directory and copies
+  all of it.
 - [nix/image-lock.nix](nix/image-lock.nix) is `nixosModules.image`, imported by both
   configurations. On activation it writes `/etc/nixos/flake.lock` if none exists. The lock pins
   `github:weaselway/weaselway` to the commit being built (`self.rev`, `self.narHash`), with
@@ -183,7 +186,7 @@ affected.
 ### Outputs
 
 - `packages.<system>`: `weaselway-mesa`, `mutter`, `weaselwayd`, `weaselway-scripts`,
-  `weaselway-viewer` and `tarballBuilder` (the default).
+  `weaselway-viewer`, `tarballBuilder-gnome` and `tarballBuilder-plasma`.
 - `devShells.<system>.default`: shellcheck and the build dependencies of weaselwayd.
 - `checks.<system>.shellcheck`: runs shellcheck on the scripts with `--severity=error`.
 
@@ -243,7 +246,7 @@ on a WSL installation. This section records those failures.
   - takes `/tmp/.X11-unix` back from WSL's read-only bind mount, so that the compositor can create
     its X socket there;
   - mounts the `wslg` share. If the share is missing, the unit fails with a message that points to
-    `systemDistro=`.
+    `guiApplications`.
 - The NixOS-WSL bind mount for X0 (`tmp-.X11\x2dunix-X0.mount`) is masked for the same reason.
 
 ### Session
@@ -273,15 +276,22 @@ on a WSL installation. This section records those failures.
 
 - `wslg-session.service` is masked (`systemd.user.units."wslg-session.service".enable = false`).
   WSL's user generator creates this unit. It links `$XDG_RUNTIME_DIR/pulse/native`, `wayland-0` and
-  `wayland-0.lock` into `/mnt/wslg/runtime-dir`, for the PulseAudio and Weston of the stock system
+  `wayland-0.lock` into `/mnt/wslg/runtime-dir`, for the PulseAudio and Weston of the system
   distro. It runs after `pipewire-pulse.socket` is listening and replaces the socket's directory
-  entry. The socket keeps listening, but clients follow the link to a path that does not exist, and
-  the desktop shows no audio devices.
-- `PULSE_SERVER` is unset in `environment.extraInit`. WSL sets it in every shell it starts, pointing
-  at the stock PulseAudio.
+  entry. The socket keeps listening, but clients follow the link to the system distro's PulseAudio,
+  and the desktop shows none of the session's audio devices.
+- `PULSE_SERVER` is unset in `environment.loginShellInit`. WSL sets it in every process it starts,
+  pointing at the system distro's PulseAudio. An unset in `environment.extraInit` has no effect:
+  NixOS-WSL's shell wrapper runs `set-environment` before the shell starts. A command started
+  without a login shell, as in `wsl -d Weaselway -- <program>`, keeps the variable.
 - `wsl.interop.register = true`. systemd mounts its own `binfmt_misc` at boot, after WSL has
   registered `WSLInterop`, and the handler is lost. Running any `.exe`, including the viewer, then
   fails with "Exec format error".
+- `systemd-binfmt.service` is started with `/etc/binfmt.d/nixos.conf` as its argument, and its
+  `ExecStop` is cleared. WSL bind-mounts a read-only file over `/proc/sys/fs/binfmt_misc/status`.
+  Without an argument systemd-binfmt first flushes all rules through that file and exits with the
+  error, although the registration succeeds. The unit was then failed at every boot, and
+  `nixos-rebuild switch` exited with status 4.
 - NetworkManager and wpa_supplicant are disabled. GNOME enables them, wpa_supplicant fails to start
   in WSL, and that failure makes every `nixos-rebuild switch` fail. WSL manages the network itself.
 
@@ -299,13 +309,15 @@ on a WSL installation. This section records those failures.
 
 ## Image configuration
 
-[nix/image/configuration.nix](nix/image/configuration.nix) sets the following:
+[nix/image-gnome/configuration.nix](nix/image-gnome/configuration.nix) and
+[nix/image-plasma/configuration.nix](nix/image-plasma/configuration.nix) set the following:
 
 - The user is `nixos` with uid 1000. WSL only sets up `/run/user/1000`.
-- `weaselway.enable` is set. `weaselway.adapter` and `weaselway.plasma.enable` are present but
-  commented out.
-- Orca and speech-dispatcher are excluded, because their voices take about 650 MB. A comment explains
-  how to restore them.
+- `weaselway.enable` is set. `weaselway.adapter` is present but commented out.
+- The desktop is enabled without its display manager. The GNOME file has `weaselway.plasma.enable`
+  commented out. The Plasma file sets it, with `weaselway.session = "plasma"`.
+- speech-dispatcher is disabled, and Orca excluded in the GNOME file, because the voices take about
+  650 MB. A comment explains how to restore them.
 - Flakes are enabled, channels are disabled, and git is installed because the flake has git inputs.
 - sshd is disabled. Uncomment the line in `configuration.nix` to debug over SSH. The image contains
   no password, so run `passwd` first. With mirrored WSL networking the distro is reachable from the
@@ -314,7 +326,8 @@ on a WSL installation. This section records those failures.
 ## Building
 
 ```sh
-sudo nix run .#tarballBuilder       # writes nixos.wsl
+sudo nix run .#tarballBuilder-gnome    # writes nixos.wsl, with GNOME
+sudo nix run .#tarballBuilder-plasma   # the same with Plasma
 ```
 
 Images are also available from CI runs and releases, see [CI](#ci).
@@ -338,7 +351,7 @@ store instead:
 
 ```sh
 nix build --eval-store auto --store ssh-ng://<user>@<builder> --no-link --print-out-paths \
-  .#nixosConfigurations.wsl.config.system.build.toplevel .#tarballBuilder
+  .#nixosConfigurations.wsl-gnome.config.system.build.toplevel .#tarballBuilder-gnome
 # on the builder, as root:
 cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarball-builder nixos.wsl
 ```
@@ -362,9 +375,13 @@ The two shell tests are not part of the build. They need mutter, D-Bus and an X 
 
 [build-image.yml](.github/workflows/build-image.yml) runs on pushes to `main` and on pull requests.
 [release-image.yml](.github/workflows/release-image.yml) runs on `v*` tags and attaches
-`nixos-weaselway-<tag>.wsl` to the release. Both use the composite action
-[.github/actions/build-image](.github/actions/build-image) on the `ubuntu-26.04` runner. actionlint
-does not know that label yet, but it exists.
+`nixos-weaselway-gnome-<tag>.wsl` and `nixos-weaselway-plasma-<tag>.wsl` to the release. Both use
+the composite action [.github/actions/build-image](.github/actions/build-image) on the
+`ubuntu-26.04` runner, once per desktop. actionlint does not know that label yet, but it exists.
+
+- The images of a build run are kept as artifacts for one day, the shortest GitHub allows.
+- The release workflow builds the two images in separate jobs and creates the release in a third,
+  so a release is never published with only one of them.
 
 - The image is about 1.4 GiB. GitHub limits release assets to 2 GiB, so keep an eye on the closure:
   the kernel tree, the kernel toolchain or Orca's voices each add hundreds of MB if they find their
@@ -401,7 +418,6 @@ A build can be copied to a running installation without going through a full ima
 ```sh
 systemctl status weaselway-prep                 # dxgdrm loaded, share mounted?
 ls -l /dev/dri; mountpoint /mnt/wslg-shared-memory
-cat /mnt/wslg/versions.txt                      # which system distro is really running
 GALLIUM_DRIVER=d3d12 EGL_LOG_LEVEL=debug nix shell nixpkgs#mesa-demos -c eglinfo -B -p surfaceless
 LD_DEBUG=libs …                                 # which WSL/driver .so fails to load
 strace -f -e trace=openat …                     # which vendor UMD / dependency is missing
