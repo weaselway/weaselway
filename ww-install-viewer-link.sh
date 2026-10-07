@@ -29,13 +29,14 @@ fi
 # What the shortcut runs inside the distro. A login shell, because wsl.exe
 # starts the command without one and PATH would lack the system's programs;
 # by its full path for the same reason. ww-start-session returns once the
-# session is up.
+# session is up. DEBUG=1 keeps ww-start-viewer in the foreground, for the
+# console window below.
 BASH_PATH="$(command -v bash)"
 if [ -e /run/current-system/sw/bin/bash ]; then
     # Not the store path: that one goes away with an update.
     BASH_PATH=/run/current-system/sw/bin/bash
 fi
-COMMAND='systemctl is-active --quiet weaselway-session || ww-start-session; exec ww-start-viewer'
+COMMAND='systemctl is-active --quiet weaselway-session || ww-start-session; DEBUG=1 exec ww-start-viewer'
 
 # Single quotes are PowerShell's literal strings; a quote inside is doubled.
 quote() {

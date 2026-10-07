@@ -32,15 +32,40 @@ fi
 # (WslCoreVm::InitializeGuest in microsoft/WSL), with the ID in upper case.
 SHARED_MEMORY_PATH="WSL\\${VM_ID^^}\\wslg"
 
-"${VIEWER}" /u:dummy /d:dummy /p:dummy \
-    /v:vsock://"${VM_ID}":"${PORT}" \
-    /wslgsharedmemorypath:"${SHARED_MEMORY_PATH}" \
-    /cert:ignore \
-    /dynamic-resolution \
-    /w:1280 \
-    /log-level:warn \
-    /multitouch \
-    /sdl-touchpad-gestures \
-    /audio-mode:redirect \
-    /microphone \
+COMMAND=(
+    "${VIEWER}" /u:dummy /d:dummy /p:dummy
+    /v:vsock://"${VM_ID}":"${PORT}"
+    /wslgsharedmemorypath:"${SHARED_MEMORY_PATH}"
+    /cert:ignore
+    /dynamic-resolution
+    /w:1280
+    /log-level:warn
+    /multitouch
+    /sdl-touchpad-gestures
+    /audio-mode:redirect
+    /microphone
     "$@"
+)
+
+# DEBUG=1 runs the viewer in the foreground, with its log on the terminal.
+if [ "${DEBUG:-}" = 1 ]; then
+    exec "${COMMAND[@]}"
+fi
+
+# Otherwise it runs on in the background, in a session of its own so that
+# closing the terminal does not end it, with its log in a file.
+LOG="${XDG_RUNTIME_DIR:-/tmp}/weaselway-viewer.log"
+setsid "${COMMAND[@]}" > "${LOG}" 2>&1 < /dev/null &
+VIEWER_PID=$!
+disown
+
+# A viewer that cannot connect or map the shared memory exits right away.
+sleep 2
+if ! kill -0 "${VIEWER_PID}" 2> /dev/null; then
+    echo "error: the viewer exited; its log ($LOG):" >&2
+    cat "${LOG}" >&2
+    exit 1
+fi
+
+echo "The viewer is running. Its log: ${LOG}"
+echo "To see the log on the terminal instead: DEBUG=1 ww-start-viewer"

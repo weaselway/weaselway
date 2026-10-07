@@ -104,10 +104,12 @@ ww-start-viewer
 ```
 
 `ww-start-session` starts the desktop on the virtual display and returns when
-it is running. `ww-start-viewer` opens it in a window on Windows. The viewer,
-`sdl-freerdp.exe`, runs from inside the image, so nothing is installed on the
-Windows side. Closing the window does not end the session; run
-`ww-start-viewer` again to reconnect.
+it is running. `ww-start-viewer` opens it in a window on Windows and returns;
+the viewer keeps running with its log in `/run/user/1000/weaselway-viewer.log`.
+`DEBUG=1 ww-start-viewer` runs it in the foreground with the log on the
+terminal instead. The viewer, `sdl-freerdp.exe`, runs from inside the image, so
+nothing is installed on the Windows side. Closing the window does not end the
+session; run `ww-start-viewer` again to reconnect.
 
 ![The GNOME desktop in its Windows window, showing Chromium's GPU status page and NetQuake](doc/screenshot.png)
 
