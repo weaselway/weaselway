@@ -1,4 +1,4 @@
-# Builds the NixOS-WSL image (nixos.wsl) from flake.nix, see ARCHITECTURE.md.
+# Builds the NixOS-WSL images (nixos.wsl) from flake.nix, see ARCHITECTURE.md.
 name: Build NixOS-WSL image
 
 # Pushes to main and pull requests; other branches can be built with
@@ -19,21 +19,28 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-26.04
-    # A run whose mesa/mutter/kernel inputs changed compiles them again; the
-    # rest comes from weaselway.cachix.org.
+    strategy:
+      # One image failing to build says nothing about the other.
+      fail-fast: false
+      matrix:
+        desktop: [gnome, plasma]
+    # A run whose mesa/mutter/KWin/kernel inputs changed compiles them again;
+    # the rest comes from weaselway.cachix.org.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/build-image
         with:
+          desktop: ${{ matrix.desktop }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - uses: actions/upload-artifact@v7
         with:
-          name: nixos-wsl-${{ github.sha }}
+          name: nixos-wsl-${{ matrix.desktop }}-${{ github.sha }}
           path: nixos.wsl
-          retention-days: 7
+          # The shortest GitHub keeps an artifact for.
+          retention-days: 1
           if-no-files-found: error
           # nixos.wsl is already a gzipped tar.
           compression-level: 0

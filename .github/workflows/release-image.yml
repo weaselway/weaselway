@@ -4,28 +4,61 @@ on:
   push:
     tags: ['v*']
 
-# Needed to create the release and upload the asset to it.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-26.04
+    strategy:
+      matrix:
+        desktop: [gnome, plasma]
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/build-image
         with:
+          desktop: ${{ matrix.desktop }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      - name: Create the release and attach the image
+      - name: Name the image after the release
+        run: mv nixos.wsl "nixos-weaselway-${{ matrix.desktop }}-${GITHUB_REF_NAME}.wsl"
+
+      # Only to hand the image to the release job.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.desktop }}
+          path: nixos-weaselway-${{ matrix.desktop }}-${{ github.ref_name }}.wsl
+          retention-days: 1
+          if-no-files-found: error
+          # nixos.wsl is already a gzipped tar.
+          compression-level: 0
+
+  # One job creates the release with both images, so that it is never
+  # published with only one of them.
+  release:
+    needs: build
+    runs-on: ubuntu-26.04
+    # Needed to create the release and upload the assets to it.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          merge-multiple: true
+
+      - name: Create the release and attach the images
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          asset="nixos-weaselway-${GITHUB_REF_NAME}.wsl"
-          mv nixos.wsl "${asset}"
-          sha256sum "${asset}" > "${asset}.sha256"
+          assets=()
+          for image in nixos-weaselway-*-"${GITHUB_REF_NAME}".wsl; do
+            sha256sum "${image}" > "${image}.sha256"
+            assets+=("${image}" "${image}.sha256")
+          done
           # Releases and their assets are immutable: if a release already
           # exists for this tag, `gh release create` fails and the workflow
           # fails with it rather than replacing a published artifact.
@@ -37,7 +70,7 @@ jobs:
             *-*) flags+=(--prerelease) ;;
           esac
           gh release create "${GITHUB_REF_NAME}" \
-              "${asset}" "${asset}.sha256" \
+              "${assets[@]}" \
               --title "${GITHUB_REF_NAME}" \
               --generate-notes \
               "${flags[@]}"

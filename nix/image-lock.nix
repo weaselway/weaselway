@@ -1,7 +1,7 @@
 # A flake.lock for the image's /etc/nixos, written on activation when there is
 # none.
 #
-# The image ships nix/image as /etc/nixos, and that directory can't carry a
+# An image ships its nix/image-* as /etc/nixos, and that directory can't carry a
 # lock of its own: it would have to pin the weaselway commit it is part of.
 # Without one, the first nixos-rebuild locks whatever weaselway main is at that
 # moment, and a one-line config change turns into a rebuild of mesa, mutter and

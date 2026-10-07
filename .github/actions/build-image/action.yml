@@ -1,9 +1,13 @@
 name: Build the NixOS-WSL image
 description: >
-  Builds nixosConfigurations.wsl and packs it with NixOS-WSL's tarball
-  builder, leaving nixos.wsl in the workspace root.
+  Builds one of the image configurations (nixosConfigurations.wsl-gnome or
+  wsl-plasma) and packs it with NixOS-WSL's tarball builder, leaving nixos.wsl
+  in the workspace root.
 
 inputs:
+  desktop:
+    description: The desktop the image carries, gnome or plasma.
+    required: true
   cachix-auth-token:
     description: >
       Token for pushing to the weaselway Cachix cache. Without one (pull
@@ -14,10 +18,10 @@ inputs:
 runs:
   using: composite
   steps:
-    # The closure is a whole GNOME desktop, and the builds that are not in the
-    # binary cache (dxgdrm's kernel tree, mesa, mutter, gnome-shell) need room
-    # of their own. The runner image ships far more preinstalled SDKs than it
-    # has free space.
+    # The closure is a whole desktop, and the builds that are not in the
+    # binary cache (dxgdrm's kernel tree, mesa, mutter, gnome-shell, KWin and
+    # what links it) need room of their own. The runner image ships far more
+    # preinstalled SDKs than it has free space.
     - name: Free disk space
       shell: bash
       run: |
@@ -32,7 +36,7 @@ runs:
           max-jobs = auto
 
     # weaselway.cachix.org holds what cache.nixos.org doesn't: dxgdrm's kernel
-    # tree, mesa, mutter, gnome-shell and the viewer. Every path this job
+    # tree, mesa, mutter, gnome-shell, KWin and the viewer. Every path this job
     # builds is pushed, so a run only compiles what changed since the last
     # one. The image points nix at the same cache (nix/module.nix), so
     # nixos-rebuild on a WSL machine downloads these too.
@@ -45,7 +49,10 @@ runs:
     # unlike on aarch64 machines, see ARCHITECTURE.md.
     - name: Build the system and the tarball builder
       shell: bash
-      run: nix build --print-build-logs --out-link tarball-builder .#tarballBuilder
+      env:
+        DESKTOP: ${{ inputs.desktop }}
+      run: |
+        nix build --print-build-logs --out-link tarball-builder ".#tarballBuilder-${DESKTOP}"
 
     # nixos-install into a scratch root and tar it up, which needs root.
     - name: Pack nixos.wsl

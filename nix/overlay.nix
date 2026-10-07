@@ -185,11 +185,6 @@ in
           final.bash
           final.coreutils
         ])
-        (script "ww-install-system-image" [
-          final.coreutils
-          final.curl
-          final.gzip
-        ])
       ];
     };
 }
