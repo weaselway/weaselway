@@ -1,7 +1,7 @@
 # The weaselway NixOS-WSL system. This file is both what the image is built
 # from and what it ships in /etc/nixos, next to flake.nix: edit it there and
 # `sudo nixos-rebuild switch` to change the running system.
-{ ... }:
+{ pkgs, ... }:
 
 {
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -21,6 +21,20 @@
   weaselway.plasma.enable = true;
   weaselway.session = "plasma";
   services.displayManager.sddm.enable = false;
+
+  # Left out to keep the image under the 2 GiB that a GitHub release asset may
+  # have: the music player, the X11 KWin and the RDP server, none of which the
+  # session uses, the wallpapers other than the default one, the PIM runtime
+  # with its MariaDB, and Discover, which fwupd brings in. Delete a line and
+  # rebuild to get that part back.
+  environment.plasma6.excludePackages = with pkgs.kdePackages; [
+    elisa
+    kwin-x11
+    krdp
+    plasma-workspace-wallpapers
+  ];
+  programs.kde-pim.enable = false;
+  services.fwupd.enable = false;
 
   # No speech-dispatcher: its voices are ~650 MB of the image. To get them
   # back, delete the line and rebuild.
