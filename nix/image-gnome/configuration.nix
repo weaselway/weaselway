@@ -9,6 +9,9 @@
   wsl.enable = true;
   # uid 1000: WSL only wires up /run/user/1000.
   wsl.defaultUser = "nixos";
+  # For the lock screen, which the desktop shows after a while idle and which
+  # cannot be got past without one. Change it with `passwd`.
+  users.users.nixos.initialPassword = "nixos";
 
   weaselway.enable = true;
   # Pin the GPU d3d12 renders on, for machines with more than one. Matched
@@ -29,8 +32,8 @@
   # doubles what the image has to carry.
   # weaselway.plasma.enable = true;
 
-  # SSH in, for debugging. There is no password in the image: set one with
-  # `passwd` first, or add a key to users.users.nixos.openssh.authorizedKeys.
+  # SSH in, for debugging. Change the password with `passwd` first, or add a
+  # key to users.users.nixos.openssh.authorizedKeys.
   # services.openssh.enable = true;
 
   # The system is a flake (/etc/nixos/flake.nix); no channels. Its inputs
