@@ -60,8 +60,7 @@ In short, in PowerShell:
 
 ```powershell
 wsl --install --from-file nixos-weaselway-<desktop>-<version>.wsl --name Weaselway
-wsl --shutdown
-wsl -d Weaselway   # Weaselway must be the first distro
+wsl -d Weaselway
 ```
 
 then `ww-start-session` and `ww-start-viewer` inside the distro. The steps
@@ -88,20 +87,14 @@ wsl --install --from-file nixos-weaselway-<desktop>-<version>.wsl --name Weaselw
 
 ### 3. Start the session
 
-Restart WSL and start the distro, in PowerShell:
+Start the distro, in PowerShell:
 
 ```powershell
-wsl --shutdown
 wsl -d Weaselway
 ```
 
 The shell runs as the user `nixos`. The account has no password, and `sudo`
 does not ask for one.
-
-> [!IMPORTANT]
-> Weaselway must be the first distro started after `wsl --shutdown`. WSL sets
-> up `/run/user/1000` only for the first distro it starts. If another distro
-> was started first, run `wsl --shutdown` and start Weaselway first.
 
 Inside the distro:
 
@@ -343,9 +336,8 @@ compositor's first commit" means that no session is running; start one with
 
 weaselwayd does not start without the shared memory region, and
 `systemctl status weaselway-prep` reports why it is missing. Check that
-`.wslconfig` does not contain `guiApplications=false`, that you ran
-`wsl --shutdown` after changing it, and that Weaselway was the first distro
-started.
+`.wslconfig` does not contain `guiApplications=false`, and that you ran
+`wsl --shutdown` after changing it.
 
 ### `ww-start-session` fails
 

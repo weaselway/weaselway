@@ -182,18 +182,31 @@ fi
 # logind wants a VT number for a session on a seat that has VTs, and refuses
 # one on a seat that has none. The WSL kernel has them (CONFIG_VT=y); a custom
 # kernel may not.
-if [ -e /dev/tty0 ] && [ -e /dev/tty1 ]; then
+#
+# Not tty1: the VTs belong to the one kernel that all WSL distros share, and
+# another distro with systemd runs a getty there. That getty hangs the VT up
+# when it starts, which ends a session on it.
+VT=7
+if [ ! -e /dev/tty0 ] || [ ! -e "/dev/tty${VT}" ]; then
+    VT=
+fi
+if [ -n "${VT}" ]; then
     PROPERTIES+=(
-        --property=TTYPath=/dev/tty1
+        --property="TTYPath=/dev/tty${VT}"
         --property=TTYReset=yes
         --property=TTYVHangup=yes
         --property=StandardInput=tty
         --property=StandardOutput=journal
         --property=StandardError=journal
-        --property=UtmpIdentifier=tty1
+        --property="UtmpIdentifier=tty${VT}"
         --property=UtmpMode=user
-        --property=Environment=XDG_VTNR=1
+        --property="Environment=XDG_VTNR=${VT}"
     )
+    # Nothing else switches to the VT, and a compositor whose session is not
+    # the active one on the seat does not render. Before the session starts,
+    # so that it is active from the beginning: KWin started on an inactive
+    # one stays slow for a while after it becomes active.
+    sudo "$(command -v chvt)" "${VT}"
 fi
 
 # A previous run that failed leaves the unit behind in failed state.

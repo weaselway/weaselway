@@ -253,9 +253,15 @@ on a WSL installation. This section records those failures.
 
 - There is no display manager. [ww-start-session.sh](ww-start-session.sh) runs the session command
   (`gnome-session`, `startplasma-wayland` or `custom-weaselway-session`) in a transient system unit,
-  `weaselway-session.service`, with `PAMName=login` and `XDG_SEAT=seat0` on `tty1`. This makes it a
+  `weaselway-session.service`, with `PAMName=login` and `XDG_SEAT=seat0` on `tty7`. This makes it a
   logind session on the seat, and logind gives the compositor the KMS node and the input devices.
   Creating the unit requires `sudo`.
+- The VTs belong to the kernel, which all WSL distros share. Another distro with systemd runs a getty
+  on `tty1`, and that getty hangs the VT up when it starts, which ends a session on it. So the
+  session is on `tty7`. The script switches to that VT with `chvt` before it starts the session,
+  because a compositor whose session is not the active one on the seat does not render. With this,
+  the order in which distros are started does not matter (tested with Ubuntu started before and
+  after the session).
 - The unit starts with an empty environment. The script passes on `PATH` (without the Windows
   directories), `XDG_DATA_DIRS`, `LD_LIBRARY_PATH`, the d3d12 variables and the adapter.
 - The script first removes `WAYLAND_DISPLAY` and `DISPLAY` from the user manager's environment. A
