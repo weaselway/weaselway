@@ -32,6 +32,31 @@ fi
 # (WslCoreVm::InitializeGuest in microsoft/WSL), with the ID in upper case.
 SHARED_MEMORY_PATH="WSL\\${VM_ID^^}\\wslg"
 
+# That directory exists only in the Windows logon session that started the VM.
+# Started from another one (SSH, Remote Desktop, a scheduled task) the client
+# cannot map the frames and its window stays white, so say so instead, in a
+# message box as well: the shortcut's console is minimized. Opening the
+# directory as a section fails with "invalid handle" if it is there and "not
+# found" if it is not; only the latter is exit status 3. Not in session 0,
+# where nobody would see the box to close it.
+POWERSHELL=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+MESSAGE="This Windows session cannot see the shared memory of the WSL VM: WSL was started from another Windows session (SSH, Remote Desktop, a scheduled task). Run wsl --shutdown, then start the distro again from this desktop."
+if [ -x "${POWERSHELL}" ]; then
+    STATUS=0
+    (cd /mnt/c && "${POWERSHELL}" -NoProfile -NonInteractive -Command "
+        try { [IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting('${SHARED_MEMORY_PATH}') }
+        catch [IO.DirectoryNotFoundException] {
+            if ([Diagnostics.Process]::GetCurrentProcess().SessionId -ne 0) {
+                (New-Object -ComObject WScript.Shell).Popup('${MESSAGE}', 0, 'Weaselway', 16) | Out-Null
+            }
+            exit 3
+        } catch {}" < /dev/null > /dev/null 2>&1) || STATUS=$?
+    if [ "${STATUS}" = 3 ]; then
+        echo "error: ${MESSAGE}" >&2
+        exit 1
+    fi
+fi
+
 COMMAND=(
     "${VIEWER}" /u:dummy /d:dummy /p:dummy
     /v:vsock://"${VM_ID}":"${PORT}"
