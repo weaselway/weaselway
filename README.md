@@ -151,8 +151,9 @@ Then delete the desktop shortcut if you installed it.
   Each kernel needs its own build of `dxgdrm`, with the kernel's configuration
   and compiler. Consider holding off on `wsl --update` while you rely on
   Weaselway.
-- The clipboard is shared with Windows only in GNOME sessions. Text, formatted
-  text and images can be copied; files cannot.
+- The clipboard is shared with Windows in GNOME and Plasma sessions, and with
+  other compositors that implement `ext-data-control-v1`. Text, formatted text
+  and images can be copied; files cannot.
 - The scale factor of the Windows display is not passed on. Set the scale in
   the desktop's display settings.
 - Audio from web browsers can crackle. Other players are not affected.
