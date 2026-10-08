@@ -227,6 +227,21 @@ if ! systemctl --quiet is-active "${UNIT}.service"; then
     exit 1
 fi
 
+# WSL stops a distro 15 seconds after the last wsl.exe that asked for it exits,
+# whatever still runs inside, and the session with it -- closing the viewer or
+# the terminal would end it. So the session keeps a wsl.exe of its own, which
+# returns once the unit is gone. Started by PowerShell rather than from here,
+# so that it is not attached to this terminal's console, which takes its
+# processes along when it is closed. The distro's name unquoted: wsl.exe would
+# take the quotes as part of it, and a name has no spaces.
+POWERSHELL=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+if [ -n "${WSL_DISTRO_NAME:-}" ] && [ -x "${POWERSHELL}" ]; then
+    KEEPALIVE="-d ${WSL_DISTRO_NAME} --exec /bin/sh -c \"while $(command -v systemctl) -q is-active ${UNIT}.service; do sleep 5; done\""
+    (cd /mnt/c && "${POWERSHELL}" -NoProfile -NonInteractive -Command \
+        "Start-Process -WindowStyle Hidden -FilePath wsl.exe -ArgumentList '${KEEPALIVE//\'/\'\'}'" \
+        < /dev/null) || echo "warning: could not keep the distro running; it stops once no WSL window is open" >&2
+fi
+
 cat <<MSG
 The ${SESSION} session is up. Show it on Windows with: ww-start-viewer
 

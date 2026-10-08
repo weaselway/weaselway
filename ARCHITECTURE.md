@@ -543,9 +543,10 @@ when working on the code.
   started the VM (`\Sessions\<n>\BaseNamedObjects\WSL\<VM ID>\wslg`), and a client in another
   session cannot open them, not even by that full path. `ww-start-viewer` checks for the directory
   and refuses with a message box instead of showing a white window.
-- WSL stops a distro 15 seconds after its last `wsl.exe` exits, and the session with it. A viewer
-  started in the background counts as attached; once it is closed, the next start is a cold one.
-  `general.instanceIdleTimeout` in `.wslconfig` sets the delay; untested here.
+- WSL stops a distro 15 seconds after the last Windows process that asked for it exits, whatever
+  runs inside. `ww-start-session` therefore starts a hidden `wsl.exe` that loops while the session
+  unit is active. It is started through PowerShell so that it is not attached to the terminal's
+  console, which would take it along when closed.
 - KWin's patch on `master` has only been compiled as the 6.6 and 6.7 backports. Rotated outputs and
   direct scanout are untested with it.
 - PipeWire runs without realtime scheduling. rtkit is enabled and running, but `data-loop.0` stays
