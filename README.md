@@ -156,12 +156,9 @@ Then delete the desktop shortcut if you installed it.
   Each kernel needs its own build of `dxgdrm`, with the kernel's configuration
   and compiler. Consider holding off on `wsl --update` while you rely on
   Weaselway.
-- The clipboard is shared with Windows in GNOME and Plasma sessions, and with
-  other compositors that implement `ext-data-control-v1`. Text, formatted text
-  and images can be copied; files cannot.
 - The scale factor of the Windows display is not passed on. Set the scale in
   the desktop's display settings.
-- Audio from web browsers can crackle. Other players are not affected.
+- Audio can sometimes crackle.
 - Touchscreens are not forwarded. Touchpad gestures are.
 - The viewer works only in the Windows session that started WSL. After WSL
   was started over SSH, from Remote Desktop or by a scheduled task,
@@ -182,10 +179,10 @@ image and `plasma` in the Plasma image.
 | Session | What it starts |
 |---|---|
 | `gnome` | The GNOME desktop, as a display manager would start it. |
-| `plasma` | The Plasma desktop. Requires `weaselway.plasma.enable`. |
+| `plasma` | The Plasma desktop. |
 | `custom` | The compositor of your choice, through `custom-weaselway-session`. |
 | `gnome-shell` | GNOME Shell alone, for debugging. |
-| `kwin` | KWin with a terminal, for debugging. Requires `weaselway.plasma.enable`. |
+| `kwin` | KWin with a terminal, for debugging. |
 
 <!-- IMAGE (three thumbnails in a row, same width): GNOME, Plasma and sway, each
      in its Windows window. Shows the "any compositor" claim, which is only text
