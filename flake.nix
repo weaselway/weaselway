@@ -112,7 +112,7 @@
       # here, with what its package is built from.
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          inputsFrom = [ wsl.pkgs.weaselwayd ];
+          inputsFrom = [ (pkgs.extend self.overlays.default).weaselwayd ];
           packages = with pkgs; [
             bash
             shellcheck
