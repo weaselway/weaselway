@@ -120,6 +120,10 @@ To stop the session:
 ww-start-session stop
 ```
 
+The distro keeps running for as long as the session does, also with no WSL
+window open. Once the session is stopped, WSL stops the distro after 15
+seconds.
+
 ### Desktop shortcut
 
 ```sh
@@ -163,8 +167,6 @@ Then delete the desktop shortcut if you installed it.
   was started over SSH, from Remote Desktop or by a scheduled task,
   `ww-start-viewer` says so; run `wsl --shutdown` and start the distro from
   the desktop.
-- Closing the viewer ends the session when no other WSL window is open: WSL
-  stops an idle distro after 15 seconds.
 - Compositors other than GNOME and Plasma have seen little testing. If one
   does not start on the virtual display, please open an issue.
 
