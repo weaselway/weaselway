@@ -1,9 +1,5 @@
-# /etc/nixos/flake.nix of the weaselway NixOS-WSL image. nixos-rebuild picks
-# nixosConfigurations.nixos because the distro's hostname is "nixos" (NixOS-WSL
-# writes networking.hostName into wsl.conf).
-#
-# nixpkgs and NixOS-WSL come from weaselway's own lock, so the patched packages
-# are always built against the nixpkgs they were tested with.
+# The weaselway image's system flake. nixpkgs and NixOS-WSL come from
+# weaselway's lock, so the patched packages match the binary cache.
 # `sudo nix flake update --flake /etc/nixos` moves to the newest weaselway.
 {
   inputs.weaselway.url = "github:weaselway/weaselway";

@@ -1,6 +1,4 @@
-# The weaselway NixOS-WSL system. This file is both what the image is built
-# from and what it ships in /etc/nixos, next to flake.nix: edit it there and
-# `sudo nixos-rebuild switch` to change the running system.
+# The weaselway NixOS-WSL system. Edit it and run `sudo nixos-rebuild switch`.
 { pkgs, ... }:
 
 {
@@ -9,17 +7,14 @@
   wsl.enable = true;
   # uid 1000: WSL only wires up /run/user/1000.
   wsl.defaultUser = "nixos";
-  # For the lock screen, which the desktop shows after a while idle and which
-  # cannot be got past without one. Change it with `passwd`.
+  # For the lock screen. Change it with `passwd`.
   users.users.nixos.initialPassword = "nixos";
 
   weaselway.enable = true;
-  # Pin the GPU d3d12 renders on, for machines with more than one. Matched
-  # against a substring of the adapter description.
+  # The GPU to render on, by a substring of its name.
   # weaselway.adapter = "nvidia";
 
-  # The desktop: GNOME, without a display manager, since ww-start-session does
-  # what one would do. Swap these for another desktop, e.g. COSMIC.
+  # GNOME, without a display manager: ww-start-session does its job.
   services.desktopManager.gnome.enable = true;
   services.displayManager.gdm.enable = false;
 
@@ -28,12 +23,11 @@
   environment.gnome.excludePackages = [ pkgs.orca ];
   services.speechd.enable = false;
 
-  # SSH in, for debugging. Change the password with `passwd` first, or add a
-  # key to users.users.nixos.openssh.authorizedKeys.
+  # SSH, for debugging. Change the password first, or add a key to
+  # users.users.nixos.openssh.authorizedKeys.
   # services.openssh.enable = true;
 
-  # The system is a flake (/etc/nixos/flake.nix); no channels. Its inputs
-  # include git repositories, which nix fetches with git.
+  # The system is a flake; git is needed for its git inputs.
   nix.channel.enable = false;
   programs.git.enable = true;
   nix.settings.experimental-features = [

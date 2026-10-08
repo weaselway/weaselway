@@ -1,6 +1,4 @@
-# The weaselway NixOS-WSL system. This file is both what the image is built
-# from and what it ships in /etc/nixos, next to flake.nix: edit it there and
-# `sudo nixos-rebuild switch` to change the running system.
+# The weaselway NixOS-WSL system. Edit it and run `sudo nixos-rebuild switch`.
 { pkgs, ... }:
 
 {
@@ -9,27 +7,20 @@
   wsl.enable = true;
   # uid 1000: WSL only wires up /run/user/1000.
   wsl.defaultUser = "nixos";
-  # For the lock screen, which the desktop shows after a while idle and which
-  # cannot be got past without one. Change it with `passwd`.
+  # For the lock screen. Change it with `passwd`.
   users.users.nixos.initialPassword = "nixos";
 
   weaselway.enable = true;
-  # Pin the GPU d3d12 renders on, for machines with more than one. Matched
-  # against a substring of the adapter description.
+  # The GPU to render on, by a substring of its name.
   # weaselway.adapter = "nvidia";
 
-  # The desktop: Plasma, with the patched KWin, and what `ww-start-session`
-  # starts when given no session. No display manager, since ww-start-session
-  # does what one would do.
+  # Plasma, without a display manager: ww-start-session does its job.
   services.desktopManager.plasma6.enable = true;
   weaselway.session = "plasma";
   services.displayManager.sddm.enable = false;
 
-  # Left out to keep the image under the 2 GiB that a GitHub release asset may
-  # have: the music player, the X11 KWin and the RDP server, none of which the
-  # session uses, the wallpapers other than the default one, the PIM runtime
-  # with its MariaDB, and Discover, which fwupd brings in. Delete a line and
-  # rebuild to get that part back.
+  # Left out to keep the image under GitHub's 2 GiB limit. Delete a line and
+  # rebuild to get it back.
   environment.plasma6.excludePackages = with pkgs.kdePackages; [
     elisa
     kwin-x11
@@ -44,12 +35,11 @@
   services.orca.enable = false;
   services.speechd.enable = false;
 
-  # SSH in, for debugging. Change the password with `passwd` first, or add a
-  # key to users.users.nixos.openssh.authorizedKeys.
+  # SSH, for debugging. Change the password first, or add a key to
+  # users.users.nixos.openssh.authorizedKeys.
   # services.openssh.enable = true;
 
-  # The system is a flake (/etc/nixos/flake.nix); no channels. Its inputs
-  # include git repositories, which nix fetches with git.
+  # The system is a flake; git is needed for its git inputs.
   nix.channel.enable = false;
   programs.git.enable = true;
   nix.settings.experimental-features = [

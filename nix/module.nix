@@ -12,8 +12,7 @@
 let
   cfg = config.weaselway;
 
-  # Every WSL kernel the dxgdrm flake knows, as a module root with
-  # lib/modules/<release>/extra/dxgdrm.ko, plus the udev rules.
+  # dxgdrm.ko for every WSL kernel the dxgdrm flake knows, plus its udev rules.
   dxgdrm-all = dxgdrm.packages.${pkgs.stdenv.hostPlatform.system}.dxgdrm-all;
 
   prep-session = pkgs.writeShellApplication {
@@ -27,18 +26,15 @@ let
       systemd # udevadm
       util-linux # mount, umount, mountpoint
     ];
-    # The script loads the module from here, keyed on the running kernel.
     text = ''
       export DXGDRM_ROOT="${dxgdrm-all}"
       exec ${pkgs.bash}/bin/bash ${../libexec/prep-session.sh}
     '';
   };
 
-  # Libraries the Windows GPU drivers link against by their Debian/Ubuntu
-  # names, which nothing on NixOS provides. Intel's WSL driver pulls in a
-  # libLLVM-9.so that needs libedit.so.2; without it, loading the driver fails
-  # and d3d12 cannot create a device, so mesa falls back to software. nixpkgs'
-  # libedit is the same library under its upstream soname (.0).
+  # Libraries the Windows GPU drivers expect under their Debian names. Intel's
+  # driver needs libedit.so.2; without it d3d12 fails and mesa falls back to
+  # software. nixpkgs ships the same library as libedit.so.0.
   wslDriverCompat = pkgs.runCommand "weaselway-wsl-driver-compat" { } ''
     mkdir -p $out/lib
     ln -s ${lib.getLib pkgs.libedit}/lib/libedit.so.0 $out/lib/libedit.so.2
@@ -112,8 +108,7 @@ in
           }
         ];
 
-        # Graphics: the Windows driver libraries (libd3d12, libdxcore), what they
-        # need, and the patched mesa, all through /run/opengl-driver.
+        # The Windows driver libraries and the patched mesa, in /run/opengl-driver.
         wsl.useWindowsDriver = true;
         hardware.graphics = {
           enable = true;
@@ -121,67 +116,48 @@ in
           extraPackages = [ wslDriverCompat ];
         };
 
-        # mesa dlopens libd3d12.so and libdxcore.so by name, and the Windows
-        # drivers resolve their own dependencies by name too. NixOS has no
-        # search path they would be found on, so LD_LIBRARY_PATH names the
-        # directory outright: for shells in the session variables at the end
-        # (ww-start-session hands it on to the session), and for the user manager
-        # in environment.d below.
-
-        # WSL configures the network itself. GNOME turns NetworkManager on, and
-        # with it wpa_supplicant, which fails to start in WSL and so fails every
-        # nixos-rebuild switch.
+        # WSL configures the network. GNOME enables NetworkManager and
+        # wpa_supplicant, which fails in WSL and with it every nixos-rebuild switch.
         networking.networkmanager.enable = false;
         networking.wireless.enable = false;
 
-        # NixOS-WSL turns udev off; the render node needs it for its permissions.
+        # NixOS-WSL turns udev off; the render node needs it for permissions.
         services.udev.enable = true;
         services.udev.packages = [ dxgdrm-all ];
 
-        # dxgdrm's udev rule makes its nodes 0666, but until udev has applied it
-        # the render node is root:render 0660. Group membership works whatever
-        # the mode is. input is for uinput, see below.
+        # Until udev applies dxgdrm's 0666 rule the render node is root:render
+        # 0660; the groups work either way. input is for uinput.
         users.users.${config.wsl.defaultUser}.extraGroups = [
           "render"
           "video"
           "input"
         ];
 
-        # weaselwayd creates the viewer's keyboard, pointer and touchpad through
-        # uinput, as the user. The compositor needs no such rule: logind hands it
-        # the evdev devices and the KMS node.
+        # weaselwayd creates the viewer's input devices through uinput, as the
+        # user. The compositor gets its devices from logind.
         services.udev.extraRules = ''
           KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660"
         '';
 
-        # WSL generates a wslg-session user unit that symlinks pulse/native,
-        # wayland-0 and wayland-0.lock in $XDG_RUNTIME_DIR into /mnt/wslg, for the
-        # PulseAudio and Weston the system distro runs. The session uses
-        # neither, and the pulse/native link replaces pipewire-pulse's socket, so
-        # no PulseAudio client -- GNOME's sound settings among them -- finds it.
+        # WSL's wslg-session unit links pulse/native and wayland-0 in
+        # $XDG_RUNTIME_DIR to WSLg's. The pulse link replaces pipewire-pulse's
+        # socket, and no PulseAudio client finds PipeWire.
         systemd.user.units."wslg-session.service".enable = false;
 
-        # WSL points every shell it starts at the system distro's PulseAudio.
-        # Unset, libpulse clients find pipewire-pulse's socket on their own. The
-        # session's unit starts with a clean environment and never has it. Not
-        # in extraInit: NixOS-WSL's shell wrapper has run set-environment before
-        # the shell starts, and an unset in there does not reach the shell.
+        # WSL points every shell at WSLg's PulseAudio; unset, libpulse finds
+        # PipeWire. Not in extraInit: NixOS-WSL's shell wrapper runs that before
+        # the shell, and the unset would not reach it.
         environment.loginShellInit = ''
           unset PULSE_SERVER
         '';
 
-        # systemd mounts its own binfmt_misc at boot, after WSL registered its
-        # handler for Windows executables, and the handler is gone. Without it
-        # ww-start-viewer cannot run sdl-freerdp.exe. Register it again after the
-        # mount.
+        # systemd mounts a fresh binfmt_misc over WSL's, which drops the handler
+        # for Windows executables that ww-start-viewer needs.
         wsl.interop.register = true;
 
-        # WSL bind-mounts a read-only file over binfmt_misc's status file.
-        # systemd-binfmt starts by flushing all rules through that file, and
-        # exits with the error although the registration then goes through; the
-        # unit is failed at every boot and nixos-rebuild switch reports it.
-        # Given the file to apply, it does not flush. The same goes for
-        # --unregister on stop.
+        # WSL makes binfmt_misc's status file read-only. systemd-binfmt flushes
+        # through it on start and stop, fails, and nixos-rebuild switch reports
+        # it. Given a file to apply, it does not flush.
         systemd.services.systemd-binfmt = {
           overrideStrategy = "asDropin";
           serviceConfig = {
@@ -193,17 +169,12 @@ in
           };
         };
 
-        # NixOS-WSL bind-mounts WSLg's X0 socket into /tmp/.X11-unix. The
-        # compositor creates its own X socket there, which weaselway-prep.service
-        # makes room for; this mount would sit on top of it.
+        # NixOS-WSL mounts WSLg's X0 socket where the compositor puts its own.
         systemd.units."tmp-.X11\\x2dunix-X0.mount".enable = lib.mkForce false;
 
-        # logind may only open the device classes that exist when it starts
-        # (DeviceAllow=char-drm), and orders itself after modprobe@drm.service
-        # for that reason. On kernels where DRM core is a module it is in the
-        # dxgdrm package, not where that unit looks; loaded any later, logind
-        # refuses the compositor /dev/dri/card0. Fails quietly on kernels that
-        # have DRM built in.
+        # logind only allows device classes that exist when it starts
+        # (DeviceAllow=char-drm). Where DRM core is a module, it is in the dxgdrm
+        # package, so load it from there before logind. Quiet if DRM is built in.
         systemd.services."modprobe@drm" = {
           overrideStrategy = "asDropin";
           serviceConfig.ExecStart = [
@@ -212,10 +183,8 @@ in
           ];
         };
 
-        # Loads dxgdrm, evdev and uinput, takes /tmp/.X11-unix back, and mounts
-        # the WSLg shared-memory share. The last fails the unit when WSLg is
-        # turned off. After wslg.service, which WSL
-        # generates at every boot and which mounts over /tmp/.X11-unix.
+        # Loads dxgdrm, evdev and uinput, takes /tmp/.X11-unix back from
+        # wslg.service, and mounts WSLg's shared memory (fails without WSLg).
         systemd.services.weaselway-prep = {
           description = "Weaselway host preparation for the session";
           documentation = [ "https://github.com/weaselway/weaselway" ];
@@ -232,8 +201,8 @@ in
           };
         };
 
-        # Environment for the user manager, read by systemd's environment.d
-        # generator from /etc as well as from ~/.config.
+        # The user manager's environment. mesa dlopens the Windows drivers by
+        # name, and NixOS has no search path for them, hence LD_LIBRARY_PATH.
         environment.etc = {
           "environment.d/05-weaselway-nixos.conf".text = ''
             LD_LIBRARY_PATH=/run/opengl-driver/lib
@@ -246,11 +215,8 @@ in
           '';
         };
 
-        # The userspace half of the display: reads the compositor's frames back
-        # and serves them, with input and audio, to the viewer. It waits for a
-        # compositor and outlives it, so it simply runs with the user manager.
-        # Its environment (GALLIUM_DRIVER, LD_LIBRARY_PATH, WEASELWAY_VSOCK_PORT)
-        # is the user manager's, from environment.d above.
+        # Serves the compositor's frames, input and audio to the viewer. Waits
+        # for a compositor and outlives it, so it runs with the user manager.
         systemd.user.services.weaselwayd = {
           description = "Weaselway display server for the Windows viewer";
           documentation = [ "https://github.com/weaselway/weaselway" ];
@@ -263,8 +229,7 @@ in
           };
         };
 
-        # Audio: PipeWire end to end, with the two protocol-simple servers
-        # weaselwayd connects to.
+        # PipeWire, with the protocol-simple servers weaselwayd connects to.
         services.pulseaudio.enable = false;
         services.pipewire = {
           enable = true;
@@ -273,10 +238,8 @@ in
           configPackages = [ audioConfig ];
         };
 
-        # CI pushes everything it builds here: dxgdrm's kernel tree, mesa, mutter,
-        # gnome-shell, KWin, weaselwayd and the viewer, none of which cache.nixos.org has. Without
-        # it, every nixos-rebuild after an update compiles them on the WSL machine.
-        # cache.nixos.org stays; NixOS adds it to whatever is listed.
+        # CI pushes the patched packages here, so nixos-rebuild does not compile
+        # them. cache.nixos.org stays in the list.
         nix.settings = {
           substituters = [ "https://weaselway.cachix.org" ];
           trusted-public-keys = [ "weaselway.cachix.org-1:aN6jpdbl2M5QNsR3U8zx1G/R0jHIkYkvX15G9jxPiHU=" ];
@@ -287,28 +250,22 @@ in
           pkgs.weaselwayd
         ];
 
+        # Shells get the same environment; ww-start-session hands it on.
         environment.sessionVariables = {
           LD_LIBRARY_PATH = [ "/run/opengl-driver/lib" ];
           WEASELWAY_DEFAULT_SESSION = cfg.session;
         }
         // lib.optionalAttrs (cfg.adapter != null) {
-          # For ww-start-session, which hands it to the session's unit.
           MESA_D3D12_DEFAULT_ADAPTER_NAME = cfg.adapter;
         };
       }
 
-      # Plasma. KWin is patched (see the overlay), so it and what links it are
-      # built or come from weaselway.cachix.org.
       (lib.mkIf config.services.desktopManager.plasma6.enable {
-        # Plasma runs KWin through a setcap wrapper, for CAP_SYS_NICE. NixOS's
-        # wrappers drop LD_LIBRARY_PATH from the environment (and with file
-        # capabilities the loader would too), which is how the d3d12 driver is
-        # found (see environment.d/05-weaselway-nixos.conf): KWin then cannot
-        # create its gbm device. Realtime scheduling is not worth that here.
+        # KWin's setcap wrapper (for realtime scheduling) drops LD_LIBRARY_PATH,
+        # so KWin would not find the d3d12 driver.
         security.wrappers.kwin_wayland.enable = lib.mkForce false;
 
-        # For the bare KWin, which looks for a cursor theme called "default" and
-        # shows no pointer without one.
+        # The bare KWin shows no pointer without a "default" cursor theme.
         xdg.icons.fallbackCursorThemes = [ "Adwaita" ];
 
         environment.systemPackages = [
