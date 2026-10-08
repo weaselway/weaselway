@@ -22,7 +22,7 @@ problems showed up there anyway:
   patch to nixpkgs' package: `nix/mutter-stage-relayout.patch`, and for KWin a
   backport per release (`kwin-6.6-…`, `kwin-6.7-…`), picked by version.
 - The patched mutter replaces `pkgs.mutter`, so gnome-shell links it. The
-  patched KWin is only built when `weaselway.plasma.enable` is set.
+  patched KWin is only built when Plasma is enabled.
 
 ## Consequences
 

@@ -149,7 +149,7 @@ affected.
 - `mutter`: nixpkgs' mutter with the relayout patch. It replaces `pkgs.mutter`, so gnome-shell links
   it.
 - `kdePackages.kwin`: nixpkgs' KWin with the damage patch for its release. It is only built when
-  `weaselway.plasma.enable` is set.
+  Plasma is enabled.
 - `weaselwayd`: built from [weaselwayd/](weaselwayd) with its Makefile, against nixpkgs' libglvnd
   and libgbm (which load the patched mesa at run time), `weaselway-freerdp`, and the uapi header from
   the dxgdrm input. The gfxredir server channel is compiled in from
@@ -176,7 +176,7 @@ affected.
   `nixosConfigurations.wsl-gnome` or `wsl-plasma`. The hostname is `nixos`, so `nixos-rebuild`
   builds `#nixos`.
 - The two `flake.nix` files are identical, and the desktop is selected in `configuration.nix`. The
-  Plasma one sets `weaselway.plasma.enable` and `weaselway.session`, and does not install GNOME.
+  Plasma one sets `services.desktopManager.plasma6.enable` and `weaselway.session`, and does not install GNOME.
   There are two directories because `wsl.tarball.configPath` takes a source directory and copies
   all of it.
 - [nix/image-lock.nix](nix/image-lock.nix) is `nixosModules.image`, imported by both
@@ -328,9 +328,9 @@ on a WSL installation. This section records those failures.
 
 - The user is `nixos` with uid 1000. WSL only sets up `/run/user/1000`.
 - `weaselway.enable` is set. `weaselway.adapter` is present but commented out.
-- The desktop is enabled without its display manager. The GNOME file has `weaselway.plasma.enable`
-  commented out. The Plasma file sets it, with `weaselway.session = "plasma"`.
-- speech-dispatcher is disabled, and Orca excluded in the GNOME file, because the voices take about
+- The desktop is enabled without its display manager. The Plasma file also sets
+  `weaselway.session = "plasma"`.
+- speech-dispatcher and Orca are disabled in both files, because the voices take about
   650 MB. A comment explains how to restore them.
 - Flakes are enabled, channels are disabled, and git is installed because the flake has git inputs.
 - sshd is disabled. Uncomment the line in `configuration.nix` to debug over SSH. The user's

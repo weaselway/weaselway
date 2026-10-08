@@ -282,7 +282,6 @@ Weaselway adds these options:
 | `weaselway.enable` | `false` (`true` in the image) | Enables everything: Mesa, dxgdrm, weaselwayd, audio and the scripts. |
 | `weaselway.adapter` | `null` | The GPU to render on, as a substring of its name (`"nvidia"`, `"Intel"`). `null` selects the first adapter Windows lists. |
 | `weaselway.session` | `"gnome"` | The session `ww-start-session` starts when none is given. |
-| `weaselway.plasma.enable` | `false` (`true` in the Plasma image) | Installs Plasma for `ww-start-session plasma`. |
 
 `ww-start-session --adapter <name>` overrides the adapter for one session
 without a rebuild.

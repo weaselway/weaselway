@@ -6,8 +6,9 @@ fact, from ARCHITECTURE.md, the commit messages and the code. Where the reason
 was not written down, it was inferred from the code and is marked "Reason
 inferred from code".
 
-New decisions get the next number. A changed decision gets a new record, and
-the old one gets the status "Superseded by NNNN". Records of the kernel module
+New decisions get the next number. A changed decision is edited in its record,
+so each record states what holds now; git has the history. A decision that is
+replaced outright gets the status "Superseded by NNNN". Records of the kernel module
 are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 
 | No. | Decision | Status |

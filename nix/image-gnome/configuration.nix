@@ -28,10 +28,6 @@
   environment.gnome.excludePackages = [ pkgs.orca ];
   services.speechd.enable = false;
 
-  # Plasma as a second desktop, for `ww-start-session plasma`. Off: it roughly
-  # doubles what the image has to carry.
-  # weaselway.plasma.enable = true;
-
   # SSH in, for debugging. Change the password with `passwd` first, or add a
   # key to users.users.nixos.openssh.authorizedKeys.
   # services.openssh.enable = true;

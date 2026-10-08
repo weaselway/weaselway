@@ -21,7 +21,7 @@
   # The desktop: Plasma, with the patched KWin, and what `ww-start-session`
   # starts when given no session. No display manager, since ww-start-session
   # does what one would do.
-  weaselway.plasma.enable = true;
+  services.desktopManager.plasma6.enable = true;
   weaselway.session = "plasma";
   services.displayManager.sddm.enable = false;
 
@@ -39,8 +39,9 @@
   programs.kde-pim.enable = false;
   services.fwupd.enable = false;
 
-  # No speech-dispatcher: its voices are ~650 MB of the image. To get them
-  # back, delete the line and rebuild.
+  # No screen reader: orca needs speech-dispatcher, whose voices are ~650 MB of
+  # the image. To get them back, delete both lines and rebuild.
+  services.orca.enable = false;
   services.speechd.enable = false;
 
   # SSH in, for debugging. Change the password with `passwd` first, or add a

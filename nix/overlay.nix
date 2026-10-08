@@ -86,7 +86,7 @@ in
   # patches are backports (branches weaselway-6.6.6 and weaselway-6.7.5) of
   # the commit on master of github.com/weaselway/kde-kwin; which one depends
   # on the Plasma release in nixpkgs. Replaced in the scope, so Plasma runs
-  # it; what links KWin is rebuilt. Only built with weaselway.plasma.enable.
+  # it; what links KWin is rebuilt. Only built with Plasma enabled.
   kdePackages = prev.kdePackages.overrideScope (
     kfinal: kprev: {
       kwin = kprev.kwin.overrideAttrs (old: {

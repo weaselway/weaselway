@@ -49,6 +49,13 @@ let
   );
 in
 {
+  imports = [
+    (lib.mkRenamedOptionModule
+      [ "weaselway" "plasma" "enable" ]
+      [ "services" "desktopManager" "plasma6" "enable" ]
+    )
+  ];
+
   options.weaselway = {
     enable = lib.mkEnableOption "the weaselway desktop session, shown on Windows by weaselwayd";
 
@@ -75,11 +82,6 @@ in
       default = "gnome";
       description = "Session that `ww-start-session` starts when given none.";
     };
-
-    plasma.enable = lib.mkEnableOption ''
-      Plasma, next to GNOME or alone, for `ww-start-session plasma`. KWin is patched (see
-      the overlay), so it and what links it are built or come from
-      weaselway.cachix.org'';
   };
 
   config = lib.mkIf cfg.enable (
@@ -92,12 +94,21 @@ in
           }
           {
             assertion =
-              cfg.plasma.enable
-              || !(lib.elem cfg.session [
+              lib.elem cfg.session [
+                "gnome"
+                "gnome-shell"
+              ]
+              -> config.services.desktopManager.gnome.enable;
+            message = "weaselway.session = \"${cfg.session}\" needs services.desktopManager.gnome.enable";
+          }
+          {
+            assertion =
+              lib.elem cfg.session [
                 "plasma"
                 "kwin"
-              ]);
-            message = "weaselway.session = \"${cfg.session}\" needs weaselway.plasma.enable";
+              ]
+              -> config.services.desktopManager.plasma6.enable;
+            message = "weaselway.session = \"${cfg.session}\" needs services.desktopManager.plasma6.enable";
           }
         ];
 
@@ -263,7 +274,7 @@ in
         };
 
         # CI pushes everything it builds here: dxgdrm's kernel tree, mesa, mutter,
-        # gnome-shell, weaselwayd and the viewer, none of which cache.nixos.org has. Without
+        # gnome-shell, KWin, weaselwayd and the viewer, none of which cache.nixos.org has. Without
         # it, every nixos-rebuild after an update compiles them on the WSL machine.
         # cache.nixos.org stays; NixOS adds it to whatever is listed.
         nix.settings = {
@@ -275,6 +286,7 @@ in
           pkgs.weaselway-scripts
           pkgs.weaselwayd
         ];
+
         environment.sessionVariables = {
           LD_LIBRARY_PATH = [ "/run/opengl-driver/lib" ];
           WEASELWAY_DEFAULT_SESSION = cfg.session;
@@ -285,28 +297,21 @@ in
         };
       }
 
-      (lib.mkIf cfg.plasma.enable {
-        services.desktopManager.plasma6.enable = true;
-        # Both desktops want to be the one that asks for ssh passphrases.
-        programs.ssh.askPassword = lib.mkIf config.services.desktopManager.gnome.enable (
-          lib.mkForce "${pkgs.seahorse}/libexec/seahorse/ssh-askpass"
-        );
-        # And they disagree about the screen reader.
-        services.orca.enable = lib.mkForce false;
+      # Plasma. KWin is patched (see the overlay), so it and what links it are
+      # built or come from weaselway.cachix.org.
+      (lib.mkIf config.services.desktopManager.plasma6.enable {
         # Plasma runs KWin through a setcap wrapper, for CAP_SYS_NICE. NixOS's
         # wrappers drop LD_LIBRARY_PATH from the environment (and with file
         # capabilities the loader would too), which is how the d3d12 driver is
         # found (see environment.d/05-weaselway-nixos.conf): KWin then cannot
         # create its gbm device. Realtime scheduling is not worth that here.
         security.wrappers.kwin_wayland.enable = lib.mkForce false;
+
         # For the bare KWin, which looks for a cursor theme called "default" and
-        # shows no pointer without one. The theme comes with GNOME, and is
-        # installed here for a system that has only Plasma.
+        # shows no pointer without one.
         xdg.icons.fallbackCursorThemes = [ "Adwaita" ];
 
         environment.systemPackages = [
-          pkgs.kdePackages.kwin
-          pkgs.kdePackages.konsole
           pkgs.adwaita-icon-theme
         ];
       })

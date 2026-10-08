@@ -126,7 +126,7 @@ if ! command -v "${COMMAND[0]}" > /dev/null; then
     if [ "${SESSION}" = "custom" ]; then
         echo "Put an executable script of that name on the PATH; it starts the compositor, e.g. 'exec sway'." >&2
     elif [ "${DESKTOP}" = "KDE" ]; then
-        echo "Plasma is off by default; set weaselway.plasma.enable = true in /etc/nixos/configuration.nix and rebuild." >&2
+        echo "Plasma comes with the Plasma image (nixos-weaselway-plasma)." >&2
     fi
     exit 1
 fi
