@@ -89,7 +89,7 @@ gets in the way of weaselwayd.
 | Value | Source |
 |---|---|
 | vsock port | fixed: `WEASELWAY_VSOCK_PORT=3389` in [environment.d/10-weaselway.conf](environment.d/10-weaselway.conf) |
-| VM ID | `wslinfo --vm-id -n`. NixOS-WSL has no `/bin/wslinfo`, so the scripts call `exec -a wslinfo /init --vm-id -n` |
+| VM ID | `wslinfo --vm-id -n`. NixOS-WSL has no `/bin/wslinfo`, so `ww-start-viewer` falls back to `exec -a wslinfo /init --vm-id -n` when `wslinfo` is not on the `PATH` |
 | shared-memory NT path for the client | `WSL\<VM ID, upper case, no braces>\wslg` |
 | virtiofs tag | always `wslg`. `prep-session.sh` mounts it at `/run/wsl/virtiofs-mounts/weaselway-wslg`, private, with `/mnt/wslg-shared-memory` a link to it: WSL unmounts other virtiofs mounts when the first `wsl.exe` of the other elevation starts |
 
@@ -100,7 +100,7 @@ problems that show up there but are unrelated to RDP:
 
 - mutter: the overview keeps its old size when the stage is resized, which happens whenever the
   viewer's window is resized. The fix is the single commit on `main` of `weaselway/mutter`.
-- KWin: it reported no damage to the kernel, so every frame was read back in full. The patch sets
+- KWin: it told the kernel that the whole buffer changed, so every frame was read back in full. The patch sets
   `FB_DAMAGE_CLIPS`. It is on `master` of `weaselway/kde-kwin`, with backports on `weaselway-6.6.6`
   and `weaselway-6.7.5`.
 
@@ -281,8 +281,8 @@ on a WSL installation. This section records those failures.
   `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` and the vsock port. WebKit's sandbox does not bind
   `/dev/dxg`, so its web process cannot create an EGL display and crashes. The file explains this in
   detail.
-- The module enables GNOME so that the image has a desktop to start. A system that only uses a
-  custom session still gets it.
+- The module enables no desktop. Each image's `configuration.nix` enables one, and a system built
+  from the module alone has to do the same.
 - `ww-start-viewer` runs `sdl-freerdp.exe` from the store through `\\wsl.localhost`. Windows loads
   `SDL3.dll` and `SDL3_ttf.dll` from the same directory.
 
@@ -333,9 +333,9 @@ on a WSL installation. This section records those failures.
 - speech-dispatcher is disabled, and Orca excluded in the GNOME file, because the voices take about
   650 MB. A comment explains how to restore them.
 - Flakes are enabled, channels are disabled, and git is installed because the flake has git inputs.
-- sshd is disabled. Uncomment the line in `configuration.nix` to debug over SSH. The image contains
-  no password, so run `passwd` first. With mirrored WSL networking the distro is reachable from the
-  LAN.
+- sshd is disabled. Uncomment the line in `configuration.nix` to debug over SSH. The user's
+  password is `nixos`, so change it with `passwd` first. With mirrored WSL networking the distro is
+  reachable from the LAN.
 
 ## Building
 
