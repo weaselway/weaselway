@@ -306,12 +306,13 @@ on a WSL installation. This section records those failures.
   Without an argument systemd-binfmt first flushes all rules through that file and exits with the
   error, although the registration succeeds. The unit was then failed at every boot, and
   `nixos-rebuild switch` exited with status 4.
-- NetworkManager and wpa_supplicant are disabled. GNOME enables them, wpa_supplicant fails to start
-  in WSL, and that failure makes every `nixos-rebuild switch` fail. WSL manages the network itself.
+- The GNOME image disables NetworkManager and wpa_supplicant in its `configuration.nix`, not the
+  module. GNOME enables them, wpa_supplicant fails to start in WSL, and that failure makes every
+  `nixos-rebuild switch` fail. WSL manages the network itself.
 
 ### Audio
 
-- PipeWire runs with its PulseAudio server and WirePlumber. PulseAudio itself is disabled.
+- PipeWire runs with its PulseAudio server and WirePlumber.
 - [pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf](pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf)
   is installed through `services.pipewire.configPackages` and ends up in
   `/etc/pipewire/pipewire.conf.d/`.

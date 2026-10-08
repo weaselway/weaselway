@@ -21,8 +21,6 @@ each setting:
 - `systemd-binfmt` gets `/etc/binfmt.d/nixos.conf` as its argument and no
   `ExecStop`. Without an argument it flushes all rules through a status file
   that WSL mounts read-only, fails, and makes `nixos-rebuild switch` exit 4.
-- NetworkManager and wpa_supplicant are disabled. GNOME enables them,
-  wpa_supplicant fails in WSL, and that fails every `nixos-rebuild switch`.
 - udev is enabled, because NixOS-WSL disables it and dxgdrm's rule needs it.
 - `prep-session.sh` takes `/tmp/.X11-unix` back from WSL's read-only bind
   mount, and the NixOS-WSL mount unit for `X0` is masked.
@@ -35,3 +33,7 @@ each setting:
 - `PULSE_SERVER` stays set for commands started without a login shell, as in
   `wsl -d Weaselway -- <program>`.
 - New WSL releases can add failures of the same kind.
+- Failures a desktop brings with it stay with that desktop's image. GNOME
+  enables NetworkManager and wpa_supplicant, which fail in WSL and fail every
+  `nixos-rebuild switch`, so the GNOME image's `configuration.nix` disables
+  them. A user who wants NetworkManager can turn it back on.

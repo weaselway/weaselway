@@ -116,11 +116,6 @@ in
           extraPackages = [ wslDriverCompat ];
         };
 
-        # WSL configures the network. GNOME enables NetworkManager and
-        # wpa_supplicant, which fails in WSL and with it every nixos-rebuild switch.
-        networking.networkmanager.enable = false;
-        networking.wireless.enable = false;
-
         # NixOS-WSL turns udev off; the render node needs it for permissions.
         services.udev.enable = true;
         services.udev.packages = [ dxgdrm-all ];
@@ -230,11 +225,9 @@ in
         };
 
         # PipeWire, with the protocol-simple servers weaselwayd connects to.
-        services.pulseaudio.enable = false;
         services.pipewire = {
           enable = true;
           pulse.enable = true;
-          wireplumber.enable = true;
           configPackages = [ audioConfig ];
         };
 
