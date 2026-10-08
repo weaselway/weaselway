@@ -8,7 +8,7 @@
 Weaselway runs a GPU-accelerated Linux desktop on WSL2 and shows it in a
 window on Windows. It is distributed as a NixOS-WSL image.
 
-https://github.com/user-attachments/assets/421018ab-684a-4c09-afc2-350e0ffb5089
+https://github.com/user-attachments/assets/4867b0d8-d69e-49d9-93f8-eb8ae73222fd
 
 The compositor runs unmodified. The `dxgdrm` kernel module provides a virtual
 display that it drives like a monitor, and Mesa's `d3d12` driver renders on the
@@ -66,8 +66,6 @@ wsl -d Weaselway
 then `ww-start-session` and `ww-start-viewer` inside the distro. The steps
 below explain each of them.
 
-<video src="doc/install.mp4" controls muted width="720"></video>
-
 ### 1. Get the image
 
 Download `nixos-weaselway-gnome-<version>.wsl` or
@@ -112,7 +110,7 @@ terminal instead. The viewer, `sdl-freerdp.exe`, runs from inside the image, so
 nothing is installed on the Windows side. Closing the window does not end the
 session; run `ww-start-viewer` again to reconnect.
 
-![The GNOME desktop in its Windows window, showing Chromium's GPU status page and NetQuake](doc/screenshot.png)
+![The GNOME desktop in its Windows window, showing Chromium's GPU status page and NetQuake](docs/screenshot.png)
 
 To stop the session:
 
