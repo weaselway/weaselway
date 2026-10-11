@@ -259,7 +259,7 @@ on a WSL installation. This section records those failures.
 
 ### Session
 
-- There is no display manager. [ww-start-session.sh](ww-start-session.sh) runs the session command
+- There is no display manager. [bin/ww-start-session.sh](bin/ww-start-session.sh) runs the session command
   (`gnome-session`, `startplasma-wayland` or `custom-weaselway-session`) in a transient system unit,
   `weaselway-session.service`, with `PAMName=login` and `XDG_SEAT=seat0` on `tty7`. This makes it a
   logind session on the seat, and logind gives the compositor the KMS node and the input devices.

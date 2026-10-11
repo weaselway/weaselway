@@ -127,7 +127,7 @@ in
         name: runtimeInputs:
         final.writeShellApplication {
           inherit name runtimeInputs;
-          text = builtins.readFile (../. + "/${name}.sh");
+          text = builtins.readFile (../bin + "/${name}.sh");
           # Linted by this repo's flake check.
           checkPhase = "";
           bashOptions = [ ];
@@ -155,7 +155,7 @@ in
             : "''${WEASELWAY_VIEWER:=${final.weaselway-viewer}/bin/sdl-freerdp.exe}"
             export WEASELWAY_VIEWER
           ''
-          + builtins.readFile ../ww-start-viewer.sh;
+          + builtins.readFile ../bin/ww-start-viewer.sh;
           checkPhase = "";
           bashOptions = [ ];
         })
