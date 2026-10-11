@@ -865,21 +865,27 @@ ack_frame(struct weaselwayd *p)
     p->acked_seq = p->primary_seq;
 }
 
-/* The client's window has a size; ask for a screen of it. The compositor
- * switches to the new mode, and the frames that follow have that size. */
+/* The client's window has a size and its monitor a refresh rate; ask for a
+ * screen of them. The compositor switches to the new mode, and the frames
+ * that follow have that size. */
 static void
 apply_size_request(struct weaselwayd *p)
 {
-    struct drm_dxgdrm_set_mode mode;
+    struct drm_dxgdrm_set_mode mode = { 0 };
     int width, height;
+    uint32_t refresh_mhz;
 
-    if (!rdp_server_take_size_request(p->rdp, &width, &height))
+    if (!rdp_server_take_size_request(p->rdp, &width, &height, &refresh_mhz))
         return;
 
     mode.width = (uint32_t)width;
     mode.height = (uint32_t)height;
+    /* 0 until the client says, which is dxgdrm's default. A dxgdrm older
+     * than the field ignores it. */
+    mode.refresh_mhz = refresh_mhz;
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SET_MODE, &mode))
-        g_warning("cannot set a %dx%d mode: %s", width, height, g_strerror(errno));
+        g_warning("cannot set a %dx%d mode at %u mHz: %s", width, height, refresh_mhz,
+                  g_strerror(errno));
 }
 
 /* The size of the client's screen: the compositor's, or without one the

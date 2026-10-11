@@ -41,7 +41,9 @@ queue up.
 
 The client's keyboard, mouse and touchpad become uinput devices, which libinput handles like any
 others. The size of the session follows the viewer's window: weaselwayd sets the mode on dxgdrm, and
-the compositor sees a hotplug event.
+the compositor sees a hotplug event. The mode's refresh rate follows the monitor the window is on,
+which the viewer reports on its own channel, `Weaselway::Display`
+([0029](docs/adr/0029-refresh-rate-from-the-viewer.md)).
 
 The clipboard is the only feature that needs the compositor's cooperation, and there is no protocol
 for it that every compositor implements. weaselwayd runs two backends and uses the one that finds

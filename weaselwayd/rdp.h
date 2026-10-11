@@ -78,8 +78,11 @@ void rdp_server_set_screen_size(struct rdp_server *server, int width, int height
 /* True, once, when the client wants the screen to have another size: the one
  * it connected with, or the one its window was resized to. The screen is
  * given a few seconds to follow; a client whose desktop still differs from it
- * after that is resized to the screen instead. */
-bool rdp_server_take_size_request(struct rdp_server *server, int *width, int *height);
+ * after that is resized to the screen instead. Also true when only the
+ * refresh rate of the client's monitor changed; @refresh_mhz is 0 until the
+ * client has said. */
+bool rdp_server_take_size_request(struct rdp_server *server, int *width, int *height,
+                                  uint32_t *refresh_mhz);
 
 /* The size the connected client wants its screen to have; false while there is
  * no client yet. For a screen the compositor does not give a size to. */

@@ -132,6 +132,8 @@ struct peer_context {
 
     /* MS-RDPEDISP: the client says what size its window has. */
     DispServerContext *disp;
+    /* Weaselway::Display: and what refresh rate its monitor has. */
+    HANDLE wwdisplay;
 
     /* rdpsnd and audin; see audio.h. */
     struct audio_out *audio_out;
@@ -227,6 +229,8 @@ struct rdp_server {
     int wanted_width, wanted_height;
     gint64 wanted_deadline;
     bool size_request_pending;
+    /* The refresh rate of the client's monitor; 0 until it says. */
+    uint32_t wanted_refresh_mhz;
     /* Bumped whenever a pool goes away, which ends any frame begun on it. */
     uint64_t generation;
 };
@@ -906,6 +910,87 @@ disp_dispatch(struct peer_context *peer_ctx)
         request_size(peer_ctx->server, width, height);
 }
 
+/* ------------------------------------------------------------------ */
+/* The client's refresh rate                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Weaselway::Display, the viewer's own channel (wwdisplay in weaselway's
+ * FreeRDP): the refresh rate of the monitor the client's window is on, which
+ * RDP has no field for. Every PDU is UINT16 type, UINT16 reserved, then the
+ * body, little endian; REFRESH_RATE's body is a UINT32 in millihertz.
+ */
+#define WWDISPLAY_DVC_CHANNEL_NAME "Weaselway::Display"
+#define WWDISPLAY_PDU_REFRESH_RATE 1
+#define WWDISPLAY_MAX_PDU 64
+
+/* A client without the channel refuses it, and the screen keeps dxgdrm's
+ * default rate. */
+static void
+setup_wwdisplay(struct peer_context *peer_ctx)
+{
+    DWORD *session_id = NULL;
+    DWORD bytes = 0;
+
+    if (!WTSQuerySessionInformationA(peer_ctx->vcm, WTS_CURRENT_SESSION, WTSSessionId,
+                                     (LPSTR *)&session_id, &bytes) ||
+        !session_id)
+        return;
+    peer_ctx->wwdisplay =
+        WTSVirtualChannelOpenEx(*session_id, WWDISPLAY_DVC_CHANNEL_NAME, WTS_CHANNEL_OPTION_DYNAMIC);
+    WTSFreeMemory(session_id);
+}
+
+/* The PDUs arrive whole, on the main loop, when the channel manager is
+ * pumped; this takes whatever came. */
+static void
+wwdisplay_dispatch(struct peer_context *peer_ctx)
+{
+    struct rdp_server *server = peer_ctx->server;
+    uint8_t pdu[WWDISPLAY_MAX_PDU];
+    ULONG length;
+
+    if (!peer_ctx->wwdisplay)
+        return;
+
+    while (WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, NULL, 0, &length)) {
+        ULONG got = 0;
+        uint32_t mhz;
+
+        if (length > sizeof(pdu)) {
+            g_warning("Weaselway::Display: dropping a %lu byte PDU", (unsigned long)length);
+            while (length > 0 &&
+                   WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)pdu, sizeof(pdu), &got) &&
+                   got > 0)
+                length -= MIN(length, got);
+            continue;
+        }
+        if (!WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)pdu, sizeof(pdu), &got))
+            break;
+
+        /* Unknown types are for a newer client. */
+        if (got < 4 || (pdu[0] | pdu[1] << 8) != WWDISPLAY_PDU_REFRESH_RATE)
+            continue;
+        if (got != 8) {
+            g_warning("Weaselway::Display: REFRESH_RATE of %lu bytes", (unsigned long)got);
+            continue;
+        }
+        mhz = (uint32_t)pdu[4] | (uint32_t)pdu[5] << 8 | (uint32_t)pdu[6] << 16 |
+              (uint32_t)pdu[7] << 24;
+        /* dxgdrm's range. */
+        if (mhz < 1000 || mhz > 1000000) {
+            g_warning("Weaselway::Display: ignoring a refresh rate of %u mHz", mhz);
+            continue;
+        }
+        if (mhz == server->wanted_refresh_mhz)
+            continue;
+
+        g_message("the client's monitor runs at %u.%03u Hz", mhz / 1000, mhz % 1000);
+        server->wanted_refresh_mhz = mhz;
+        server->size_request_pending = true;
+    }
+}
+
 /* Without the channel the size is whatever the client connected with. */
 static void
 setup_disp(struct peer_context *peer_ctx)
@@ -1320,6 +1405,7 @@ peer_finish_activation(freerdp_peer *client)
     /* Before gfxredir, as Weston does. The first frame goes out once the
      * client has confirmed gfxredir caps. */
     setup_disp(peer_ctx);
+    setup_wwdisplay(peer_ctx);
     /* Without sound if either fails. */
     peer_ctx->audio_out = audio_out_new(peer_ctx->vcm, audio_flush, peer_ctx,
                                         peer_ctx->server->config.verbose);
@@ -1526,6 +1612,11 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         peer_ctx->disp->Close(peer_ctx->disp);
         disp_server_context_free(peer_ctx->disp);
         peer_ctx->disp = NULL;
+    }
+
+    if (peer_ctx->wwdisplay) {
+        WTSVirtualChannelClose(peer_ctx->wwdisplay);
+        peer_ctx->wwdisplay = NULL;
     }
 
     if (peer_ctx->rdpei) {
@@ -1914,6 +2005,7 @@ rdp_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
             alive = peer_drdynvc_wait(peer_ctx);
         if (alive) {
             disp_dispatch(peer_ctx);
+            wwdisplay_dispatch(peer_ctx);
             gfxredir_dispatch(peer_ctx);
             alive = !peer_ctx->failed;
         }
@@ -2069,13 +2161,18 @@ rdp_server_state(struct rdp_server *server)
 }
 
 bool
-rdp_server_take_size_request(struct rdp_server *server, int *width, int *height)
+rdp_server_take_size_request(struct rdp_server *server, int *width, int *height,
+                             uint32_t *refresh_mhz)
 {
-    bool requested = server->size_request_pending;
+    /* A refresh rate can come before the size; it waits for it. */
+    bool requested = server->size_request_pending && server->wanted_width > 0 &&
+                     server->wanted_height > 0;
 
-    server->size_request_pending = false;
+    if (requested)
+        server->size_request_pending = false;
     *width = server->wanted_width;
     *height = server->wanted_height;
+    *refresh_mhz = server->wanted_refresh_mhz;
     return requested;
 }
 

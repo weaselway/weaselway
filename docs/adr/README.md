@@ -41,6 +41,7 @@ are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 | [0026](0026-placeholder-without-a-compositor.md) | A placeholder screen while no compositor owns the display | Accepted |
 | [0027](0027-immutable-releases.md) | Releases are immutable and carry both images | Accepted |
 | [0028](0028-ww-prefix.md) | Commands carry a `ww-` prefix | Accepted |
+| [0029](0029-refresh-rate-from-the-viewer.md) | The viewer reports its monitor's refresh rate | Accepted |
 
 ## Known risks
 

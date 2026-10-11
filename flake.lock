@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791453679,
-        "narHash": "sha256-J4XfJA55gJxKyjJmf0DYnoHDmvc2OAwXuSaBx9Mklq8=",
+        "lastModified": 1791727265,
+        "narHash": "sha256-W/+p+XHYod3OpGKgVrVwOVV3nPXOWRv21j3OcveYHus=",
         "owner": "weaselway",
         "repo": "dxgdrm",
-        "rev": "6c458da2d9509f757306223871db065d03372691",
+        "rev": "db13d90ada24b0d43e587ce052fff5c18b695997",
         "type": "github"
       },
       "original": {
@@ -43,10 +43,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1791219428,
-        "narHash": "sha256-Z7F359glKzgP9fTylg4mm6hlwIEQek7TQgjYlncsUpM=",
+        "lastModified": 1791727870,
+        "narHash": "sha256-jY/rHFh5k78WY7aX12lyU5ZZePabfXk31Dm+IHZDPDM=",
         "ref": "main",
-        "rev": "213f4e65baa47910d898d2c967ee69b55984bb7c",
+        "rev": "588de0c06ab58e703f113aaa73a110b1cc2b9c42",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/freerdp"
