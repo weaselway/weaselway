@@ -61,10 +61,10 @@
     "mesa-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1791121856,
-        "narHash": "sha256-wdSaoJO0znYKOUD/lCoIwbSG74mCFxoniVqDR7mvLFg=",
+        "lastModified": 1791796405,
+        "narHash": "sha256-E3Om9haqEysSoCnZNnluMdJK3ezUOKQ74afcgw2iZA8=",
         "ref": "mesa-26.2.1-wsl",
-        "rev": "fb96dd2b23ad9fe73990a929b20853f3ea0c27d1",
+        "rev": "e2008be3fa70d4b6e2cc519abb3dfabb58d1e169",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/mesa"
