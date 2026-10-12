@@ -1,0 +1,44 @@
+From 70d30643e4eedc08867536ab8be472c1f60f1da2 Mon Sep 17 00:00:00 2001
+From: Oliver Bestmann <oliver.bestmann@googlemail.com>
+Date: Mon, 12 Oct 2026 10:06:33 +0200
+Subject: [PATCH] monitor: replace a buffer of the wrong size for a modeset
+ test
+
+ensureBufferPresent kept the buffer of the last frame if its format
+matched. After a switch to a larger mode, that buffer no longer covers the
+CRTC, and drivers that require the primary plane to cover it (those using
+drm_atomic_helper_check_plane_state without positioning, like virtio-gpu)
+reject the test with EINVAL. Every mode then failed, and the monitor stayed
+at its old size.
+
+Attach a buffer from the swapchain, which updateSwapchain has just sized to
+the mode, unless the present one has that size too.
+---
+ src/helpers/Monitor.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/helpers/Monitor.cpp b/src/helpers/Monitor.cpp
+index 5d1a7ef9..b821466b 100644
+--- a/src/helpers/Monitor.cpp
++++ b/src/helpers/Monitor.cpp
+@@ -2595,14 +2595,15 @@ void CMonitorState::ensureBufferPresent() {
+         return;
+     }
+ 
+-    if (STATE.buffer) {
++    // the size matters too: after a mode change, the last frame's buffer may not cover the new mode, which drivers may reject
++    if (STATE.buffer && STATE.buffer->size == m_owner->m_output->swapchain->currentOptions().size) {
+         if (const auto params = STATE.buffer->dmabuf(); params.success && params.format == m_owner->m_drmFormat)
+             return;
+     }
+ 
+     // this is required for modesetting being possible and might be missing in case of first tests in the renderer
+     // where we test modes and buffers
+-    Log::logger->log(Log::DEBUG, "CMonitorState::ensureBufferPresent: no buffer or mismatched format, attaching one from the swapchain for modeset being possible");
++    Log::logger->log(Log::DEBUG, "CMonitorState::ensureBufferPresent: no buffer or mismatched format or size, attaching one from the swapchain for modeset being possible");
+     m_owner->m_output->state->setBuffer(m_owner->m_output->swapchain->next(nullptr));
+     m_owner->m_output->swapchain->rollback(); // restore the counter, don't advance the swapchain
+ }
+-- 
+2.55.0
+

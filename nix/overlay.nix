@@ -86,6 +86,30 @@ in
     }
   );
 
+  # Hyprland's backend ignores new modes of a connector that stays connected,
+  # so Hyprland does not follow the viewer's window size. Backport of main of
+  # github.com/weaselway/aquamarine.
+  aquamarine = prev.aquamarine.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [
+      (builtins.path {
+        name = "aquamarine-mode-changes.patch";
+        path = ./aquamarine-0.11-mode-changes.patch;
+      })
+    ];
+  });
+
+  # Hyprland tests a larger mode with the last frame's smaller buffer, which
+  # dxgdrm rejects, so it could not grow. Backport of main of
+  # github.com/weaselway/Hyprland.
+  hyprland = prev.hyprland.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [
+      (builtins.path {
+        name = "hyprland-modeset-buffer-size.patch";
+        path = ./hyprland-0.55-modeset-buffer-size.patch;
+      })
+    ];
+  });
+
   # The userspace half of dxgdrm's virtual display.
   weaselwayd = final.stdenv.mkDerivation {
     pname = "weaselwayd";
