@@ -9,7 +9,9 @@
  * The readback goes through GL rather than D3D12 directly: the frame is a
  * D3D12 shared handle, Mesa's d3d12 driver imports one as a dma-buf
  * (OpenSharedHandle underneath), and glReadPixels on it into a pixel buffer
- * object is the CopyTextureRegion + map a D3D12 presenter would do.
+ * object is the CopyTextureRegion + map a D3D12 presenter would do. Where the
+ * context has ES 3.1, a compute shader stores the pixels into that buffer
+ * instead, which is several times faster than d3d12's CopyTextureRegion.
  *
  * One thread running a GLib main loop: the DRM node (readable when there is a
  * commit to fetch), the RDP server's source, the fence of the readback that
@@ -34,6 +36,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
+#include <GLES3/gl31.h>
 #include <GLES2/gl2ext.h>
 #include <gbm.h>
 #include <xf86drm.h>
@@ -91,6 +94,15 @@ struct weaselwayd {
      * the rows are swapped from RGBA while they are copied out. */
     bool read_bgra;
 
+    /* The readback's compute shader, or 0 when the context cannot have one (ES
+     * 3.0, no compute, a driver that will not take the shader) and every
+     * readback stays on glReadPixels. It samples the frame and stores it
+     * straight into the pixel buffer, because the CopyTextureRegion glReadPixels
+     * ends in is several times slower on the d3d12 driver than a shader store
+     * into the same buffer. */
+    GLuint compute_prog;
+    GLint compute_origin, compute_size, compute_pitch, compute_bgra;
+
     struct import imports[MAX_IMPORTS];
     uint64_t use_counter;
 
@@ -122,7 +134,7 @@ struct weaselwayd {
     bool pending;
     struct rdp_rect pending_rect;
 
-    /* The pixel buffer glReadPixels targets, and the readback using it. */
+    /* The pixel buffer the readback targets, and the readback using it. */
     GLuint pbo;
     size_t pbo_size;
     struct readback readback;
@@ -184,10 +196,92 @@ open_dxgdrm(GError **error)
     return -1;
 }
 
+/* The compute shader the readback runs: it samples the imported frame and
+ * stores the damaged rectangle straight into the pixel buffer, packed the way
+ * the client's buffers hold it. Building it is what decides whether the fast
+ * readback is available at all. */
+static GLuint
+build_compute_readback(struct weaselwayd *p)
+{
+    static const char *src =
+        "#version 310 es\n"
+        "precision highp float;\n"
+        "precision highp int;\n"
+        "layout(local_size_x = 16, local_size_y = 16) in;\n"
+        "layout(std430, binding = 0) buffer Dst { uint v[]; };\n"
+        "uniform sampler2D src;\n"
+        "uniform ivec2 origin;\n"
+        "uniform ivec2 size;\n"
+        "uniform int pitch;\n"
+        "uniform int to_bgra;\n"
+        "void main() {\n"
+        "    ivec2 p = ivec2(gl_GlobalInvocationID.xy);\n"
+        "    if (p.x >= size.x || p.y >= size.y) return;\n"
+        "    vec4 c = texelFetch(src, origin + p, 0);\n"
+        "    v[p.y * pitch + p.x] = packUnorm4x8(to_bgra != 0 ? c.bgra : c);\n"
+        "}\n";
+    GLuint shader, program;
+    GLint ok = 0, loc;
+
+    /* An ES 3.0 context has no compute shaders; asking would only set an
+     * error. */
+    if (strstr((const char *)glGetString(GL_VERSION), "OpenGL ES 3.0"))
+        return 0;
+
+    shader = glCreateShader(GL_COMPUTE_SHADER);
+    if (!shader)
+        return 0;
+    glShaderSource(shader, 1, &src, NULL);
+    glCompileShader(shader);
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[1024] = {0};
+
+        glGetShaderInfoLog(shader, (GLsizei)sizeof(log) - 1, NULL, log);
+        g_warning("the compute readback shader did not build: %s", log);
+        glDeleteShader(shader);
+        return 0;
+    }
+
+    program = glCreateProgram();
+    glAttachShader(program, shader);
+    glLinkProgram(program);
+    glDeleteShader(shader);
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        g_warning("the compute readback program did not link");
+        glDeleteProgram(program);
+        return 0;
+    }
+
+    p->compute_origin = glGetUniformLocation(program, "origin");
+    p->compute_size = glGetUniformLocation(program, "size");
+    p->compute_pitch = glGetUniformLocation(program, "pitch");
+    p->compute_bgra = glGetUniformLocation(program, "to_bgra");
+    loc = glGetUniformLocation(program, "src");
+    glUseProgram(program);
+    glUniform1i(loc, 0);
+    glUseProgram(0);
+    return program;
+}
+
+static const char *
+readback_path(const struct weaselwayd *p)
+{
+    return p->compute_prog ? "compute" : "glReadPixels";
+}
+
 static bool
 init_egl(struct weaselwayd *p, GError **error)
 {
     static const EGLint context_attribs[] = {
+        EGL_CONTEXT_MAJOR_VERSION, 3,
+        EGL_CONTEXT_MINOR_VERSION, 1,
+        EGL_NONE,
+    };
+    /* The compute readback needs ES 3.1; a driver without it still gets a
+     * context, and glReadPixels. */
+    static const EGLint context_attribs_30[] = {
         EGL_CONTEXT_MAJOR_VERSION, 3,
         EGL_NONE,
     };
@@ -218,6 +312,9 @@ init_egl(struct weaselwayd *p, GError **error)
 
     eglBindAPI(EGL_OPENGL_ES_API);
     p->context = eglCreateContext(p->display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, context_attribs);
+    if (p->context == EGL_NO_CONTEXT)
+        p->context = eglCreateContext(p->display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT,
+                                      context_attribs_30);
     if (p->context == EGL_NO_CONTEXT ||
         !eglMakeCurrent(p->display, EGL_NO_SURFACE, EGL_NO_SURFACE, p->context)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "cannot create a GLES3 context (0x%x)",
@@ -249,7 +346,16 @@ init_egl(struct weaselwayd *p, GError **error)
 
     /* Only worth anything on the GPU: llvmpipe cannot open a D3D12 shared
      * handle. */
-    g_message("EGL %d.%d, renderer: %s", major, minor, (const char *)glGetString(GL_RENDERER));
+    g_message("EGL %d.%d, renderer: %s, %s", major, minor, (const char *)glGetString(GL_RENDERER),
+              (const char *)glGetString(GL_VERSION));
+
+    p->compute_prog = build_compute_readback(p);
+    g_message("the readback is %s", p->compute_prog ? "a compute shader store"
+                                                     : "glReadPixels (no ES 3.1 compute)");
+    /* A shader that did not build leaves an error behind, which read_cursor
+     * would otherwise trip over. */
+    while (glGetError() != GL_NO_ERROR)
+        ;
     return true;
 }
 
@@ -312,6 +418,13 @@ get_import(struct weaselwayd *p, uint64_t buffer_id, int fd, uint32_t width, uin
         glGenTextures(1, &import->texture);
         glBindTexture(GL_TEXTURE_2D, import->texture);
         image_target_texture_2d(GL_TEXTURE_2D, import->image);
+        /* Sampling it in the readback's compute shader needs a complete
+         * texture: one level with GL's default mipmapping min filter is not
+         * one, and texelFetch would read black. */
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
         glGenFramebuffers(1, &import->fbo);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, import->fbo);
@@ -400,11 +513,12 @@ frame_done(struct weaselwayd *p)
 
     if (p->verbose)
         g_debug("frame %u: %s buffer %" G_GUINT64_FORMAT ", %dx%d+%d+%d (%.1f%%) read back in "
-                "%.2f ms (issue %.2f)",
+                "%.2f ms (issue %.2f, %s)",
                 p->frames, p->dumb ? "dumb" : "d3d12", rb->buffer_id, rb->rect.width,
                 rb->rect.height, rb->rect.x, rb->rect.y,
                 100.0 * rb->rect.width * rb->rect.height / ((double)p->width * p->height),
-                ms_since(rb->started, done), ms_since(rb->started, rb->issued));
+                ms_since(rb->started, done), ms_since(rb->started, rb->issued),
+                p->dumb ? "dumb" : readback_path(p));
 }
 
 /* The frame did not make it; its part of the screen is still owed. */
@@ -519,8 +633,25 @@ readback_begin(struct weaselwayd *p)
     }
 
     /* Tightly packed at offset 0: the transfer is exactly the rect. */
-    glReadPixels(rb->rect.x, rb->rect.y, rb->rect.width, rb->rect.height,
-                 p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    if (p->compute_prog) {
+        glUseProgram(p->compute_prog);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, import->texture);
+        glUniform2i(p->compute_origin, rb->rect.x, rb->rect.y);
+        glUniform2i(p->compute_size, rb->rect.width, rb->rect.height);
+        glUniform1i(p->compute_pitch, rb->rect.width);
+        glUniform1i(p->compute_bgra, p->read_bgra ? 1 : 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, p->pbo);
+        glDispatchCompute((GLuint)(rb->rect.width + 15) / 16,
+                          (GLuint)(rb->rect.height + 15) / 16, 1);
+        /* The pixels are read with a map of the buffer, after the fence. */
+        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
+        glUseProgram(0);
+    } else {
+        glReadPixels(rb->rect.x, rb->rect.y, rb->rect.width, rb->rect.height,
+                     p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    }
     readback_arm(p);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
@@ -1088,10 +1219,11 @@ on_stats(gpointer data)
      * commits than frames means frames were merged. */
     if (p->stat_frames && !p->verbose)
         g_message("%u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, %.2f ms and "
-                  "%.0f%% of the screen each on average",
+                  "%.0f%% of the screen each on average, %s",
                   p->stat_frames, p->primary_seq - p->stat_primary_seq,
                   ms_since(p->stat_since, now) / 1000.0, p->stat_ms / p->stat_frames,
-                  100.0 * p->stat_pixels / p->stat_frames / (screen > 0 ? screen : 1.0));
+                  100.0 * p->stat_pixels / p->stat_frames / (screen > 0 ? screen : 1.0),
+                  p->dumb ? "dumb" : readback_path(p));
     p->stat_frames = 0;
     p->stat_primary_seq = p->primary_seq;
     p->stat_ms = p->stat_pixels = 0.0;

@@ -15,6 +15,16 @@ falls behind would otherwise collect a queue of frames.
   d3d12 driver) and reads it back with `glReadPixels` into a pixel buffer
   object. That is the `CopyTextureRegion` and map a D3D12 presenter would do,
   without a second graphics API.
+- Where the context has OpenGL ES 3.1, a compute shader samples the imported
+  texture and stores the pixels into the same pixel buffer object instead
+  (issue #3). d3d12's `CopyTextureRegion` from the texture into a linear
+  buffer runs at about 1.6 to 1.8 GiB/s, while a shader store was measured
+  at about twice the frame rate on an RTX 4070 SUPER. Without ES 3.1 (Intel
+  HD 630 gets ES 3.0 from d3d12) weaselwayd stays on `glReadPixels`. The
+  startup log and the statistics line name the path in use. On a GeForce
+  940MX at 1280x768 a full-screen readback took 8.3 ms with the shader and
+  11.3 ms with `glReadPixels`. At about 10% of the screen the shader was
+  slower (2.7 against 2.0 ms), so it only pays off for large damage.
 - Only the bounding box of the damage that dxgdrm reports is read back,
   widened to a multiple of 64 pixels (D3D12's 256-byte row pitch). One
   readback is outstanding at a time.
