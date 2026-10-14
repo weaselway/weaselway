@@ -12,6 +12,7 @@
 # is the one the system was built from.
 
 export XDG_CURRENT_DESKTOP=sway
-export WLR_DRM_DEVICES=/dev/dri/card0
+# dxgdrm, not card0: from kernel 6.18.54.1 on card0 is WSL's vgem.
+export WLR_DRM_DEVICES=/dev/dri/by-path/platform-dxgdrm-card
 
 exec sway "$@"

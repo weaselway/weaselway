@@ -12,7 +12,7 @@ installation and day-to-day use, see the [README](README.md).
 ```mermaid
 flowchart TD
     comp["compositor (mutter, KWin, sway, ...)<br/>on its KMS backend"]
-    dxgdrm["dxgdrm<br/>card0 + renderD128"]
+    dxgdrm["dxgdrm<br/>KMS + render node"]
     input["/dev/input/event*<br/>(uinput)"]
     wwd["weaselwayd"]
     audio["PipeWire<br/>(audio)"]
@@ -229,18 +229,21 @@ on a WSL installation. This section records those failures.
 - The module is keyed on the kernel release. `weaselway-prep` loads
   `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and the `dxgdrm` flake
   lists the releases it is built for in its `kernels` attribute, currently
-  `6.18.33.2-microsoft-standard-WSL2` and `6.18.40.1-microsoft-standard-WSL2`.
+  `6.18.33.2`, `6.18.40.1` and `6.18.54.1` (`-microsoft-standard-WSL2`).
   On any other kernel the file does not
   exist, the unit logs that, and `ww-start-session` refuses to start for lack of
-  the KMS node. Supporting a new WSL kernel means adding its captured config
-  and source hash to that flake (see dxgdrm's WEASELWAY.md).
-- From `6.18.40.1` on the WSL kernel has no DRM core. For those kernels the
-  package also contains `hdmi.ko`, `drm.ko` and `drm_kms_helper.ko`, built from
-  the same kernel source, and a `modules.dep` that loads them before `dxgdrm`.
-  `drm.ko` has to be loaded before systemd-logind starts: logind's device
-  policy (`DeviceAllow=char-drm`) only covers device classes that are
-  registered at that moment, and without it logind refuses to open
-  `/dev/dri/card0` for the compositor. A drop-in for `modprobe@drm.service`,
+  the KMS node. Supporting a new WSL kernel means running dxgdrm's
+  `add-kernel.sh` (see dxgdrm's WEASELWAY.md).
+- `6.18.40.1` has no DRM core, `6.18.54.1` has it but no KMS helpers. For
+  those kernels the package also contains what is missing (`hdmi.ko`, `drm.ko`,
+  `drm_kms_helper.ko`, or only the last), built from the same kernel source,
+  and a `modules.dep` that loads them before `dxgdrm`. On `6.18.54.1` WSL's
+  built-in `vgem` takes `card0` and `renderD128`, and dxgdrm gets the next
+  nodes; nothing in weaselway relies on the numbers.
+  Where it is a module, `drm.ko` has to be loaded before systemd-logind
+  starts: logind's device policy (`DeviceAllow=char-drm`) only covers device
+  classes that are registered at that moment, and without it logind refuses to
+  open dxgdrm's KMS node for the compositor. A drop-in for `modprobe@drm.service`,
   which logind already orders itself after, loads it from the package.
 - `services.udev.enable` is set because NixOS-WSL disables udev, and dxgdrm's rule, which sets mode
   0666 on its nodes, needs it.
@@ -445,7 +448,7 @@ strace -f -e trace=openat …                     # which vendor UMD / dependenc
 cat /proc/sys/fs/binfmt_misc/WSLInterop         # interop handler present?
 ls -la /run/user/1000/pulse/                    # native must be a socket, not a symlink into /mnt/wslg
 wpctl status; pw-top -b -n 3                    # sink present, graph running, ERR column
-ls -l /dev/dri /dev/uinput                      # card0, renderD128; uinput group input
+ls -l /dev/dri/by-path /dev/uinput              # platform-dxgdrm-{card,render}; uinput group input
 loginctl; loginctl seat-status seat0            # the session is on seat0 and owns the devices
 journalctl -u weaselway-session -b              # the compositor
 journalctl --user -u weaselwayd -b              # weaselwayd: …, rdp: …, audio: …, clipboard: …

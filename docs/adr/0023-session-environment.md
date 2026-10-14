@@ -15,13 +15,15 @@ nothing (`14c33b3`).
 `/etc/environment.d/10-weaselway.conf` sets:
 
 - `GALLIUM_DRIVER=d3d12`.
+- `LIBVA_DRIVER_NAME=d3d12`. libva picks its driver by the DRM driver's name
+  and maps only WSL's `vgem` to d3d12, not `dxgdrm`.
 - `GSK_RENDERER=gl`. The file's comment: Vulkan is experimental with d3d12
   (dzn), and GL works.
 - `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1`, until WebKit binds `/dev/dxg`
   (fixed upstream in WebKit PR 75066).
 - `WEASELWAY_VSOCK_PORT=3389` (see 0003).
 
-`ww-start-session` passes `GALLIUM_DRIVER`, `GSK_RENDERER` and
+`ww-start-session` passes `GALLIUM_DRIVER`, `LIBVA_DRIVER_NAME`, `GSK_RENDERER` and
 `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS` to the session's unit as well. The
 two lists must agree.
 

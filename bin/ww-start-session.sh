@@ -108,8 +108,9 @@ if systemctl --quiet is-active "${UNIT}.service"; then
     exit 1
 fi
 
-if [ ! -e /dev/dri/card0 ]; then
-    echo "error: no /dev/dri/card0 -- did weaselway-prep load dxgdrm? (systemctl status weaselway-prep)" >&2
+# Not /dev/dri/card0: from kernel 6.18.54.1 on that is WSL's vgem.
+if [ ! -d /sys/devices/platform/dxgdrm/drm ]; then
+    echo "error: no dxgdrm node -- did weaselway-prep load dxgdrm? (systemctl status weaselway-prep)" >&2
     exit 1
 fi
 
@@ -149,6 +150,7 @@ PROPERTIES=(
     --property="Environment=PATH=${SESSION_PATH}"
     # The d3d12 driver's own needs, as in environment.d/10-weaselway.conf.
     --property=Environment=GALLIUM_DRIVER=d3d12
+    --property=Environment=LIBVA_DRIVER_NAME=d3d12
     --property=Environment=GSK_RENDERER=gl
     --property=Environment=WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 )

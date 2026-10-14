@@ -41,8 +41,9 @@ installation instructions.
 - Windows with WSL2, on an x86_64 machine. The image is x86_64 only.
 - A GPU with a Windows driver that supports WSL GPU compute (the same driver
   that provides GPU access to other WSL distros).
-- One of the WSL kernels `6.18.33.2-microsoft-standard-WSL2` (WSL 2.7) or
-  `6.18.40.1-microsoft-standard-WSL2` (WSL 3.0). The `dxgdrm` module is built
+- One of the WSL kernels `6.18.33.2-microsoft-standard-WSL2` (WSL 2.7),
+  `6.18.40.1-microsoft-standard-WSL2` (WSL 3.0.1) or
+  `6.18.54.1-microsoft-standard-WSL2` (WSL 3.0.3). The `dxgdrm` module is built
   for these kernel releases, and another release cannot load it.
   Check yours with `uname -r` inside any WSL distro, and see
   [Limitations](#limitations) for what happens when WSL updates its kernel.
@@ -148,7 +149,7 @@ Then delete the desktop shortcut if you installed it.
 ## Limitations
 
 - Weaselway supports the WSL kernel releases it was built for, currently
-  `6.18.33.2-microsoft-standard-WSL2` and `6.18.40.1-microsoft-standard-WSL2`.
+  `6.18.33.2`, `6.18.40.1` and `6.18.54.1` (`-microsoft-standard-WSL2`).
   After `wsl --update` installs a kernel that is not among them, the module is
   missing and no session starts until a Weaselway release adds that kernel.
   Each kernel needs its own build of `dxgdrm`, with the kernel's configuration
