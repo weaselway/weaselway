@@ -1687,6 +1687,8 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     }
     (void)freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, FALSE);
+    /* NLA with the extended handshake, on by default since FreeRDP 3.32. */
+    (void)freerdp_settings_set_bool(settings, FreeRDP_ExtSecurity, FALSE);
 
     if (!client->Initialize(client))
         goto fail;
