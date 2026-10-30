@@ -57,9 +57,12 @@ The script changes the system in these places:
   display, and NetworkManager would interfere with the network WSL sets up.
 - It removes snapd and all installed snaps. Snaps bring their own Mesa, which
   cannot use the GPU through dxgdrm. Ubuntu's `chromium` and `firefox`
-  packages only install snaps, so apt now refuses them. Install browsers
-  from `.deb` packages instead, for example Google Chrome from
-  google.com/chrome or Firefox from Mozilla's apt repository.
+  packages only install snaps, so apt would refuse them.
+- It adds the [xtradeb PPA](https://launchpad.net/~xtradeb/+archive/ubuntu/apps),
+  a community repository with Chromium as a `.deb`, and pins it in
+  `/etc/apt/preferences.d/xtradeb` so that apt takes only `chromium*`
+  packages from it. `sudo apt install chromium` then installs that build.
+  For Firefox, use Mozilla's apt repository.
 - It installs Mesa to `/opt/weaselway/mesa` and puts that directory ahead of
   Ubuntu's libraries with `/etc/ld.so.conf.d/00-weaselway-mesa.conf`. Ubuntu's
   Mesa packages stay installed but are no longer used.

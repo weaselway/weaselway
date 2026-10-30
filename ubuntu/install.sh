@@ -55,6 +55,19 @@ EOF
 # The WSL image ships snapd, and the pin above only stops new installs. Snaps
 # bring their own Mesa without d3d12 on dxgdrm, so remove snapd and its snaps.
 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove snapd
+# Ubuntu's chromium is a snap. xtradeb has it as a .deb; take only Chromium
+# from there, so the PPA replaces nothing else.
+sudo add-apt-repository -y -n ppa:xtradeb/apps
+sudo tee /etc/apt/preferences.d/xtradeb > /dev/null <<'EOF'
+# Installed by weaselway: only Chromium from the xtradeb PPA.
+Package: chromium*
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: 700
+
+Package: *
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: -1
+EOF
 # Mesa's build dependencies come from its source package.
 sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
 sudo apt-get update
