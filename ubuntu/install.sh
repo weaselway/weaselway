@@ -52,6 +52,9 @@ Package: gdm3 network-manager modemmanager wpasupplicant cups cups-daemon bluez 
 Pin: release *
 Pin-Priority: -1
 EOF
+# The WSL image ships snapd, and the pin above only stops new installs. Snaps
+# bring their own Mesa without d3d12 on dxgdrm, so remove snapd and its snaps.
+sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove snapd
 # Mesa's build dependencies come from its source package.
 sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
 sudo apt-get update
