@@ -68,6 +68,26 @@ Package: *
 Pin: release o=LP-PPA-xtradeb-apps
 Pin-Priority: -1
 EOF
+# Ubuntu's firefox is a snap too; Mozilla publishes a .deb in its own repository.
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL -o /etc/apt/keyrings/packages.mozilla.org.asc https://packages.mozilla.org/apt/repo-signing-key.gpg
+sudo tee /etc/apt/sources.list.d/mozilla.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://packages.mozilla.org/apt
+Suites: mozilla
+Components: main
+Signed-By: /etc/apt/keyrings/packages.mozilla.org.asc
+EOF
+sudo tee /etc/apt/preferences.d/mozilla > /dev/null <<'EOF'
+# Installed by weaselway: Firefox from Mozilla, never Ubuntu's snap wrapper.
+Package: *
+Pin: origin packages.mozilla.org
+Pin-Priority: 1000
+
+Package: firefox*
+Pin: release o=Ubuntu
+Pin-Priority: -1
+EOF
 # Mesa's build dependencies come from its source package.
 sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
 sudo apt-get update

@@ -62,7 +62,9 @@ The script changes the system in these places:
   a community repository with Chromium as a `.deb`, and pins it in
   `/etc/apt/preferences.d/xtradeb` so that apt takes only `chromium*`
   packages from it. `sudo apt install chromium` then installs that build.
-  For Firefox, use Mozilla's apt repository.
+- It adds Mozilla's apt repository (`/etc/apt/sources.list.d/mozilla.sources`)
+  and prefers it for `firefox` in `/etc/apt/preferences.d/mozilla`.
+  `sudo apt install firefox` then installs Mozilla's `.deb`.
 - It installs Mesa to `/opt/weaselway/mesa` and puts that directory ahead of
   Ubuntu's libraries with `/etc/ld.so.conf.d/00-weaselway-mesa.conf`. Ubuntu's
   Mesa packages stay installed but are no longer used.
