@@ -390,7 +390,9 @@ static bool
 ensure_pool(struct peer_context *peer_ctx, int width, int height)
 {
     GfxRedirServerContext *redir = peer_ctx->gfxredir;
-    int stride = width * 4;
+    /* Rows a multiple of 256 bytes: the client can then copy them on the GPU
+     * straight out of the pool (D3D12's placed-footprint pitch). */
+    int stride = (width * 4 + 255) & ~255;
     size_t size = (size_t)stride * (size_t)height;
     /* Buffers are a whole number of pages apart: the pool is a mapped file,
      * so its length has to be page aligned (fallocate on the share rejects
@@ -598,12 +600,13 @@ rdp_server_begin_frame(struct rdp_server *server, const struct rdp_rect *rect,
 }
 
 uint8_t *
-rdp_server_frame_pixels(struct rdp_server *server, const struct rdp_frame *frame)
+rdp_server_frame_pixels(struct rdp_server *server, const struct rdp_frame *frame, size_t *stride)
 {
     struct peer_context *peer_ctx = frame_peer(server, frame);
 
     if (!peer_ctx)
         return NULL;
+    *stride = (size_t)peer_ctx->pool_stride;
     return (uint8_t *)peer_ctx->shm_addr + peer_ctx->buffers[frame->index].offset;
 }
 

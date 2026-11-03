@@ -109,14 +109,15 @@ void rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, in
  *   begin   picks a buffer the client is not reading and brings it up to date
  *           everywhere except @rect. Only in state RDP_READY; until the frame
  *           is ended or cancelled the state is RDP_BUSY.
- *   pixels  the buffer, width * 4 bytes a row, B G R X. NULL if the pool went
+ *   pixels  the buffer, @stride bytes a row, B G R X. NULL if the pool went
  *           away in the meantime (the client left or the screen was resized);
  *           the frame is then over. Valid until the main loop runs again.
  *   end     tells the client to show @rect of it.
  */
 bool rdp_server_begin_frame(struct rdp_server *server, const struct rdp_rect *rect,
                             struct rdp_frame *frame);
-uint8_t *rdp_server_frame_pixels(struct rdp_server *server, const struct rdp_frame *frame);
+uint8_t *rdp_server_frame_pixels(struct rdp_server *server, const struct rdp_frame *frame,
+                                 size_t *stride);
 void rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
                           const struct rdp_rect *rect);
 void rdp_server_cancel_frame(struct rdp_server *server, const struct rdp_frame *frame);

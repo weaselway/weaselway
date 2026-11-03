@@ -6,9 +6,10 @@
 #ifndef WEASELWAY_PLACEHOLDER_H
 #define WEASELWAY_PLACEHOLDER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
-/* Draws the screen into @pixels, @width * 4 bytes a row, B G R X. */
-void placeholder_draw(uint8_t *pixels, int width, int height);
+/* Draws the screen into @pixels, @stride bytes a row, B G R X. */
+void placeholder_draw(uint8_t *pixels, size_t stride, int width, int height);
 
 #endif

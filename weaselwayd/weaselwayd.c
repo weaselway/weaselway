@@ -662,10 +662,10 @@ readback_begin(struct weaselwayd *p)
 
 /* Once the fence has signalled: copy the rect out of the pixel buffer. */
 static bool
-readback_copy(struct weaselwayd *p, uint8_t *pixels)
+readback_copy(struct weaselwayd *p, uint8_t *pixels, size_t stride)
 {
     const struct rdp_rect *rect = &p->readback.rect;
-    size_t row_bytes = (size_t)rect->width * 4, stride = (size_t)p->width * 4;
+    size_t row_bytes = (size_t)rect->width * 4;
     const uint8_t *src;
 
     glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
@@ -699,6 +699,7 @@ readback_poll(struct weaselwayd *p)
     struct readback *rb = &p->readback;
     bool signalled;
     uint8_t *pixels;
+    size_t stride;
 
     if (!rb->active)
         return;
@@ -724,11 +725,11 @@ readback_poll(struct weaselwayd *p)
 
     /* The client may have left, or been resized, while the pixels were on
      * their way. Whoever comes next asks for the whole screen anyway. */
-    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame);
+    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame, &stride);
     if (!pixels)
         return;
 
-    if (readback_copy(p, pixels))
+    if (readback_copy(p, pixels, stride))
         frame_done(p);
     else
         frame_failed(p);
@@ -739,11 +740,10 @@ readback_poll(struct weaselwayd *p)
  * goes on to the client is @rect. XRGB8888 is B, G, R, X in memory, as
  * wanted. */
 static bool
-read_dumb(struct weaselwayd *p, uint8_t *pixels, const struct rdp_rect *rect)
+read_dumb(struct weaselwayd *p, uint8_t *pixels, size_t stride, const struct rdp_rect *rect)
 {
     struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_PRIMARY };
     size_t size = (size_t)p->pitch * (size_t)p->height;
-    size_t stride = (size_t)p->width * 4;
     size_t offset = (size_t)rect->x * 4;
 
     if (p->dumb_size < size) {
@@ -1045,6 +1045,7 @@ present_placeholder(struct weaselwayd *p)
     struct rdp_rect rect = { 0, 0, p->screen_width, p->screen_height };
     struct rdp_frame frame;
     uint8_t *pixels;
+    size_t stride;
 
     if (rdp_server_take_full_request(p->rdp))
         p->placeholder_owed = true;
@@ -1053,13 +1054,13 @@ present_placeholder(struct weaselwayd *p)
 
     if (!rdp_server_begin_frame(p->rdp, &rect, &frame))
         return;
-    pixels = rdp_server_frame_pixels(p->rdp, &frame);
+    pixels = rdp_server_frame_pixels(p->rdp, &frame, &stride);
     if (!pixels) {
         rdp_server_cancel_frame(p->rdp, &frame);
         return;
     }
 
-    placeholder_draw(pixels, rect.width, rect.height);
+    placeholder_draw(pixels, stride, rect.width, rect.height);
     rdp_server_end_frame(p->rdp, &frame, &rect);
     p->placeholder_owed = false;
     p->placeholder_up = true;
@@ -1081,6 +1082,7 @@ try_present(struct weaselwayd *p)
     enum rdp_state state = rdp_server_state(p->rdp);
     struct rdp_rect rect;
     uint8_t *pixels;
+    size_t stride;
 
     if (rb->active)
         return;
@@ -1133,8 +1135,8 @@ try_present(struct weaselwayd *p)
     }
 
     rb->issued = rb->started;
-    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame);
-    if (pixels && read_dumb(p, pixels, &rect))
+    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame, &stride);
+    if (pixels && read_dumb(p, pixels, stride, &rect))
         frame_done(p);
     else
         frame_failed(p);

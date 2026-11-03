@@ -48,10 +48,10 @@ find_glyph(char c)
 }
 
 static void
-fill(uint8_t *pixels, int width, int x, int y, int w, int h, uint32_t color)
+fill(uint8_t *pixels, size_t stride, int x, int y, int w, int h, uint32_t color)
 {
     for (int row = y; row < y + h; row++) {
-        uint32_t *px = (uint32_t *)(void *)(pixels + ((size_t)row * (size_t)width + (size_t)x) * 4);
+        uint32_t *px = (uint32_t *)(void *)(pixels + (size_t)row * stride + (size_t)x * 4);
 
         for (int i = 0; i < w; i++)
             px[i] = color;
@@ -59,7 +59,7 @@ fill(uint8_t *pixels, int width, int x, int y, int w, int h, uint32_t color)
 }
 
 void
-placeholder_draw(uint8_t *pixels, int width, int height)
+placeholder_draw(uint8_t *pixels, size_t stride, int width, int height)
 {
     int length = (int)strlen(MESSAGE);
     int columns = length * ADVANCE - 1;
@@ -69,7 +69,7 @@ placeholder_draw(uint8_t *pixels, int width, int height)
     int x0 = (width - columns * scale) / 2;
     int y0 = (height - GLYPH_H * scale) / 2;
 
-    fill(pixels, width, 0, 0, width, height, BACKGROUND);
+    fill(pixels, stride, 0, 0, width, height, BACKGROUND);
     if (x0 < 0 || y0 < 0)
         return;
 
@@ -81,7 +81,7 @@ placeholder_draw(uint8_t *pixels, int width, int height)
         for (int row = 0; row < GLYPH_H; row++) {
             for (int col = 0; col < GLYPH_W; col++) {
                 if (glyph->rows[row] & (1 << (GLYPH_W - 1 - col)))
-                    fill(pixels, width, x0 + (i * ADVANCE + col) * scale, y0 + row * scale,
+                    fill(pixels, stride, x0 + (i * ADVANCE + col) * scale, y0 + row * scale,
                          scale, scale, FOREGROUND);
             }
         }
