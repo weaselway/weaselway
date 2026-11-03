@@ -102,6 +102,20 @@ tests/selection-tool: tests/selection-tool.c $(SELECTION) selection.h selection-
 tests/rdp-harness: tests/rdp-harness.c $(filter-out weaselwayd.o,$(OBJECTS))
 	$(CC) $(CFLAGS) $(LDFLAGS) -I. -o $@ $^ $(LDLIBS)
 
+# A fullscreen EGL window redrawing every pixel every frame, as a load for
+# the frame path; see tests/egl-load.c.
+XDG_SHELL_XML := $(shell pkg-config --variable=pkgdatadir wayland-protocols)/stable/xdg-shell/xdg-shell.xml
+
+tests/xdg-shell-client-protocol.h: $(XDG_SHELL_XML)
+	$(WAYLAND_SCANNER) client-header $< $@
+
+tests/xdg-shell-protocol.c: $(XDG_SHELL_XML)
+	$(WAYLAND_SCANNER) private-code $< $@
+
+tests/egl-load: tests/egl-load.c tests/xdg-shell-protocol.c tests/xdg-shell-client-protocol.h
+	$(CC) $(TEST_CFLAGS) -Itests -o $@ tests/egl-load.c tests/xdg-shell-protocol.c \
+		$(shell pkg-config --cflags --libs wayland-client wayland-egl egl glesv2)
+
 check: tests/test-formats
 	tests/test-formats
 
@@ -110,6 +124,7 @@ install: weaselwayd
 
 clean:
 	rm -f weaselwayd weaselwayd-asan $(OBJECTS) $(ASAN_OBJECTS) tests/test-formats tests/selection-tool \
-		tests/rdp-harness ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
+		tests/rdp-harness tests/egl-load tests/xdg-shell-client-protocol.h tests/xdg-shell-protocol.c \
+		ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
 
 .PHONY: install clean asan analyze check
