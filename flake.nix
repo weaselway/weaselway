@@ -23,7 +23,7 @@
     # The mesa fork. Fetched with git: its .gitattributes has eol=crlf rules,
     # which Nix versions apply differently to GitHub tarballs, breaking the hash.
     mesa-src = {
-      url = "git+https://github.com/weaselway/mesa?ref=mesa-26.2.1-wsl&shallow=1";
+      url = "git+https://github.com/weaselway/mesa?ref=mesa-26.2.6-wsl&shallow=1";
       flake = false;
     };
   };

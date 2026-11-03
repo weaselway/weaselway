@@ -68,7 +68,7 @@ Everything comes from the flake.
 
 | Component | Source | Where it runs |
 |---|---|---|
-| mesa with the d3d12 changes | `weaselway/mesa`, branch `mesa-26.2.1-wsl` | user distro (`/run/opengl-driver`) |
+| mesa with the d3d12 changes | `weaselway/mesa`, branch `mesa-26.2.6-wsl` | user distro (`/run/opengl-driver`) |
 | dxgdrm kernel module | `weaselway/dxgdrm` flake | user distro kernel, loaded from the store |
 | weaselwayd | [weaselwayd/](weaselwayd) in this repo | user distro, as a unit of the user manager |
 | mutter | nixpkgs, plus [one patch](nix/mutter-stage-relayout.patch) | user distro (gnome-shell links it) |
@@ -110,7 +110,7 @@ problems that show up there but are unrelated to RDP:
 
 - **weaselway** (this repository): the flake, the NixOS module, the overlay, the image
   configuration, weaselwayd and the shell scripts.
-- **mesa**: the image builds the branch `mesa-26.2.1-wsl` with nixpkgs' Mesa package definition.
+- **mesa**: the image builds the branch `mesa-26.2.6-wsl` with nixpkgs' Mesa package definition.
   `main` carries the same commits on top of upstream main.
 - **dxgdrm**: `main`. The module is built with the toolchain the WSL kernel itself is built with,
   the kernel.org crosstool gcc 13.2.0 with binutils 2.41. The kernel sets `CONFIG_MODVERSIONS` and
@@ -359,7 +359,7 @@ weaselway.cachix.org. A machine that uses it as a substituter (`extra-substitute
 FreeRDP and the Windows viewer build quickly; the mingw gcc is cached for x86_64.
 
 To build against unpushed commits of the other repositories, override the input, for example
-`--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.1-wsl'`. The same works for `freerdp` and
+`--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.6-wsl'`. The same works for `freerdp` and
 `dxgdrm`.
 
 ### Building on aarch64
