@@ -60,23 +60,11 @@ struct import {
     GLuint fbo;
 };
 
-enum readback_state {
-    READBACK_IDLE,
-    /* The GPU is on it, and reads the compositor's buffer. */
-    READBACK_ISSUED,
-    /* The pixels are in @pbo, to be copied to the client's buffer when it
-     * has one free. */
-    READBACK_LANDED,
-};
-
-/* A readback of a part of the screen into a pixel buffer of its own. At most
- * one is issued at a time: damage that arrives meanwhile is kept and read with
- * the next one. The next is issued as soon as the last has landed, while its
- * pixels are still to be copied to the client. */
+/* A readback that has been issued and whose pixels have not landed yet. At
+ * most one at a time: damage that arrives meanwhile is kept and read with the
+ * next one. */
 struct readback {
-    enum readback_state state;
-    GLuint pbo;
-    size_t pbo_size;
+    bool active;
     /* The fence behind the copy: an EGL one that has a descriptor to wait on
      * (@fence_fd, watched by @fence_watch), or failing that a GL one that can
      * only be asked. */
@@ -86,10 +74,12 @@ struct readback {
     guint fence_watch;
     bool fence_fired;
     struct rdp_rect rect;
+    /* The buffer of the client's pool the pixels go to. */
+    struct rdp_frame frame;
     uint64_t buffer_id;
     /* The screen's size when it was issued. */
     int width, height;
-    /* @landed: the fence was seen signalled. */
+    /* @landed: the fence was seen signalled and the copy into @frame began. */
     gint64 started, issued, landed;
 };
 
@@ -145,25 +135,23 @@ struct weaselwayd {
     bool pending;
     struct rdp_rect pending_rect;
 
-    struct readback readbacks[2];
+    /* The pixel buffer the readback targets, and the readback using it. */
+    GLuint pbo;
+    size_t pbo_size;
+    struct readback readback;
     /* EGL_ANDROID_native_fence_sync: a readback's fence can be waited for. */
     bool fence_fds;
-    /* The source that looks at the issued readback's fence: every millisecond if
+    /* The source that looks at the readback's fence: every millisecond if
      * that is the only way to learn that it has signalled, and otherwise once,
      * when it should long have. 0 while there is nothing to look at. */
     guint readback_tick;
-    /* Issue the next readback and ack the compositor before the copy of the
-     * landed one, rather than after it. */
-    bool overlap;
 
     bool verbose;
 
     unsigned frames;
     /* Since the last statistics line. */
     unsigned stat_frames;
-    double stat_ms, stat_pixels, stat_fence_ms, stat_copy_ms;
-    /* Copies made while the next readback was already issued. */
-    unsigned stat_overlapped;
+    double stat_ms, stat_pixels;
     gint64 stat_since;
     uint64_t stat_primary_seq;
 };
@@ -175,10 +163,6 @@ static EGLint (*dup_native_fence_fd)(EGLDisplay display, EGLSync sync);
 /* Set to 1 to look at the readback's fence every millisecond instead of
  * waiting on its descriptor, for when a stall has to be pinned on that. */
 #define NO_FENCE_FD_ENV "WEASELWAY_NO_FENCE_FD"
-
-/* Set to 1 to copy a landed readback before the next is issued and the
- * compositor acked, to compare the two on a given GPU. */
-#define NO_OVERLAP_ENV "WEASELWAY_NO_OVERLAP"
 
 static double
 ms_since(gint64 since, gint64 now)
@@ -514,33 +498,19 @@ add_full_damage(struct weaselwayd *p)
     add_damage(p, 0, 0, p->width, p->height);
 }
 
-static struct readback *
-readback_in(struct weaselwayd *p, enum readback_state state)
-{
-    for (size_t i = 0; i < G_N_ELEMENTS(p->readbacks); i++) {
-        if (p->readbacks[i].state == state)
-            return &p->readbacks[i];
-    }
-    return NULL;
-}
-
-/* The frame's pixels are in @frame since @copied: show them, and say so. */
+/* The frame's pixels are where they belong: show them, and say so. */
 static void
-frame_done(struct weaselwayd *p, const struct readback *rb, const struct rdp_frame *frame,
-           gint64 copied)
+frame_done(struct weaselwayd *p)
 {
+    struct readback *rb = &p->readback;
     gint64 done = g_get_monotonic_time();
 
-    rdp_server_end_frame(p->rdp, frame, &rb->rect);
+    rdp_server_end_frame(p->rdp, &rb->frame, &rb->rect);
     p->frames++;
 
     p->stat_frames++;
     p->stat_ms += ms_since(rb->started, done);
     p->stat_pixels += (double)rb->rect.width * rb->rect.height;
-    p->stat_fence_ms += ms_since(rb->issued, rb->landed);
-    p->stat_copy_ms += ms_since(copied, done);
-    if (readback_in(p, READBACK_ISSUED))
-        p->stat_overlapped++;
 
     if (p->verbose)
         g_debug("frame %u: %s buffer %" G_GUINT64_FORMAT ", %dx%d+%d+%d (%.1f%%) read back in "
@@ -549,31 +519,19 @@ frame_done(struct weaselwayd *p, const struct readback *rb, const struct rdp_fra
                 rb->rect.height, rb->rect.x, rb->rect.y,
                 100.0 * rb->rect.width * rb->rect.height / ((double)p->width * p->height),
                 ms_since(rb->started, done), ms_since(rb->started, rb->issued),
-                ms_since(rb->issued, rb->landed), ms_since(copied, done),
+                ms_since(rb->issued, rb->landed), ms_since(rb->landed, done),
                 p->dumb ? "dumb" : readback_path(p));
 }
 
 /* The frame did not make it; its part of the screen is still owed. */
 static void
-frame_failed(struct weaselwayd *p, const struct readback *rb)
+frame_failed(struct weaselwayd *p)
 {
+    struct readback *rb = &p->readback;
+
+    rdp_server_cancel_frame(p->rdp, &rb->frame);
     add_damage(p, rb->rect.x, rb->rect.y, rb->rect.x + rb->rect.width,
                rb->rect.y + rb->rect.height);
-}
-
-/* The landed readback that was issued first: the client gets them in order. */
-static struct readback *
-oldest_landed(struct weaselwayd *p)
-{
-    struct readback *oldest = NULL;
-
-    for (size_t i = 0; i < G_N_ELEMENTS(p->readbacks); i++) {
-        struct readback *rb = &p->readbacks[i];
-
-        if (rb->state == READBACK_LANDED && (!oldest || rb->issued < oldest->issued))
-            oldest = rb;
-    }
-    return oldest;
 }
 
 /*
@@ -598,8 +556,10 @@ static gboolean on_readback_fence(gint fd, GIOCondition condition, gpointer data
  * a damage-sized readback takes about two.
  */
 static void
-readback_arm(struct weaselwayd *p, struct readback *rb)
+readback_arm(struct weaselwayd *p)
 {
+    struct readback *rb = &p->readback;
+
     rb->egl_sync = EGL_NO_SYNC;
     rb->sync = NULL;
     rb->fence_fd = -1;
@@ -620,8 +580,9 @@ readback_arm(struct weaselwayd *p, struct readback *rb)
 }
 
 static bool
-readback_signalled(struct weaselwayd *p, struct readback *rb)
+readback_signalled(struct weaselwayd *p)
 {
+    struct readback *rb = &p->readback;
     GLenum status;
 
     /* The descriptor said so. Asked no further: it would be polled readable
@@ -635,10 +596,12 @@ readback_signalled(struct weaselwayd *p, struct readback *rb)
     return status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED;
 }
 
-/* The GPU is done with the readback, one way or another. */
+/* The readback is over, one way or another. */
 static void
-readback_disarm(struct weaselwayd *p, struct readback *rb)
+readback_disarm(struct weaselwayd *p)
 {
+    struct readback *rb = &p->readback;
+
     g_clear_handle_id(&p->readback_tick, g_source_remove);
     g_clear_handle_id(&rb->fence_watch, g_source_remove);
     g_clear_fd(&rb->fence_fd, NULL);
@@ -648,11 +611,13 @@ readback_disarm(struct weaselwayd *p, struct readback *rb)
         glDeleteSync(rb->sync);
     rb->egl_sync = EGL_NO_SYNC;
     rb->sync = NULL;
+    rb->active = false;
 }
 
 static bool
-readback_begin(struct weaselwayd *p, struct readback *rb)
+readback_begin(struct weaselwayd *p)
 {
+    struct readback *rb = &p->readback;
     struct import *import = find_import(p, p->buffer_id);
     size_t full_size = (size_t)p->width * (size_t)p->height * 4;
 
@@ -660,13 +625,13 @@ readback_begin(struct weaselwayd *p, struct readback *rb)
         return false;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, import->fbo);
 
-    if (!rb->pbo)
-        glGenBuffers(1, &rb->pbo);
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, rb->pbo);
+    if (!p->pbo)
+        glGenBuffers(1, &p->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
     /* Sized for a whole frame once, so that no damage shape reallocates it. */
-    if (rb->pbo_size != full_size) {
+    if (p->pbo_size != full_size) {
         glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)full_size, NULL, GL_STREAM_READ);
-        rb->pbo_size = full_size;
+        p->pbo_size = full_size;
     }
 
     /* Tightly packed at offset 0: the transfer is exactly the rect. */
@@ -678,7 +643,7 @@ readback_begin(struct weaselwayd *p, struct readback *rb)
         glUniform2i(p->compute_size, rb->rect.width, rb->rect.height);
         glUniform1i(p->compute_pitch, rb->rect.width);
         glUniform1i(p->compute_bgra, p->read_bgra ? 1 : 0);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, rb->pbo);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, p->pbo);
         glDispatchCompute((GLuint)(rb->rect.width + 15) / 16,
                           (GLuint)(rb->rect.height + 15) / 16, 1);
         /* The pixels are read with a map of the buffer, after the fence. */
@@ -689,23 +654,23 @@ readback_begin(struct weaselwayd *p, struct readback *rb)
         glReadPixels(rb->rect.x, rb->rect.y, rb->rect.width, rb->rect.height,
                      p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     }
-    readback_arm(p, rb);
+    readback_arm(p);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
     rb->issued = g_get_monotonic_time();
-    rb->state = READBACK_ISSUED;
+    rb->active = true;
     return true;
 }
 
 /* Once the fence has signalled: copy the rect out of the pixel buffer. */
 static bool
-readback_copy(struct weaselwayd *p, const struct readback *rb, uint8_t *pixels, size_t stride)
+readback_copy(struct weaselwayd *p, uint8_t *pixels, size_t stride)
 {
-    const struct rdp_rect *rect = &rb->rect;
+    const struct rdp_rect *rect = &p->readback.rect;
     size_t row_bytes = (size_t)rect->width * 4;
     const uint8_t *src;
 
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, rb->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
     src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)(row_bytes * (size_t)rect->height),
                            GL_MAP_READ_BIT);
     if (!src) {
@@ -728,71 +693,49 @@ readback_copy(struct weaselwayd *p, const struct readback *rb, uint8_t *pixels, 
     return true;
 }
 
-/* Called with every turn of the main loop: see whether the issued readback's
- * fence has signalled. */
+/* Called with every turn of the main loop: collect the readback if its fence
+ * has signalled. */
 static void
 readback_poll(struct weaselwayd *p)
 {
-    struct readback *rb = readback_in(p, READBACK_ISSUED);
+    struct readback *rb = &p->readback;
     bool signalled;
+    uint8_t *pixels;
+    size_t stride;
 
-    if (!rb)
+    if (!rb->active)
         return;
 
-    signalled = readback_signalled(p, rb);
+    signalled = readback_signalled(p);
     if (!signalled && g_get_monotonic_time() - rb->issued < G_TIME_SPAN_SECOND)
         return;
 
-    readback_disarm(p, rb);
-    rb->landed = g_get_monotonic_time();
-    rb->state = READBACK_LANDED;
+    readback_disarm(p);
 
     if (!signalled) {
         g_warning("the readback did not finish within a second");
-        rb->state = READBACK_IDLE;
-        frame_failed(p, rb);
+        frame_failed(p);
+        return;
     }
-}
 
-/* Copy the landed readbacks to the client, oldest first, while it has a
- * buffer free. One that has to wait for one is tried again with the pump that
- * follows the client's next ack. */
-static void
-readback_deliver(struct weaselwayd *p)
-{
-    struct readback *rb;
-
-    while ((rb = oldest_landed(p)) && rdp_server_state(p->rdp) != RDP_BUSY) {
-        struct rdp_frame frame;
-        uint8_t *pixels;
-        size_t stride;
-        gint64 copied;
-
-        rb->state = READBACK_IDLE;
-
-        /* The screen changed size under the readback; all of the new one is
-         * owed already. */
-        if (rb->width != p->width || rb->height != p->height)
-            continue;
-
-        /* The client may have left, or be connecting. Whoever comes next asks
-         * for the whole screen anyway. */
-        if (!rdp_server_begin_frame(p->rdp, &rb->rect, &frame))
-            continue;
-        pixels = rdp_server_frame_pixels(p->rdp, &frame, &stride);
-        if (!pixels) {
-            rdp_server_cancel_frame(p->rdp, &frame);
-            continue;
-        }
-
-        copied = g_get_monotonic_time();
-        if (readback_copy(p, rb, pixels, stride)) {
-            frame_done(p, rb, &frame, copied);
-        } else {
-            rdp_server_cancel_frame(p->rdp, &frame);
-            frame_failed(p, rb);
-        }
+    /* The screen changed size under the readback; all of the new one is
+     * owed already. */
+    if (rb->width != p->width || rb->height != p->height) {
+        rdp_server_cancel_frame(p->rdp, &rb->frame);
+        return;
     }
+
+    /* The client may have left, or been resized, while the pixels were on
+     * their way. Whoever comes next asks for the whole screen anyway. */
+    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame, &stride);
+    if (!pixels)
+        return;
+
+    rb->landed = g_get_monotonic_time();
+    if (readback_copy(p, pixels, stride))
+        frame_done(p);
+    else
+        frame_failed(p);
 }
 
 /* A dumb-buffer frame (a compositor rendering without the GPU). The kernel
@@ -1048,7 +991,7 @@ ack_frame(struct weaselwayd *p)
     if (!p->have_frame || p->acked_seq == p->primary_seq)
         return;
     if (p->pending &&
-        (readback_in(p, READBACK_ISSUED) || rdp_server_state(p->rdp) == RDP_BUSY))
+        (p->readback.active || rdp_server_state(p->rdp) == RDP_BUSY))
         return;
 
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_ACK_FRAME, &ack))
@@ -1138,18 +1081,13 @@ present_placeholder(struct weaselwayd *p)
 static void
 try_present(struct weaselwayd *p)
 {
-    struct readback *rb = readback_in(p, READBACK_IDLE);
+    struct readback *rb = &p->readback;
     enum rdp_state state = rdp_server_state(p->rdp);
-    struct rdp_frame frame;
     struct rdp_rect rect;
     uint8_t *pixels;
     size_t stride;
 
-    /* The next readback may start while the last one's pixels wait to be
-     * copied, but the placeholder and a dumb frame go straight to the
-     * client, and must not overtake them. */
-    if (readback_in(p, READBACK_ISSUED) || !rb ||
-        ((!p->overlap || !p->owned || p->dumb) && readback_in(p, READBACK_LANDED)))
+    if (rb->active)
         return;
 
     if (!p->owned) {
@@ -1183,6 +1121,10 @@ try_present(struct weaselwayd *p)
         rect.width = w;
     }
 
+    if (!rdp_server_begin_frame(p->rdp, &rect, &rb->frame))
+        return;
+
+    p->pending = false;
     rb->rect = rect;
     rb->buffer_id = p->buffer_id;
     rb->width = p->width;
@@ -1190,23 +1132,17 @@ try_present(struct weaselwayd *p)
     rb->started = g_get_monotonic_time();
 
     if (!p->dumb) {
-        p->pending = false;
-        if (!readback_begin(p, rb))
-            frame_failed(p, rb);
+        if (!readback_begin(p))
+            frame_failed(p);
         return;
     }
 
-    if (!rdp_server_begin_frame(p->rdp, &rect, &frame))
-        return;
-    p->pending = false;
     rb->issued = rb->landed = rb->started;
-    pixels = rdp_server_frame_pixels(p->rdp, &frame, &stride);
-    if (pixels && read_dumb(p, pixels, stride, &rect)) {
-        frame_done(p, rb, &frame, rb->started);
-    } else {
-        rdp_server_cancel_frame(p->rdp, &frame);
-        frame_failed(p, rb);
-    }
+    pixels = rdp_server_frame_pixels(p->rdp, &rb->frame, &stride);
+    if (pixels && read_dumb(p, pixels, stride, &rect))
+        frame_done(p);
+    else
+        frame_failed(p);
 }
 
 /* What every source of the main loop ends with: something changed, so see
@@ -1216,15 +1152,9 @@ pump(struct weaselwayd *p)
 {
     apply_size_request(p);
     sync_screen_size(p);
-    /* The next readback and the compositor's ack before the copy of the last
-     * one, unless turned off: the GPU and the compositor go on while the CPU
-     * copies. */
     readback_poll(p);
-    if (!p->overlap)
-        readback_deliver(p);
     try_present(p);
     ack_frame(p);
-    readback_deliver(p);
 }
 
 static void
@@ -1270,10 +1200,9 @@ static gboolean
 on_readback_fence(gint fd, GIOCondition condition, gpointer data)
 {
     struct weaselwayd *p = data;
-    struct readback *rb = readback_in(p, READBACK_ISSUED);
 
-    rb->fence_fired = true;
-    rb->fence_watch = 0;
+    p->readback.fence_fired = true;
+    p->readback.fence_watch = 0;
     pump(p);
     return G_SOURCE_REMOVE;
 }
@@ -1294,18 +1223,15 @@ on_stats(gpointer data)
     /* With the compositor held to our pace the two counts match; more
      * commits than frames means frames were merged. */
     if (p->stat_frames && !p->verbose)
-        g_message("%u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, %.2f ms "
-                  "(fence %.2f, copy %.2f) and %.0f%% of the screen each on average, %s, "
-                  "%.0f%% of the copies overlapped",
+        g_message("%u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, %.2f ms and "
+                  "%.0f%% of the screen each on average, %s",
                   p->stat_frames, p->primary_seq - p->stat_primary_seq,
                   ms_since(p->stat_since, now) / 1000.0, p->stat_ms / p->stat_frames,
-                  p->stat_fence_ms / p->stat_frames, p->stat_copy_ms / p->stat_frames,
                   100.0 * p->stat_pixels / p->stat_frames / (screen > 0 ? screen : 1.0),
-                  p->dumb ? "dumb" : readback_path(p),
-                  100.0 * p->stat_overlapped / p->stat_frames);
-    p->stat_frames = p->stat_overlapped = 0;
+                  p->dumb ? "dumb" : readback_path(p));
+    p->stat_frames = 0;
     p->stat_primary_seq = p->primary_seq;
-    p->stat_ms = p->stat_pixels = p->stat_fence_ms = p->stat_copy_ms = 0.0;
+    p->stat_ms = p->stat_pixels = 0.0;
     p->stat_since = now;
     return G_SOURCE_CONTINUE;
 }
@@ -1376,9 +1302,6 @@ main(int argc, char **argv)
     }
     rdp_config.shm_dir = shm_dir;
     rdp_config.verbose = p.verbose = verbose;
-    p.overlap = g_strcmp0(g_getenv(NO_OVERLAP_ENV), "1") != 0;
-    g_message("the next readback is issued %s the copy of the last",
-              p.overlap ? "before" : "after");
     log_init(verbose);
 
     /* A client that goes away mid-write must not take weaselwayd with it. */
@@ -1423,10 +1346,8 @@ main(int argc, char **argv)
 
     g_main_loop_run(p.loop);
 
-    for (size_t i = 0; i < G_N_ELEMENTS(p.readbacks); i++) {
-        if (p.readbacks[i].state == READBACK_ISSUED)
-            readback_disarm(&p, &p.readbacks[i]);
-    }
+    if (p.readback.active)
+        readback_disarm(&p);
     rdp_server_free(p.rdp);
     selection_free(p.selection);
     input_free(p.input);
