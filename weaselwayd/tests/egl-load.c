@@ -1,9 +1,15 @@
 /*
  * A load for the frame path: a fullscreen Wayland window that redraws every
  * pixel every frame with EGL and GLES2, paced by the compositor. Prints the
- * frame rate every two seconds.
+ * frame rate and the spread of the frame intervals every two seconds.
  *
- *   egl-load [seconds]    run that long, 0 or nothing for ever
+ *   egl-load [seconds [taps [every]]]
+ *
+ * seconds: run that long, 0 or nothing for ever. taps: every pixel averages
+ * the plasma at that many points, an unoptimised blur that makes a frame cost
+ * more GPU time (default 1). every: only every that many'th frame is the
+ * costly one, the others take 1 tap (default 1, every frame). Before it
+ * starts, it measures what each kind of frame costs with glFinish.
  */
 
 #include <EGL/egl.h>
@@ -119,12 +125,20 @@ static const char *fragment_source =
     "precision mediump float;\n"
     "varying vec2 uv;\n"
     "uniform float t;\n"
-    "void main() {\n"
-    "  vec2 p = uv * 8.0;\n"
+    "vec3 plasma(vec2 q) {\n"
+    "  vec2 p = q * 8.0;\n"
     "  float v = sin(p.x + t * 3.0) + sin(p.y * 1.3 - t * 2.0) +\n"
     "            sin(length(p - vec2(4.0)) * 1.7 - t * 4.0);\n"
-    "  gl_FragColor = vec4(0.5 + 0.5 * sin(v + t), 0.5 + 0.5 * sin(v * 1.3 + 2.0),\n"
-    "                      0.5 + 0.5 * sin(v * 0.7 + 4.0 - t), 1.0);\n"
+    "  return vec3(0.5 + 0.5 * sin(v + t), 0.5 + 0.5 * sin(v * 1.3 + 2.0),\n"
+    "              0.5 + 0.5 * sin(v * 0.7 + 4.0 - t));\n"
+    "}\n"
+    "void main() {\n"
+    "  vec3 c = vec3(0.0);\n"
+    "  for (int i = 0; i < TAPS; i++) {\n"
+    "    float a = float(i) * 2.39996;\n"
+    "    c += plasma(uv + 0.003 * sqrt(float(i)) * vec2(cos(a), sin(a)));\n"
+    "  }\n"
+    "  gl_FragColor = vec4(c / float(TAPS), 1.0);\n"
     "}\n";
 
 static GLuint
@@ -146,10 +160,53 @@ shader(GLenum type, const char *source)
     return s;
 }
 
+static GLuint
+program_with_taps(int taps)
+{
+    char source[2048];
+    GLuint program = glCreateProgram();
+
+    snprintf(source, sizeof(source), "#define TAPS %d\n%s", taps, fragment_source);
+    glAttachShader(program, shader(GL_VERTEX_SHADER, vertex_source));
+    glAttachShader(program, shader(GL_FRAGMENT_SHADER, source));
+    glBindAttribLocation(program, 0, "pos");
+    glLinkProgram(program);
+    return program;
+}
+
+static void
+draw(GLuint program, struct app *app, float t)
+{
+    glUseProgram(program);
+    glViewport(0, 0, app->width, app->height);
+    glUniform1f(glGetUniformLocation(program, "t"), t);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+/* What a frame of @program costs on the GPU, in ms: 30 frames back to back
+ * after as many to warm up, so that the GPU's clock is up as it is under
+ * load. Waiting for each frame alone lets the clock drop. */
+static double
+gpu_ms(GLuint program, struct app *app)
+{
+    double t = 0.0;
+
+    for (int pass = 0; pass < 2; pass++) {
+        glFinish();
+        t = now();
+        for (int i = 0; i < 30; i++)
+            draw(program, app, (float)i);
+        glFinish();
+    }
+    return (now() - t) * 1e3 / 30.0;
+}
+
 int
 main(int argc, char **argv)
 {
     double seconds = argc > 1 ? atof(argv[1]) : 0.0;
+    int taps = argc > 2 ? atoi(argv[2]) : 1;
+    int every = argc > 3 ? atoi(argv[3]) : 1;
     struct app app = { .width = 1280, .height = 720 };
     struct wl_display *display = wl_display_connect(NULL);
 
@@ -204,37 +261,60 @@ main(int argc, char **argv)
     eglSwapInterval(egl, 1);
     fprintf(stderr, "egl-load: %s\n", (const char *)glGetString(GL_RENDERER));
 
-    GLuint program = glCreateProgram();
-    glAttachShader(program, shader(GL_VERTEX_SHADER, vertex_source));
-    glAttachShader(program, shader(GL_FRAGMENT_SHADER, fragment_source));
-    glBindAttribLocation(program, 0, "pos");
-    glLinkProgram(program);
-    glUseProgram(program);
-    GLint t_location = glGetUniformLocation(program, "t");
+    if (taps < 1)
+        taps = 1;
+    if (every < 1)
+        every = 1;
+    GLuint fast = program_with_taps(1);
+    GLuint slow = taps == 1 ? fast : program_with_taps(taps);
     static const GLfloat quad[] = { -1, -1, 1, -1, -1, 1, 1, 1 };
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, quad);
     glEnableVertexAttribArray(0);
 
-    double start = now(), report = start;
-    unsigned frames = 0;
+    /* The configure may have changed the size since. */
+    wl_display_roundtrip(display);
+    fprintf(stderr, "egl-load: %dx%d, GPU per frame: 1 tap %.2f ms, %d taps %.2f ms, every %d\n",
+            app.width, app.height, gpu_ms(fast, &app), taps, gpu_ms(slow, &app), every);
+
+    double start = now(), report = start, last = start;
+    double max_interval = 0.0;
+    unsigned frames = 0, n = 0;
+    /* Intervals between swaps, against a 60 Hz period: about one, about two,
+     * three or more. */
+    unsigned one = 0, two = 0, more = 0;
 
     while (!app.closed && wl_display_dispatch_pending(display) >= 0) {
-        double t = now();
+        double t = now(), interval = (t - last) * 1e3;
 
         if (seconds > 0.0 && t - start >= seconds)
             break;
-        glViewport(0, 0, app.width, app.height);
-        glUniform1f(t_location, (GLfloat)(t - start));
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        if (n > 0) {
+            if (interval > max_interval)
+                max_interval = interval;
+            if (interval < 25.0)
+                one++;
+            else if (interval < 41.7)
+                two++;
+            else
+                more++;
+            /* CLOCK_MONOTONIC, like the timestamps of weaselwayd's log. */
+            if (interval >= 50.0)
+                fprintf(stderr, "egl-load: %.3f: %.1f ms since the last frame\n", t * 1e3,
+                        interval);
+        }
+        last = t;
+        draw(n++ % (unsigned)every == 0 ? slow : fast, &app, (float)(t - start));
         if (!eglSwapBuffers(egl, egl_surface)) {
             fprintf(stderr, "egl-load: eglSwapBuffers failed (0x%x)\n", eglGetError());
             return 1;
         }
         frames++;
         if (t - report >= 2.0) {
-            fprintf(stderr, "egl-load: %dx%d %.1f fps\n", app.width, app.height,
-                    frames / (t - report));
-            frames = 0;
+            fprintf(stderr,
+                    "egl-load: %.1f fps, interval max %.1f ms, 1/2/3+ periods %u/%u/%u\n",
+                    frames / (t - report), max_interval, one, two, more);
+            frames = one = two = more = 0;
+            max_interval = 0.0;
             report = t;
         }
     }
