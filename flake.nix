@@ -88,6 +88,14 @@
         weaselway-scripts = wsl.pkgs.weaselway-scripts;
         weaselway-viewer = wsl.pkgs.weaselway-viewer;
         weaselwayd = wsl.pkgs.weaselwayd;
+        # The rest of what cache.nixos.org lacks, for CI to build in jobs of
+        # their own before the images.
+        dxgdrm-all = dxgdrm.packages.x86_64-linux.dxgdrm-all;
+        gnome-shell = wsl.pkgs.gnome-shell;
+        gnome-control-center = wsl.pkgs.gnome-control-center;
+        kwin = wsl.pkgs.kdePackages.kwin;
+        plasma-workspace = wsl.pkgs.kdePackages.plasma-workspace;
+        plasma-desktop = wsl.pkgs.kdePackages.plasma-desktop;
         # sudo nix run .#tarballBuilder-gnome -> nixos.wsl
         tarballBuilder-gnome = self.nixosConfigurations.wsl-gnome.config.system.build.tarballBuilder;
         tarballBuilder-plasma = self.nixosConfigurations.wsl-plasma.config.system.build.tarballBuilder;

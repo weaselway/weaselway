@@ -403,6 +403,11 @@ The shell tests are not part of the build. They need mutter or KWin, D-Bus and, 
 the composite action [.github/actions/build-image](.github/actions/build-image) on the
 `ubuntu-26.04` runner, once per desktop. actionlint does not know that label yet, but it exists.
 
+- Before the images, build-image.yml builds what cache.nixos.org lacks in one job per part: the
+  kernel trees with dxgdrm, the Windows viewer, mesa with weaselwayd's freerdp, and the patched
+  GNOME and Plasma packages. Each pushes to Cachix, and the image jobs only download them. Hydra
+  does not build the mingw cross toolchain the viewer needs, so a nixpkgs bump that changes stdenv
+  (the November glibc update did) compiles it again, which takes about an hour.
 - The images of a build run are kept as artifacts for one day, the shortest GitHub allows.
 - The release workflow builds the two images in separate jobs and creates the release in a third,
   so a release is never published with only one of them.

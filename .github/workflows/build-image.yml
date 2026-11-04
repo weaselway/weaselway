@@ -17,15 +17,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # What cache.nixos.org lacks, each part on a runner of its own and pushed to
+  # weaselway.cachix.org, so that the images below only download it. Usually
+  # all cached; after a nixpkgs bump that changes stdenv, everything here is
+  # compiled again, the mingw toolchain under the viewer taking the longest.
+  packages:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: kernel
+            attrs: .#dxgdrm-all
+          - name: viewer
+            attrs: .#weaselway-viewer
+          - name: mesa-freerdp
+            attrs: .#weaselway-mesa .#weaselwayd
+          - name: gnome
+            attrs: .#gnome-shell .#gnome-control-center
+          - name: plasma
+            attrs: .#kwin .#plasma-workspace .#plasma-desktop
+    name: packages (${{ matrix.name }})
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build ${{ matrix.attrs }}
+        env:
+          ATTRS: ${{ matrix.attrs }}
+        run: |
+          read -ra attrs <<< "${ATTRS}"
+          nix build --print-build-logs --no-link "${attrs[@]}"
+
   build:
+    needs: packages
     runs-on: ubuntu-26.04
     strategy:
       # One image failing to build says nothing about the other.
       fail-fast: false
       matrix:
         desktop: [gnome, plasma]
-    # A run whose mesa/mutter/KWin/kernel inputs changed compiles them again;
-    # the rest comes from weaselway.cachix.org.
+    # Whatever the packages job did not cover is compiled here; the rest comes
+    # from weaselway.cachix.org.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7

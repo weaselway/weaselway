@@ -18,32 +18,9 @@ inputs:
 runs:
   using: composite
   steps:
-    # The closure is a whole desktop, and the builds that are not in the
-    # binary cache (dxgdrm's kernel tree, mesa, mutter, gnome-shell, KWin and
-    # what links it) need room of their own. The runner image ships far more
-    # preinstalled SDKs than it has free space.
-    - name: Free disk space
-      shell: bash
-      run: |
-        df -h /
-        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost
-        df -h /
-
-    - uses: cachix/install-nix-action@v31.11.1
+    - uses: ./.github/actions/setup-nix
       with:
-        extra_nix_config: |
-          max-jobs = auto
-
-    # weaselway.cachix.org holds what cache.nixos.org doesn't: dxgdrm's kernel
-    # tree, mesa, mutter, gnome-shell, KWin and the viewer. Every path this job
-    # builds is pushed, so a run only compiles what changed since the last
-    # one. The image points nix at the same cache (nix/module.nix), so
-    # nixos-rebuild on a WSL machine downloads these too.
-    - uses: cachix/cachix-action@v17
-      with:
-        name: weaselway
-        authToken: ${{ inputs.cachix-auth-token }}
+        cachix-auth-token: ${{ inputs.cachix-auth-token }}
 
     # The builder is x86_64 like the runner, so everything is native here --
     # unlike on aarch64 machines, see ARCHITECTURE.md.
