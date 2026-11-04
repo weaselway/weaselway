@@ -71,7 +71,8 @@ enum readback_state {
 
 /* A readback of a part of the screen into a pixel buffer of its own. At most
  * one is issued at a time: damage that arrives meanwhile is kept and read with
- * the next one. */
+ * the next one. The next is issued as soon as the last has landed, while its
+ * pixels are still to be copied to the client. */
 struct readback {
     enum readback_state state;
     GLuint pbo;
@@ -1131,7 +1132,11 @@ try_present(struct weaselwayd *p)
     uint8_t *pixels;
     size_t stride;
 
-    if (readback_in(p, READBACK_ISSUED) || readback_in(p, READBACK_LANDED))
+    /* The next readback may start while the last one's pixels wait to be
+     * copied, but the placeholder and a dumb frame go straight to the
+     * client, and must not overtake them. */
+    if (readback_in(p, READBACK_ISSUED) || !rb ||
+        ((!p->owned || p->dumb) && readback_in(p, READBACK_LANDED)))
         return;
 
     if (!p->owned) {
@@ -1198,10 +1203,12 @@ pump(struct weaselwayd *p)
 {
     apply_size_request(p);
     sync_screen_size(p);
+    /* The next readback and the compositor's ack before the copy of the last
+     * one: the GPU and the compositor go on while the CPU copies. */
     readback_poll(p);
-    readback_deliver(p);
     try_present(p);
     ack_frame(p);
+    readback_deliver(p);
 }
 
 static void

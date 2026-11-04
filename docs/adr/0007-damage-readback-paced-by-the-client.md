@@ -27,15 +27,20 @@ falls behind would otherwise collect a queue of frames.
   slower (2.7 against 2.0 ms), so it only pays off for large damage.
 - Only the bounding box of the damage that dxgdrm reports is read back,
   widened to a multiple of 64 pixels (D3D12's 256-byte row pitch). One
-  readback is outstanding at a time.
+  readback is issued at a time, into one of two pixel buffer objects: the
+  next is issued as soon as the previous one has landed, while its pixels
+  are still copied to the client. The client's buffer is taken for the copy,
+  not for the readback.
 - The readback is collected when its fence signals. Mesa's d3d12 driver
   exports the fence as a descriptor (`EGL_ANDROID_native_fence_sync`, a
   sync_file through dxgdrm), which the main loop watches (`20f971d`). Without
   the extension, or with `WEASELWAY_NO_FENCE_FD=1`, a GL fence is polled every
   millisecond. A readback that takes longer than a second counts as lost.
 - weaselwayd acknowledges a frame to dxgdrm (`DXGDRM_ACK_FRAME`) unless its
-  damage cannot be read back yet, because the previous readback is
-  outstanding or the client holds every buffer. dxgdrm withholds the
+  damage cannot be read back yet, because the previous readback has not
+  landed (the GPU may still read the compositor's buffer) or the client
+  holds every buffer. The ack goes out before the copy to the client, so the
+  compositor renders while the CPU copies. dxgdrm withholds the
   compositor's page flip until then, for at most `flip_timeout_ms` (see
   dxgdrm 0013).
 - A client that minimises its window (Suppress Output) counts as no client:
