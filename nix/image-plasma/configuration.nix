@@ -21,12 +21,15 @@
 
   # Left out to keep the image under GitHub's 2 GiB limit. Delete a line and
   # rebuild to get it back.
-  environment.plasma6.excludePackages = with pkgs.kdePackages; [
-    elisa
-    kwin-x11
-    krdp
-    plasma-workspace-wallpapers
-  ];
+  environment.plasma6.excludePackages =
+    with pkgs.kdePackages;
+    [
+      elisa
+      krdp
+      plasma-workspace-wallpapers
+    ]
+    # Gone from nixos-unstable, where it is a throwing alias.
+    ++ pkgs.lib.optional (builtins.tryEval pkgs.kdePackages.kwin-x11).success pkgs.kdePackages.kwin-x11;
   programs.kde-pim.enable = false;
   services.fwupd.enable = false;
 

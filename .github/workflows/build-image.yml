@@ -8,12 +8,19 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # From update-nixpkgs.yml, with the updated flake.lock as an artifact.
+  workflow_call:
+    inputs:
+      lock-artifact:
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-image-${{ github.ref }}
+  # The event too, so a weekly update and a push to main do not cancel each other.
+  group: build-image-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -42,6 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - if: inputs.lock-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.lock-artifact }}
+
       - uses: ./.github/actions/setup-nix
         with:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -67,6 +79,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - if: inputs.lock-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.lock-artifact }}
+
       - uses: ./.github/actions/build-image
         with:
           desktop: ${{ matrix.desktop }}
@@ -81,3 +98,33 @@ jobs:
           if-no-files-found: error
           # nixos.wsl is already a gzipped tar.
           compression-level: 0
+
+  # The images on nixos-unstable, built for the cache only: they are neither
+  # kept nor released. dxgdrm and the viewer are the stable ones from above.
+  unstable:
+    needs: packages
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [gnome, plasma]
+    name: unstable (${{ matrix.desktop }})
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: inputs.lock-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.lock-artifact }}
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build the system
+        env:
+          DESKTOP: ${{ matrix.desktop }}
+        run: |
+          nix build --print-build-logs --no-link \
+            ".#nixosConfigurations.wsl-${DESKTOP}-unstable.config.system.build.toplevel"

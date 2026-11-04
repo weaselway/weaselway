@@ -409,13 +409,22 @@ the composite action [.github/actions/build-image](.github/actions/build-image) 
   does not build the mingw cross toolchain the viewer needs, so a nixpkgs bump that changes stdenv
   (the November glibc update did) compiles it again, which takes about an hour.
 - The images of a build run are kept as artifacts for one day, the shortest GitHub allows.
+- The `unstable` jobs build the same two systems on `nixpkgs-unstable`
+  (`nixosConfigurations.wsl-*-unstable`), only to fill the cache: they are not packed, kept or
+  released. dxgdrm, the viewer and NixOS-WSL follow the stable `nixpkgs`, so both share them
+  ([ADR 0032](docs/adr/0032-stable-and-unstable-nixpkgs.md)).
+- [update-nixpkgs.yml](.github/workflows/update-nixpkgs.yml) runs `nix flake update nixpkgs` on
+  Fridays and `nix flake update nixpkgs-unstable` on Saturdays, calls build-image.yml with the
+  new lock, and commits the lock to `main` only if that build passes. The push uses
+  `GITHUB_TOKEN`, so it starts no further build.
 - The release workflow builds the two images in separate jobs and creates the release in a third,
   so a release is never published with only one of them.
 
 - The image is about 1.4 GiB. GitHub limits release assets to 2 GiB, so keep an eye on the closure:
   the kernel tree, the kernel toolchain or Orca's voices each add hundreds of MB if they find their
   way back in.
-- Both workflows push every path they build to weaselway.cachix.org with `cachix/cachix-action`. The
+- The workflows push every path they build, except separate `-debug` outputs, to weaselway.cachix.org
+  with `cachix/cachix-action`. The
   token is the `CACHIX_AUTH_TOKEN` secret, which is passed to the composite action as an input
   because composite actions cannot read secrets. A run with an empty cache took about 45 minutes.
   With a warm cache only the changed packages are compiled. Pull requests from forks receive no

@@ -78,8 +78,10 @@ in
             path =
               if lib.versionOlder old.version "6.7" then
                 ./kwin-6.6-fb-damage-clips.patch
+              else if lib.versionOlder old.version "6.8" then
+                ./kwin-6.7-fb-damage-clips.patch
               else
-                ./kwin-6.7-fb-damage-clips.patch;
+                ./kwin-6.8-fb-damage-clips.patch;
           })
         ];
       });
@@ -100,12 +102,16 @@ in
 
   # Hyprland tests a larger mode with the last frame's smaller buffer, which
   # dxgdrm rejects, so it could not grow. Backport of main of
-  # github.com/weaselway/Hyprland.
+  # github.com/weaselway/Hyprland, picked by Hyprland's version.
   hyprland = prev.hyprland.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [
       (builtins.path {
         name = "hyprland-modeset-buffer-size.patch";
-        path = ./hyprland-0.55-modeset-buffer-size.patch;
+        path =
+          if lib.versionOlder old.version "0.57" then
+            ./hyprland-0.55-modeset-buffer-size.patch
+          else
+            ./hyprland-0.57-modeset-buffer-size.patch;
       })
     ];
   });

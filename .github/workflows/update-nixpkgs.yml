@@ -1,0 +1,81 @@
+# Moves one nixpkgs input forward each week: the stable one on Fridays,
+# nixos-unstable on Saturdays. The lock is committed only if build-image.yml
+# builds it, so what main locks is always in weaselway.cachix.org.
+name: Update nixpkgs
+
+on:
+  schedule:
+    - cron: '0 4 * * 5'
+    - cron: '0 4 * * 6'
+  workflow_dispatch:
+    inputs:
+      input:
+        description: The flake input to update.
+        type: choice
+        options: [nixpkgs, nixpkgs-unstable]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-nixpkgs
+  cancel-in-progress: false
+
+env:
+  INPUT: ${{ inputs.input || (github.event.schedule == '0 4 * * 5' && 'nixpkgs' || 'nixpkgs-unstable') }}
+
+jobs:
+  lock:
+    runs-on: ubuntu-26.04
+    outputs:
+      changed: ${{ steps.update.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31.11.1
+
+      - id: update
+        run: |
+          nix flake update "${INPUT}"
+          if git diff --quiet flake.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.update.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-lock
+          path: flake.lock
+          retention-days: 1
+
+  build:
+    needs: lock
+    if: needs.lock.outputs.changed == 'true'
+    uses: ./.github/workflows/build-image.yml
+    with:
+      lock-artifact: flake-lock
+    secrets: inherit
+
+  # A push with GITHUB_TOKEN starts no workflow, which is fine: build has just
+  # built this lock. If main moved meanwhile, the push fails and next week's
+  # run tries again.
+  commit:
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: flake-lock
+
+      - run: |
+          rev=$(jq -r --arg i "${INPUT}" '.nodes[.nodes.root.inputs[$i]].locked | "\(.rev[:7]) of \(.lastModified | strftime("%-d %b"))"' flake.lock)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "${INPUT}: ${rev}" flake.lock
+          git push origin HEAD:main

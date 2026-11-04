@@ -7,6 +7,8 @@
   outputs =
     { weaselway, ... }:
     {
+      # For nixos-unstable, use weaselway.inputs.nixpkgs-unstable.lib.nixosSystem.
+      # CI builds both, see README.md.
       nixosConfigurations.nixos = weaselway.inputs.nixpkgs.lib.nixosSystem {
         modules = [
           weaselway.inputs.nixos-wsl.nixosModules.default

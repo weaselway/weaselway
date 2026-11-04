@@ -24,6 +24,8 @@ then, and a one-line change could rebuild Mesa, mutter and gnome-shell.
 - There are two image directories with identical `flake.nix` files, because
   `wsl.tarball.configPath` takes a whole directory. The desktop is selected in
   `configuration.nix`.
+- The `flake.nix` builds the system with weaselway's stable nixpkgs; one line
+  switches it to `nixpkgs-unstable` ([0032](0032-stable-and-unstable-nixpkgs.md)).
 
 ## Consequences
 

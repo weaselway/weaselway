@@ -332,6 +332,28 @@ To undo an update, switch back to the previous generation:
 sudo nixos-rebuild switch --rollback
 ```
 
+### Stable, unstable or your own nixpkgs
+
+The image runs on the stable NixOS release. weaselway also locks
+nixos-unstable, and CI builds and caches the same systems on it. To switch,
+change one line in `/etc/nixos/flake.nix` and rebuild:
+
+```nix
+nixosConfigurations.nixos = weaselway.inputs.nixpkgs-unstable.lib.nixosSystem {
+```
+
+The kernel module, the viewer and NixOS-WSL come from the stable nixpkgs
+either way. Both inputs are updated weekly, the stable one on Fridays and
+unstable on Saturdays, each only once CI has built it.
+
+To use a nixpkgs of your own, add it as an input and build the system with
+its `lib.nixosSystem`, importing `weaselway.inputs.nixos-wsl.nixosModules.default`
+and `weaselway.nixosModules.weaselway` as above. Do not set
+`weaselway.inputs.nixpkgs.follows`: that would compile the kernel trees and
+the viewer's mingw toolchain locally. The patched Mesa, mutter, KWin and what
+links them are only cached for weaselway's two nixpkgs, so with your own they
+are compiled on your machine.
+
 ## Troubleshooting
 
 ### The viewer window stays empty or closes immediately
