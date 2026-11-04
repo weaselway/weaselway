@@ -84,6 +84,12 @@ void rdp_server_set_screen_size(struct rdp_server *server, int width, int height
 bool rdp_server_take_size_request(struct rdp_server *server, int *width, int *height,
                                   uint32_t *refresh_mhz);
 
+/* True, once, when the client has said where the last @frames frames were
+ * ready relative to its monitor's vblank: @slack_us before it, the 10th
+ * percentile. */
+bool rdp_server_take_present_timing(struct rdp_server *server, uint32_t *frames,
+                                    int32_t *slack_us);
+
 /* The size the connected client wants its screen to have; false while there is
  * no client yet. For a screen the compositor does not give a size to. */
 bool rdp_server_client_size(struct rdp_server *server, int *width, int *height);

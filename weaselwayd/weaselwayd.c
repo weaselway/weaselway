@@ -1022,6 +1022,39 @@ apply_size_request(struct weaselwayd *p)
                   g_strerror(errno));
 }
 
+/*
+ * Line the compositor's frames up with the client's monitor. dxgdrm's vblank
+ * runs at the monitor's rate in a random phase to it, and drifts. The client
+ * says how long before its vblank the frames were ready, the late tail of
+ * it; moving dxgdrm's vblank later by a millisecond makes that a millisecond
+ * less. Half the error per step, so the frames that are already on their way
+ * do not make it overshoot.
+ */
+#define PRESENT_TARGET_SLACK_US 3000
+#define PRESENT_DEADBAND_US 500
+#define PRESENT_MAX_SHIFT_US 2000
+
+static void
+apply_present_timing(struct weaselwayd *p)
+{
+    struct drm_dxgdrm_shift_vblank shift = { 0 };
+    uint32_t frames;
+    int32_t slack_us, error_us;
+
+    if (!rdp_server_take_present_timing(p->rdp, &frames, &slack_us))
+        return;
+
+    error_us = slack_us - PRESENT_TARGET_SLACK_US;
+    if (ABS(error_us) < PRESENT_DEADBAND_US)
+        return;
+    shift.shift_ns =
+        (int64_t)CLAMP(error_us / 2, -PRESENT_MAX_SHIFT_US, PRESENT_MAX_SHIFT_US) * 1000;
+    g_debug("frames ready %d us before the client's vblank (%u frames), shifting ours by %"
+            G_GINT64_FORMAT " us", slack_us, frames, (gint64)shift.shift_ns / 1000);
+    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SHIFT_VBLANK, &shift))
+        g_debug("cannot shift the vblank: %s", g_strerror(errno));
+}
+
 /* The size of the client's screen: the compositor's, or without one the
  * window the client asked for. */
 static void
@@ -1151,6 +1184,7 @@ static void
 pump(struct weaselwayd *p)
 {
     apply_size_request(p);
+    apply_present_timing(p);
     sync_screen_size(p);
     readback_poll(p);
     /* Before the readback is issued, which takes a millisecond: the flip

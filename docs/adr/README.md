@@ -43,6 +43,7 @@ are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 | [0028](0028-ww-prefix.md) | Commands carry a `ww-` prefix | Accepted |
 | [0029](0029-refresh-rate-from-the-viewer.md) | The viewer reports its monitor's refresh rate | Accepted |
 | [0030](0030-hyprland-follows-the-window-size.md) | aquamarine and Hyprland are patched to follow the window size | Accepted |
+| [0031](0031-vblank-phase-from-the-viewer.md) | The viewer's vblank sets the phase of dxgdrm's | Accepted |
 
 ## Known risks
 

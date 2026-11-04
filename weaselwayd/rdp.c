@@ -231,6 +231,10 @@ struct rdp_server {
     bool size_request_pending;
     /* The refresh rate of the client's monitor; 0 until it says. */
     uint32_t wanted_refresh_mhz;
+    /* The last PRESENT_TIMING, until it is taken. */
+    bool present_timing_pending;
+    uint32_t present_timing_frames;
+    int32_t present_timing_slack_us;
     /* Bumped whenever a pool goes away, which ends any frame begun on it. */
     uint64_t generation;
 };
@@ -921,10 +925,12 @@ disp_dispatch(struct peer_context *peer_ctx)
  * Weaselway::Display, the viewer's own channel (wwdisplay in weaselway's
  * FreeRDP): the refresh rate of the monitor the client's window is on, which
  * RDP has no field for. Every PDU is UINT16 type, UINT16 reserved, then the
- * body, little endian; REFRESH_RATE's body is a UINT32 in millihertz.
+ * body, little endian; REFRESH_RATE's body is a UINT32 in millihertz,
+ * PRESENT_TIMING's a UINT32 frame count and an INT32 slack in microseconds.
  */
 #define WWDISPLAY_DVC_CHANNEL_NAME "Weaselway::Display"
 #define WWDISPLAY_PDU_REFRESH_RATE 1
+#define WWDISPLAY_PDU_PRESENT_TIMING 2
 #define WWDISPLAY_MAX_PDU 64
 
 /* A client without the channel refuses it, and the screen keeps dxgdrm's
@@ -944,6 +950,12 @@ setup_wwdisplay(struct peer_context *peer_ctx)
     WTSFreeMemory(session_id);
 }
 
+static uint32_t
+le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
 /* The PDUs arrive whole, on the main loop, when the channel manager is
  * pumped; this takes whatever came. */
 static void
@@ -958,6 +970,7 @@ wwdisplay_dispatch(struct peer_context *peer_ctx)
 
     while (WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, NULL, 0, &length)) {
         ULONG got = 0;
+        unsigned type;
         uint32_t mhz;
 
         if (length > sizeof(pdu)) {
@@ -971,15 +984,27 @@ wwdisplay_dispatch(struct peer_context *peer_ctx)
         if (!WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)pdu, sizeof(pdu), &got))
             break;
 
+        if (got < 4)
+            continue;
+        type = pdu[0] | pdu[1] << 8;
+        if (type == WWDISPLAY_PDU_PRESENT_TIMING) {
+            if (got != 12) {
+                g_warning("Weaselway::Display: PRESENT_TIMING of %lu bytes", (unsigned long)got);
+                continue;
+            }
+            server->present_timing_frames = le32(pdu + 4);
+            server->present_timing_slack_us = (int32_t)le32(pdu + 8);
+            server->present_timing_pending = true;
+            continue;
+        }
         /* Unknown types are for a newer client. */
-        if (got < 4 || (pdu[0] | pdu[1] << 8) != WWDISPLAY_PDU_REFRESH_RATE)
+        if (type != WWDISPLAY_PDU_REFRESH_RATE)
             continue;
         if (got != 8) {
             g_warning("Weaselway::Display: REFRESH_RATE of %lu bytes", (unsigned long)got);
             continue;
         }
-        mhz = (uint32_t)pdu[4] | (uint32_t)pdu[5] << 8 | (uint32_t)pdu[6] << 16 |
-              (uint32_t)pdu[7] << 24;
+        mhz = le32(pdu + 4);
         /* dxgdrm's range. */
         if (mhz < 1000 || mhz > 1000000) {
             g_warning("Weaselway::Display: ignoring a refresh rate of %u mHz", mhz);
@@ -2179,6 +2204,17 @@ rdp_server_take_size_request(struct rdp_server *server, int *width, int *height,
     *height = server->wanted_height;
     *refresh_mhz = server->wanted_refresh_mhz;
     return requested;
+}
+
+bool
+rdp_server_take_present_timing(struct rdp_server *server, uint32_t *frames, int32_t *slack_us)
+{
+    bool pending = server->present_timing_pending;
+
+    server->present_timing_pending = false;
+    *frames = server->present_timing_frames;
+    *slack_us = server->present_timing_slack_us;
+    return pending;
 }
 
 bool
