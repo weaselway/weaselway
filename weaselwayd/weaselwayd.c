@@ -1153,8 +1153,11 @@ pump(struct weaselwayd *p)
     apply_size_request(p);
     sync_screen_size(p);
     readback_poll(p);
-    try_present(p);
+    /* Before the readback is issued, which takes a millisecond: the flip
+     * completes on the first vblank after the ack, and the compositor commits
+     * only about that long before it. */
     ack_frame(p);
+    try_present(p);
 }
 
 static void
