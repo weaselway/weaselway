@@ -152,13 +152,18 @@ struct weaselwayd {
      * that is the only way to learn that it has signalled, and otherwise once,
      * when it should long have. 0 while there is nothing to look at. */
     guint readback_tick;
+    /* Issue the next readback and ack the compositor before the copy of the
+     * landed one, rather than after it. */
+    bool overlap;
 
     bool verbose;
 
     unsigned frames;
     /* Since the last statistics line. */
     unsigned stat_frames;
-    double stat_ms, stat_pixels;
+    double stat_ms, stat_pixels, stat_fence_ms, stat_copy_ms;
+    /* Copies made while the next readback was already issued. */
+    unsigned stat_overlapped;
     gint64 stat_since;
     uint64_t stat_primary_seq;
 };
@@ -170,6 +175,10 @@ static EGLint (*dup_native_fence_fd)(EGLDisplay display, EGLSync sync);
 /* Set to 1 to look at the readback's fence every millisecond instead of
  * waiting on its descriptor, for when a stall has to be pinned on that. */
 #define NO_FENCE_FD_ENV "WEASELWAY_NO_FENCE_FD"
+
+/* Set to 1 to copy a landed readback before the next is issued and the
+ * compositor acked, to compare the two on a given GPU. */
+#define NO_OVERLAP_ENV "WEASELWAY_NO_OVERLAP"
 
 static double
 ms_since(gint64 since, gint64 now)
@@ -505,6 +514,16 @@ add_full_damage(struct weaselwayd *p)
     add_damage(p, 0, 0, p->width, p->height);
 }
 
+static struct readback *
+readback_in(struct weaselwayd *p, enum readback_state state)
+{
+    for (size_t i = 0; i < G_N_ELEMENTS(p->readbacks); i++) {
+        if (p->readbacks[i].state == state)
+            return &p->readbacks[i];
+    }
+    return NULL;
+}
+
 /* The frame's pixels are in @frame since @copied: show them, and say so. */
 static void
 frame_done(struct weaselwayd *p, const struct readback *rb, const struct rdp_frame *frame,
@@ -518,6 +537,10 @@ frame_done(struct weaselwayd *p, const struct readback *rb, const struct rdp_fra
     p->stat_frames++;
     p->stat_ms += ms_since(rb->started, done);
     p->stat_pixels += (double)rb->rect.width * rb->rect.height;
+    p->stat_fence_ms += ms_since(rb->issued, rb->landed);
+    p->stat_copy_ms += ms_since(copied, done);
+    if (readback_in(p, READBACK_ISSUED))
+        p->stat_overlapped++;
 
     if (p->verbose)
         g_debug("frame %u: %s buffer %" G_GUINT64_FORMAT ", %dx%d+%d+%d (%.1f%%) read back in "
@@ -536,16 +559,6 @@ frame_failed(struct weaselwayd *p, const struct readback *rb)
 {
     add_damage(p, rb->rect.x, rb->rect.y, rb->rect.x + rb->rect.width,
                rb->rect.y + rb->rect.height);
-}
-
-static struct readback *
-readback_in(struct weaselwayd *p, enum readback_state state)
-{
-    for (size_t i = 0; i < G_N_ELEMENTS(p->readbacks); i++) {
-        if (p->readbacks[i].state == state)
-            return &p->readbacks[i];
-    }
-    return NULL;
 }
 
 /* The landed readback that was issued first: the client gets them in order. */
@@ -1136,7 +1149,7 @@ try_present(struct weaselwayd *p)
      * copied, but the placeholder and a dumb frame go straight to the
      * client, and must not overtake them. */
     if (readback_in(p, READBACK_ISSUED) || !rb ||
-        ((!p->owned || p->dumb) && readback_in(p, READBACK_LANDED)))
+        ((!p->overlap || !p->owned || p->dumb) && readback_in(p, READBACK_LANDED)))
         return;
 
     if (!p->owned) {
@@ -1204,8 +1217,11 @@ pump(struct weaselwayd *p)
     apply_size_request(p);
     sync_screen_size(p);
     /* The next readback and the compositor's ack before the copy of the last
-     * one: the GPU and the compositor go on while the CPU copies. */
+     * one, unless turned off: the GPU and the compositor go on while the CPU
+     * copies. */
     readback_poll(p);
+    if (!p->overlap)
+        readback_deliver(p);
     try_present(p);
     ack_frame(p);
     readback_deliver(p);
@@ -1278,15 +1294,18 @@ on_stats(gpointer data)
     /* With the compositor held to our pace the two counts match; more
      * commits than frames means frames were merged. */
     if (p->stat_frames && !p->verbose)
-        g_message("%u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, %.2f ms and "
-                  "%.0f%% of the screen each on average, %s",
+        g_message("%u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, %.2f ms "
+                  "(fence %.2f, copy %.2f) and %.0f%% of the screen each on average, %s, "
+                  "%.0f%% of the copies overlapped",
                   p->stat_frames, p->primary_seq - p->stat_primary_seq,
                   ms_since(p->stat_since, now) / 1000.0, p->stat_ms / p->stat_frames,
+                  p->stat_fence_ms / p->stat_frames, p->stat_copy_ms / p->stat_frames,
                   100.0 * p->stat_pixels / p->stat_frames / (screen > 0 ? screen : 1.0),
-                  p->dumb ? "dumb" : readback_path(p));
-    p->stat_frames = 0;
+                  p->dumb ? "dumb" : readback_path(p),
+                  100.0 * p->stat_overlapped / p->stat_frames);
+    p->stat_frames = p->stat_overlapped = 0;
     p->stat_primary_seq = p->primary_seq;
-    p->stat_ms = p->stat_pixels = 0.0;
+    p->stat_ms = p->stat_pixels = p->stat_fence_ms = p->stat_copy_ms = 0.0;
     p->stat_since = now;
     return G_SOURCE_CONTINUE;
 }
@@ -1357,6 +1376,9 @@ main(int argc, char **argv)
     }
     rdp_config.shm_dir = shm_dir;
     rdp_config.verbose = p.verbose = verbose;
+    p.overlap = g_strcmp0(g_getenv(NO_OVERLAP_ENV), "1") != 0;
+    g_message("the next readback is issued %s the copy of the last",
+              p.overlap ? "before" : "after");
     log_init(verbose);
 
     /* A client that goes away mid-write must not take weaselwayd with it. */

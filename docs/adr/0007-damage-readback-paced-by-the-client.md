@@ -40,9 +40,12 @@ falls behind would otherwise collect a queue of frames.
   damage cannot be read back yet, because the previous readback has not
   landed (the GPU may still read the compositor's buffer) or the client
   holds every buffer. The ack goes out before the copy to the client, so the
-  compositor renders while the CPU copies. dxgdrm withholds the
-  compositor's page flip until then, for at most `flip_timeout_ms` (see
-  dxgdrm 0013).
+  compositor renders while the CPU copies. On an Intel HD 630 that gained no
+  frame rate, the GPU being the limit; `WEASELWAY_NO_OVERLAP=1` copies first,
+  as before, and the statistics line gives the share of copies that
+  overlapped and the average fence and copy times, to compare the two.
+  dxgdrm withholds the compositor's page flip until then, for at most
+  `flip_timeout_ms` (see dxgdrm 0013).
 - A client that minimises its window (Suppress Output) counts as no client:
   nothing is read back, and frames are acknowledged at once (`e652e8a`). When
   it shows the window again it gets the whole screen.
