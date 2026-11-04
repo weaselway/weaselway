@@ -79,7 +79,8 @@ struct readback {
     uint64_t buffer_id;
     /* The screen's size when it was issued. */
     int width, height;
-    gint64 started, issued;
+    /* @landed: the fence was seen signalled and the copy into @frame began. */
+    gint64 started, issued, landed;
 };
 
 struct weaselwayd {
@@ -513,11 +514,12 @@ frame_done(struct weaselwayd *p)
 
     if (p->verbose)
         g_debug("frame %u: %s buffer %" G_GUINT64_FORMAT ", %dx%d+%d+%d (%.1f%%) read back in "
-                "%.2f ms (issue %.2f, %s)",
+                "%.2f ms (issue %.2f, fence %.2f, copy %.2f, %s)",
                 p->frames, p->dumb ? "dumb" : "d3d12", rb->buffer_id, rb->rect.width,
                 rb->rect.height, rb->rect.x, rb->rect.y,
                 100.0 * rb->rect.width * rb->rect.height / ((double)p->width * p->height),
                 ms_since(rb->started, done), ms_since(rb->started, rb->issued),
+                ms_since(rb->issued, rb->landed), ms_since(rb->landed, done),
                 p->dumb ? "dumb" : readback_path(p));
 }
 
@@ -729,6 +731,7 @@ readback_poll(struct weaselwayd *p)
     if (!pixels)
         return;
 
+    rb->landed = g_get_monotonic_time();
     if (readback_copy(p, pixels, stride))
         frame_done(p);
     else
@@ -1134,7 +1137,7 @@ try_present(struct weaselwayd *p)
         return;
     }
 
-    rb->issued = rb->started;
+    rb->issued = rb->landed = rb->started;
     pixels = rdp_server_frame_pixels(p->rdp, &rb->frame, &stride);
     if (pixels && read_dumb(p, pixels, stride, &rect))
         frame_done(p);

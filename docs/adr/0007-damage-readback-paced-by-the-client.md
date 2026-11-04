@@ -50,4 +50,5 @@ falls behind would otherwise collect a queue of frames.
 - The EGL fence has to be the one that flushes the copy. d3d12 answers a flush
   with no work in it with a fence that stands for no work.
 - `weaselwayd --verbose` logs the share of the screen read back per frame and
-  how long it took.
+  how long it took: issuing it, waiting for its fence, and the copy to the
+  client.
