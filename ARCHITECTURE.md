@@ -229,7 +229,7 @@ on a WSL installation. This section records those failures.
 - The module is keyed on the kernel release. `weaselway-prep` loads
   `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and the `dxgdrm` flake
   lists the releases it is built for in its `kernels` attribute, currently
-  `6.18.33.2`, `6.18.40.1` and `6.18.54.1` (`-microsoft-standard-WSL2`).
+  `6.18.40.1` and `6.18.54.1` (`-microsoft-standard-WSL2`).
   On any other kernel the file does not
   exist, the unit logs that, and `ww-start-session` refuses to start for lack of
   the KMS node. Supporting a new WSL kernel means running dxgdrm's
