@@ -40,3 +40,6 @@ runs:
       with:
         name: weaselway
         authToken: ${{ inputs.cachix-auth-token }}
+        # Separate debuginfo outputs nothing refers to: about 800 MB of the
+        # cache's 5 GB, which would otherwise evict paths installs need.
+        pushFilter: '-debug$'
