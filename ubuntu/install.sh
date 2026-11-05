@@ -208,6 +208,13 @@ ExecStart=
 ExecStart=-/usr/sbin/modprobe -abq -d ${PREFIX}/dxgdrm drm
 EOF
 
+# Lets weaselwayd lower its nice value to -11.
+sudo mkdir -p /etc/systemd/system/user@.service.d
+sudo tee /etc/systemd/system/user@.service.d/weaselway.conf > /dev/null <<'EOF'
+[Service]
+LimitNICE=-11
+EOF
+
 sudo tee /etc/systemd/user/weaselwayd.service > /dev/null <<'EOF'
 [Unit]
 Description=Weaselway display server for the Windows viewer

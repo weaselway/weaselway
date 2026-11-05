@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <gio/gio.h>
@@ -1343,6 +1344,11 @@ main(int argc, char **argv)
 
     /* A client that goes away mid-write must not take weaselwayd with it. */
     signal(SIGPIPE, SIG_IGN);
+
+    /* Before any thread starts, so all inherit it. LimitNICE on user@.service
+     * allows it; without it weaselwayd runs at the normal priority. */
+    if (setpriority(PRIO_PROCESS, 0, -11) < 0)
+        g_message("running at the normal priority: %s", g_strerror(errno));
 
     p.drm_fd = open_dxgdrm(&error);
     if (p.drm_fd < 0 || !init_egl(&p, &error)) {

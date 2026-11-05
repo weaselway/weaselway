@@ -224,6 +224,10 @@ in
           };
         };
 
+        # Lets weaselwayd lower its nice value to -11, like PipeWire gets via rtkit.
+        # A unit limit, not rtkit, because rtkit raises single threads only.
+        systemd.services."user@".serviceConfig.LimitNICE = "-11";
+
         # PipeWire, with the protocol-simple servers weaselwayd connects to.
         services.pipewire = {
           enable = true;

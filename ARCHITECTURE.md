@@ -281,6 +281,10 @@ on a WSL installation. This section records those failures.
   compositor that finds them there, left over from a previous session, tries to run nested.
 - `weaselwayd.service` is a unit of the user manager, wanted by `default.target`. It waits for a
   compositor and keeps running when the compositor exits, so it is not bound to the session.
+- weaselwayd sets its nice value to -11 before it starts any thread, so all its threads inherit it,
+  Mesa's and FreeRDP's included. `LimitNICE=-11` on `user@.service` allows this. rtkit, which
+  PipeWire uses, raises single threads only and sets `SCHED_RESET_ON_FORK`, so threads that Mesa
+  and FreeRDP start would stay at nice 0. Without the limit weaselwayd logs it and runs at nice 0.
 - `/etc/environment.d/10-weaselway.conf` is the environment of the user manager, and therefore of
   weaselwayd and the desktop's services: `GALLIUM_DRIVER=d3d12`, `GSK_RENDERER=gl`,
   `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` and the vsock port. WebKit's sandbox does not bind
