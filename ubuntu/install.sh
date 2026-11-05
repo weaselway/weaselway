@@ -10,8 +10,8 @@
 set -euo pipefail
 
 # The versions the NixOS image ships (flake.lock).
-DXGDRM_VERSION=v1.2.0
-VIEWER_VERSION=v1.2.0rc1
+DXGDRM_VERSION=v1.2.2
+VIEWER_VERSION=v1.2.0
 MESA_REV=7cf21daf944ff0c19a51aca664b518f3baf79837 # branch mesa-26.2.6-wsl
 
 PREFIX=/opt/weaselway
