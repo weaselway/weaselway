@@ -12,7 +12,7 @@ set -euo pipefail
 # The versions the NixOS image ships (flake.lock).
 DXGDRM_VERSION=v1.2.2
 VIEWER_VERSION=v1.2.0
-MESA_REV=7cf21daf944ff0c19a51aca664b518f3baf79837 # branch mesa-26.2.6-wsl
+MESA_REV=e9280987cf45d60c395c5825af6ae141aa03113d # branch mesa-26.2.6-wsl
 
 PREFIX=/opt/weaselway
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
