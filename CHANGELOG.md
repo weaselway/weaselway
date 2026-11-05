@@ -8,6 +8,8 @@ release they led to. Weekly nixpkgs updates are not listed.
 - `weaselway.usbip.devices` keeps the listed USB devices (by VID:PID)
   attached from Windows with usbipd-win, also after they are plugged in
   again. The service is only installed when the list is not empty.
+- PipeWire: the quantum is capped at 512 frames. Browsers asked for 2048, and
+  the viewer plays each block as it arrives, so their audio popped.
 
 ## v1.7.0 - 2026-11-10
 

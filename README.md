@@ -528,7 +528,6 @@ The value after `/sdl-show-stats` is the text scale and is optional.
   [Requirements](#requirements). See [Updating](#updating) for `wsl --update`.
 - The scale factor of the Windows display is not passed on. Set the scale in
   the desktop's display settings.
-- Audio can sometimes crackle.
 - Touchscreens are not forwarded. Touchpad gestures are.
 - The viewer works only in the Windows session that started WSL. If WSL was
   started over SSH, from Remote Desktop or by a scheduled task,
