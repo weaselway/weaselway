@@ -285,6 +285,10 @@ on a WSL installation. This section records those failures.
   Mesa's and FreeRDP's included. `LimitNICE=-11` on `user@.service` allows this. rtkit, which
   PipeWire uses, raises single threads only and sets `SCHED_RESET_ON_FORK`, so threads that Mesa
   and FreeRDP start would stay at nice 0. Without the limit weaselwayd logs it and runs at nice 0.
+- On the GPU, our Mesa sets the dxgkrnl priority of every D3D12 context it creates to -3, and to 0
+  for GL processes and Vulkan queues that request high priority through `EGL_IMG_context_priority`
+  or `VK_KHR_global_priority`. weaselwayd and the compositors request it. D3D12's own queue priority has
+  no effect on WSL. See [ADR 0033](docs/adr/0033-gpu-priority-through-dxgkrnl-contexts.md).
 - `/etc/environment.d/10-weaselway.conf` is the environment of the user manager, and therefore of
   weaselwayd and the desktop's services: `GALLIUM_DRIVER=d3d12`, `GSK_RENDERER=gl`,
   `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` and the vsock port. WebKit's sandbox does not bind

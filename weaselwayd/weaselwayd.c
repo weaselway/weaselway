@@ -276,19 +276,17 @@ readback_path(const struct weaselwayd *p)
 static bool
 init_egl(struct weaselwayd *p, GError **error)
 {
-    static const EGLint context_attribs[] = {
+    /* Our Mesa lowers the GPU priority of every other process on WSL, and
+     * keeps contexts that ask for high priority at the default. */
+    EGLint attribs[] = {
+        EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG,
         EGL_CONTEXT_MAJOR_VERSION, 3,
         EGL_CONTEXT_MINOR_VERSION, 1,
         EGL_NONE,
     };
-    /* The compute readback needs ES 3.1; a driver without it still gets a
-     * context, and glReadPixels. */
-    static const EGLint context_attribs_30[] = {
-        EGL_CONTEXT_MAJOR_VERSION, 3,
-        EGL_NONE,
-    };
+    const EGLint *context_attribs;
     const char *extensions;
-    EGLint major, minor;
+    EGLint major, minor, priority = 0;
 
     p->gbm = gbm_create_device(p->drm_fd);
     if (!p->gbm) {
@@ -313,16 +311,24 @@ init_egl(struct weaselwayd *p, GError **error)
     }
 
     eglBindAPI(EGL_OPENGL_ES_API);
+    context_attribs = strstr(extensions, "EGL_IMG_context_priority") ? attribs : attribs + 2;
     p->context = eglCreateContext(p->display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, context_attribs);
-    if (p->context == EGL_NO_CONTEXT)
+    if (p->context == EGL_NO_CONTEXT) {
+        /* The compute readback needs ES 3.1; a driver without it still gets a
+         * context, and glReadPixels. */
+        attribs[4] = EGL_NONE;
         p->context = eglCreateContext(p->display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT,
-                                      context_attribs_30);
+                                      context_attribs);
+    }
     if (p->context == EGL_NO_CONTEXT ||
         !eglMakeCurrent(p->display, EGL_NO_SURFACE, EGL_NO_SURFACE, p->context)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "cannot create a GLES3 context (0x%x)",
                     eglGetError());
         return false;
     }
+
+    eglQueryContext(p->display, p->context, EGL_CONTEXT_PRIORITY_LEVEL_IMG, &priority);
+    g_message("GPU priority is %s", priority == EGL_CONTEXT_PRIORITY_HIGH_IMG ? "high" : "default");
 
     image_target_texture_2d =
         (void (*)(GLenum, void *))eglGetProcAddress("glEGLImageTargetTexture2DOES");
