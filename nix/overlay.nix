@@ -42,7 +42,14 @@ in
       (lib.mesonBool "teflon" false)
       (lib.mesonEnable "intel-rt" false)
       (lib.mesonOption "tools" "")
+      # The Intel driver's shader compiler brings its own libLLVM-14. glibc
+      # binds GNU unique symbols process-wide, ignoring versions, so a shared
+      # libLLVM loaded first hands it foreign FoldingSet tables and it crashes
+      # (Firefox on startup). Linked statically, LLVM's symbols stay local.
+      (lib.mesonEnable "shared-llvm" false)
     ];
+    # Static LLVM links its system libraries itself.
+    buildInputs = old.buildInputs ++ [ final.libxml2 ];
 
     # Without rusticl there is no libRusticlOpenCL.so to add an rpath to.
     postFixup = builtins.replaceStrings [ " $opencl/lib/libRusticlOpenCL.so" ] [ "" ] old.postFixup;
