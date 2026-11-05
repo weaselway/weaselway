@@ -178,8 +178,9 @@ in
           ];
         };
 
-        # Loads dxgdrm, evdev and uinput, takes /tmp/.X11-unix back from
-        # wslg.service, and mounts WSLg's shared memory (fails without WSLg).
+        # Loads dxgdrm, evdev and uinput, sets full preemption, takes
+        # /tmp/.X11-unix back from wslg.service, and mounts WSLg's shared
+        # memory (fails without WSLg).
         systemd.services.weaselway-prep = {
           description = "Weaselway host preparation for the session";
           documentation = [ "https://github.com/weaselway/weaselway" ];

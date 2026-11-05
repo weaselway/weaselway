@@ -43,6 +43,16 @@ for MODULE in evdev uinput; do
     fi
 done
 
+# WSL's kernel boots with voluntary preemption. Full preemption lets the
+# frame and audio threads interrupt long kernel paths. Not fatal: the knob is
+# in debugfs, which a kernel may lack.
+PREEMPT=/sys/kernel/debug/sched/preempt
+if [ -w "${PREEMPT}" ]; then
+    echo full > "${PREEMPT}" || echo "warning: setting preemption to full failed" >&2
+else
+    echo "warning: no ${PREEMPT} -- preemption stays at the kernel default" >&2
+fi
+
 # Take /tmp/.X11-unix back from WSL, so the compositor can create its X socket
 # there. WSL's wslg.service bind-mounts /mnt/wslg/.X11-unix over it read-only,
 # and X-mount.mkdir creates the mountpoint as root, mode 0755 -- so umount
