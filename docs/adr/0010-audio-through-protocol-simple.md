@@ -33,6 +33,7 @@ module-rdp-source, which had a socket protocol of their own.
   synchronise video with.
 - Any local process can connect to the ports and record what the session
   plays, or feed the microphone.
-- Audio from browsers crackles. The cause is not found.
+- Audio from browsers crackled, because they ask for the largest quantum and the
+  viewer has no jitter buffer. The drop-in caps the quantum at 512 frames.
 - PipeWire leaves a "Remote Desktop Microphone" node behind after each
   reconnect.

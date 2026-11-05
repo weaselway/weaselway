@@ -5,6 +5,8 @@ release they led to. Weekly nixpkgs updates are not listed.
 
 ## Unreleased
 
+- PipeWire: the quantum is capped at 512 frames. Browsers asked for 2048, and
+  the viewer plays each block as it arrives, so their audio popped.
 - Mesa: `eglExportDMABUFImageMESA` fails with `EGL_BAD_ALLOC` when d3d12
   cannot share the texture, instead of returning success without fds. GTK 4
   apps (ptyxis, for example) closed one of their own fds after that, which

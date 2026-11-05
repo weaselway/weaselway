@@ -564,10 +564,10 @@ when working on the code.
     6.6.6 on WSL with the Windows viewer. wlroots compositors are untested.
   - KWin gives X11 clients a clipboard that a Wayland client owns only while an X11 window has
     focus. This applies to what comes from Windows too.
-- Audio from browsers crackles (Chromium, Firefox and GNOME Web on YouTube); mpv is not affected.
-  weaselwayd's log shows no dropped backlog and no stalls while it happens. `pw-top` showed errors on
-  the playback stream, and the graph running at 48 kHz against the sink's 44.1 kHz. Raising
-  `clock.min-quantum` to 1024 did not help.
+- Browsers ask PipeWire for the largest quantum, and the Windows viewer plays each block as it
+  arrives, with no jitter buffer. At a 2048-frame quantum the audio left in 43 ms bursts and popped;
+  mpv asks for less and did not. The PipeWire drop-in caps the quantum at 512 frames, which stopped
+  the popping with Cider. Drift between the WSL clock and the Windows audio device is unmeasured.
 - PipeWire leaves "Remote Desktop Microphone" nodes behind after a viewer reconnects, because
   protocol-simple keeps the node of the closed socket.
 - The microphone opens, but samples from a real microphone have not been verified.
