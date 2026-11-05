@@ -243,10 +243,6 @@ in
           trusted-public-keys = [ "weaselway.cachix.org-1:aN6jpdbl2M5QNsR3U8zx1G/R0jHIkYkvX15G9jxPiHU=" ];
         };
 
-        # Builds run in the same VM as the session; they take what it leaves.
-        nix.daemonCPUSchedPolicy = lib.mkDefault "idle";
-        nix.daemonIOSchedClass = lib.mkDefault "idle";
-
         environment.systemPackages = [
           pkgs.weaselway-scripts
           pkgs.weaselwayd
