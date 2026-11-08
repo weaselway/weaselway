@@ -23,7 +23,9 @@ search path on which they would be found.
 - KWin's setcap wrapper is disabled when Plasma is enabled, because NixOS's
   wrappers drop `LD_LIBRARY_PATH`.
 - `libedit.so.2`, a link to nixpkgs' `libedit.so.0`, is added for Intel's
-  driver, whose `libLLVM-9.so` needs the Debian soname.
+  driver, whose `libLLVM-9.so` needs the Debian soname. `libz.so.1` is added
+  for the same driver, for processes that do not load zlib themselves, such
+  as Vulkan clients on dzn.
 - `weaselway.adapter` selects the GPU by a substring of its name.
 
 ## Consequences

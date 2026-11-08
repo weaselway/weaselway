@@ -34,10 +34,13 @@ let
 
   # Libraries the Windows GPU drivers expect under their Debian names. Intel's
   # driver needs libedit.so.2; without it d3d12 fails and mesa falls back to
-  # software. nixpkgs ships the same library as libedit.so.0.
+  # software. nixpkgs ships the same library as libedit.so.0. It also needs
+  # libz.so.1, which GL processes happen to load already, but Vulkan (dzn)
+  # processes do not.
   wslDriverCompat = pkgs.runCommand "weaselway-wsl-driver-compat" { } ''
     mkdir -p $out/lib
     ln -s ${lib.getLib pkgs.libedit}/lib/libedit.so.0 $out/lib/libedit.so.2
+    ln -s ${lib.getLib pkgs.zlib}/lib/libz.so.1 $out/lib/libz.so.1
   '';
 
   audioConfig = pkgs.writeTextDir "share/pipewire/pipewire.conf.d/10-weaselway-rdp-audio.conf" (

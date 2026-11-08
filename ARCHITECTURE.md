@@ -220,6 +220,9 @@ on a WSL installation. This section records those failures.
 - `wslDriverCompat` adds `libedit.so.2`, a link to nixpkgs' `libedit.so.0`, to
   `/run/opengl-driver/lib`. Intel's WSL driver ships a `libLLVM-9.so` that requires the Debian
   soname. Without it the Intel user-mode driver fails to load and d3d12 cannot create a device.
+  It also adds `libz.so.1`, which the same driver needs. GL processes load zlib anyway through
+  Mesa, but a Vulkan process with dzn does not, and the device fails with
+  `DXGI_ERROR_UNSUPPORTED`.
   Drivers from other vendors may need other libraries under their Debian names; check with `ldd` on
   `/usr/lib/wsl/drivers/*/*.so`.
 - Verified on an Intel HD 630: `eglinfo` reports `D3D12 (Intel(R) HD Graphics 630)`.
