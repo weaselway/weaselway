@@ -46,6 +46,7 @@ are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 | [0031](0031-vblank-phase-from-the-viewer.md) | The viewer's vblank sets the phase of dxgdrm's | Accepted |
 | [0032](0032-stable-and-unstable-nixpkgs.md) | One lock with a stable and an unstable nixpkgs | Accepted |
 | [0033](0033-gpu-priority-through-dxgkrnl-contexts.md) | GPU priority through dxgkrnl context priorities, set in Mesa | Accepted |
+| [0034](0034-cpu-priority-for-weaselwayd.md) | weaselwayd runs at nice -11, on a fully preemptible kernel | Accepted |
 
 ## Known risks
 
@@ -72,3 +73,8 @@ Found while writing these records, details in the linked files:
   [0012](0012-session-keeps-the-distro-running.md)).
 - With ext-data-control-v1, clipboard ownership relies on an order of events
   the protocol does not require ([0009](0009-clipboard-backends.md)).
+- On GPUs that preempt only between DMA buffers, a heavy client slows every
+  other client's frames, whatever its GPU priority
+  ([0033](0033-gpu-priority-through-dxgkrnl-contexts.md)).
+- Vulkan clients present through dxgdrm dma-bufs, so Mesa and dxgdrm have to
+  be updated together ([0014](0014-graphics-stack.md)).

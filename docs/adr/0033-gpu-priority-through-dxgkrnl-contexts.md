@@ -66,5 +66,17 @@ creates the contexts of devices and queues through
   has two of them, the device's and the queue's. The vendor driver creates
   more contexts of its own through `libdxcore.so`; they stay at 0. The
   measurements above were taken with this limit.
+- How much a priority helps depends on how finely the GPU preempts
+  ("Graphics Preemption" in `dxdiag`). Measured with a light client at
+  60 fps next to a heavy client at about 30 fps, in GNOME, in November 2026:
+  - NVIDIA 940MX (DMA buffer preemption): the light client drops to 30-35
+    fps, also with the heavy client at -7 or rendering offscreen. The
+    compositor's frame waits behind the heavy client's command buffers.
+  - Intel HD 630 (triangle preemption): a heavy GL client at -3 leaves the
+    light client at 55-58 fps, at -7 at 60 fps. A heavy Vulkan client
+    (dzn) leaves it at 43-50 fps, also at -7 and offscreen. The cause is
+    not known; memory bandwidth is a guess.
+  - Neither is a sync problem: an offscreen heavy client, which hands the
+    compositor no buffers, slows the light client just as much.
 - `MESA_D3DKMT_PRIORITY_DEBUG=1` with `MESA_LOG_LEVEL=info` logs the
   priority of each context.
