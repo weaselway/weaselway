@@ -17,6 +17,13 @@ release they led to. Weekly nixpkgs updates are not listed.
   Vulkan both load, each keeps its own context priority. dzn signals its
   queue fence when a submit fails halfway, and its sync thread no longer
   blocks queue teardown on a point that never comes.
+- Mesa: d3d12 keeps the driver's compiled pipeline states in the Mesa shader
+  cache, so a program's second start skips most of the Windows driver's
+  shader compile (on Intel HD 630 a new state drops from about 16 ms to
+  3 ms, a large shader from 1.4 s to 0.4 s). Off on NVIDIA, whose driver
+  crashes when asked for the blob; `MESA_D3D12_PSO_CACHE=0/1` overrides. Two
+  fixes in the shader compiler: the last varying slot is compared, and a
+  failed sysvalue allocation no longer leaks.
 - dxgdrm v1.3.1: sync files from dzn no longer signal before the GPU work is
   done. `PRIME_FD_TO_HANDLE` accepts only dxgkrnl shared resources. A
   process that only opens the card node no longer counts as a compositor
