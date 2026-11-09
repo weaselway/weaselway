@@ -9,6 +9,19 @@ release they led to. Weekly nixpkgs updates are not listed.
   cannot share the texture, instead of returning success without fds. GTK 4
   apps (ptyxis, for example) closed one of their own fds after that, which
   flooded the next terminal with garbage and dropped pasted text.
+- Mesa: d3d12 waits for GPU writes to every buffer presented without a fence,
+  even after the process exported a fence for another one. Imports smaller
+  than their dma-buf are copied once per batch instead of before every draw.
+  The software EGL device reports the dxgdrm node only when d3d12 runs, and
+  llvmpipe on surfaceless and device displays uses drisw again. When GL and
+  Vulkan both load, each keeps its own context priority. dzn signals its
+  queue fence when a submit fails halfway, and its sync thread no longer
+  blocks queue teardown on a point that never comes.
+- dxgdrm (NixOS image only, not yet released): sync files from dzn no longer
+  signal before the GPU work is done. `PRIME_FD_TO_HANDLE` accepts only
+  dxgkrnl shared resources. A process that only opens the card node no
+  longer counts as a compositor taking over. A failed `GET_FRAME` keeps the
+  damage for the next call.
 
 ## v1.6.0 - 2026-11-09
 

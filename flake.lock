@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1794163491,
-        "narHash": "sha256-BQIfP05aD6feYhx+NwJ9VJcKWdrzuDQadl4O8dYhVag=",
+        "lastModified": 1794229072,
+        "narHash": "sha256-fgk8tGn1NIZ4LEhpUXvBVYHcKyiJm7QppkXPqQhJlLU=",
         "owner": "weaselway",
         "repo": "dxgdrm",
-        "rev": "14fca58a9f84278fe86b8acb0ca39e6e738dd327",
+        "rev": "51633c2840b913995cb09e400523524119b3fe7a",
         "type": "github"
       },
       "original": {
@@ -61,10 +61,10 @@
     "mesa-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1794210628,
-        "narHash": "sha256-9Qh/GRYFSHxWSICKrIWGnbzuCYWcMzp9zQB5P9Zus6c=",
+        "lastModified": 1794231798,
+        "narHash": "sha256-BfhoF1pb+aHh0KtIOYNAHhTdidHT3EY/du5YEbDIdyM=",
         "ref": "mesa-26.2.6-wsl",
-        "rev": "f7d665362258eefe881830d40b055347681fece6",
+        "rev": "d8bb910b617d78196e9c30c0fc004cc9cd6def0e",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/mesa"
@@ -115,11 +115,11 @@
     },
     "nixpkgs-unstable": {
       "locked": {
-        "lastModified": 1793876309,
-        "narHash": "sha256-Wojg9lIH/hDH91iDVH2/EPw8oDSpxjxhXONbU1yf4Zg=",
+        "lastModified": 1794042290,
+        "narHash": "sha256-ziZn2PvCJE5JEEpqTdxXwJpPB+L3YqoCpTAMCzyaP3U=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "f9a75f41be3a74eab55d3a7679d34ad6cc0da977",
+        "rev": "f4a03c008967841f2a0b3cb7c436fc6fc31671f6",
         "type": "github"
       },
       "original": {
