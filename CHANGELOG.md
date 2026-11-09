@@ -17,11 +17,10 @@ release they led to. Weekly nixpkgs updates are not listed.
   Vulkan both load, each keeps its own context priority. dzn signals its
   queue fence when a submit fails halfway, and its sync thread no longer
   blocks queue teardown on a point that never comes.
-- dxgdrm (NixOS image only, not yet released): sync files from dzn no longer
-  signal before the GPU work is done. `PRIME_FD_TO_HANDLE` accepts only
-  dxgkrnl shared resources. A process that only opens the card node no
-  longer counts as a compositor taking over. A failed `GET_FRAME` keeps the
-  damage for the next call.
+- dxgdrm v1.3.1: sync files from dzn no longer signal before the GPU work is
+  done. `PRIME_FD_TO_HANDLE` accepts only dxgkrnl shared resources. A
+  process that only opens the card node no longer counts as a compositor
+  taking over. A failed `GET_FRAME` keeps the damage for the next call.
 
 ## v1.6.0 - 2026-11-09
 
