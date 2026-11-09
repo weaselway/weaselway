@@ -128,3 +128,32 @@ jobs:
         run: |
           nix build --print-build-logs --no-link \
             ".#nixosConfigurations.wsl-${DESKTOP}-unstable.config.system.build.toplevel"
+
+  # No image has Hyprland, so this is what checks that the aquamarine and
+  # Hyprland patches still apply and build on both channels.
+  hyprland:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [wsl-gnome, wsl-gnome-unstable]
+    name: hyprland (${{ matrix.config }})
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: inputs.lock-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.lock-artifact }}
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # Hyprland links aquamarine, so this builds both.
+      - name: Build Hyprland
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          nix build --print-build-logs --no-link ".#nixosConfigurations.${CONFIG}.pkgs.hyprland"

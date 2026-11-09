@@ -426,6 +426,9 @@ the composite action [.github/actions/build-image](.github/actions/build-image) 
   (`nixosConfigurations.wsl-*-unstable`), only to fill the cache: they are not packed, kept or
   released. dxgdrm, the viewer and NixOS-WSL follow the stable `nixpkgs`, so both share them
   ([ADR 0032](docs/adr/0032-stable-and-unstable-nixpkgs.md)).
+- The `hyprland` jobs build Hyprland with the patched aquamarine on both channels. No image has
+  Hyprland, so this is what notices when a nixpkgs update breaks those patches
+  ([ADR 0030](docs/adr/0030-hyprland-follows-the-window-size.md)).
 - [update-nixpkgs.yml](.github/workflows/update-nixpkgs.yml) runs `nix flake update nixpkgs` on
   Fridays and `nix flake update nixpkgs-unstable` on Saturdays, calls build-image.yml with the
   new lock, and commits the lock to `main` only if that build passes. The push uses

@@ -43,7 +43,7 @@ preferred mode.
 ## Consequences
 
 - Hyprland follows the viewer's window size, as GNOME and Plasma do.
-- aquamarine and Hyprland are rebuilt. Neither is on cache.nixos.org or in
-  weaselway's cache, so a system with Hyprland builds both.
+- aquamarine and Hyprland are rebuilt. Neither is on cache.nixos.org; CI
+  builds both on both channels and pushes them to weaselway's cache.
 - A nixpkgs update that moves aquamarine or Hyprland to a new release needs
-  new backports.
+  new backports. CI fails such an update until they exist.
