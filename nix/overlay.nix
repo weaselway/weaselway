@@ -1,6 +1,7 @@
 # weaselway's packages and patches to nixpkgs.
 {
   mesa-src,
+  mesa-main-src,
   freerdp,
   dxgdrm,
 }:
@@ -8,6 +9,9 @@
 final: prev:
 let
   inherit (prev) lib;
+
+  # nixpkgs' Mesa package only builds the Mesa major it was written for.
+  mesaSrc = if lib.versionOlder prev.mesa.version "27" then mesa-src else mesa-main-src;
 
   mesaDrivers = {
     # d3d12 does the work, llvmpipe is the fallback without a GPU.
@@ -27,8 +31,8 @@ in
   # Not a replacement for pkgs.mesa, which would rebuild everything linking
   # libgbm. The module uses it as hardware.graphics.package.
   weaselway-mesa = (prev.mesa.override mesaDrivers).overrideAttrs (old: {
-    version = "${lib.fileContents "${mesa-src}/VERSION"}-weaselway";
-    src = mesa-src;
+    version = "${lib.fileContents "${mesaSrc}/VERSION"}-weaselway";
+    src = mesaSrc;
 
     # Drops nixpkgs' check that the GL headers match its own mesa release.
     postPatch = ''

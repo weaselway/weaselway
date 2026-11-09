@@ -58,6 +58,24 @@
         "url": "https://github.com/weaselway/freerdp"
       }
     },
+    "mesa-main-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794231806,
+        "narHash": "sha256-Yf1H3blkSCiS7xam6BCeHTg8Fe3I0F5pydi0REsbiT4=",
+        "ref": "main",
+        "rev": "c7628a46c3e7e25477c53aec98fe0d541af1445e",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/mesa"
+      },
+      "original": {
+        "ref": "main",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/weaselway/mesa"
+      }
+    },
     "mesa-src": {
       "flake": false,
       "locked": {
@@ -133,6 +151,7 @@
       "inputs": {
         "dxgdrm": "dxgdrm",
         "freerdp": "freerdp",
+        "mesa-main-src": "mesa-main-src",
         "mesa-src": "mesa-src",
         "nixos-wsl": "nixos-wsl",
         "nixpkgs": "nixpkgs",

@@ -111,7 +111,8 @@ problems that show up there but are unrelated to RDP:
 - **weaselway** (this repository): the flake, the NixOS module, the overlay, the image
   configuration, weaselwayd and the shell scripts.
 - **mesa**: the image builds the branch `mesa-26.2.6-wsl` with nixpkgs' Mesa package definition.
-  `main` carries the same commits on top of upstream main.
+  `main` carries the same commits on top of upstream main; the image builds it instead once
+  nixpkgs' Mesa is 27 or newer, because nixpkgs' package only builds the Mesa major it targets.
 - **dxgdrm**: `main`. The module is built with the toolchain the WSL kernel itself is built with,
   the kernel.org crosstool gcc 13.2.0 with binutils 2.41. The kernel sets `CONFIG_MODVERSIONS` and
   rejects a module built with nixpkgs' gcc. The configure phase compares the regenerated `.config`
@@ -133,9 +134,9 @@ problems that show up there but are unrelated to RDP:
 
 ### Inputs
 
-`nixpkgs` (nixos-26.05), `nixos-wsl`, `dxgdrm`, `freerdp`, and `mesa-src` (`flake = false`).
+`nixpkgs` (nixos-26.05), `nixos-wsl`, `dxgdrm`, `freerdp`, and `mesa-src` and `mesa-main-src` (`flake = false`).
 
-`mesa-src` and `freerdp` are fetched as `git+https://…?ref=…&shallow=1` and not as `github:` inputs.
+The mesa inputs and `freerdp` are fetched as `git+https://…?ref=…&shallow=1` and not as `github:` inputs.
 GitHub tarballs of repositories with `eol=` rules in `.gitattributes` produce different NAR hashes
 with different Nix versions, and CI then fails with "NAR hash mismatch". Both repositories have been
 affected.

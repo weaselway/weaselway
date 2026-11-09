@@ -11,7 +11,7 @@ of a `github:` input failed in CI with "NAR hash mismatch" (`683046a`,
 
 ## Decision
 
-- `mesa-src` and `freerdp` are `git+https://…?ref=…&shallow=1` inputs.
+- `mesa-src`, `mesa-main-src` and `freerdp` are `git+https://…?ref=…&shallow=1` inputs.
 - weaselway itself has no `.gitattributes`.
 
 ## Consequences

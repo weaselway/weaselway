@@ -30,6 +30,11 @@
       url = "git+https://github.com/weaselway/mesa?ref=mesa-26.2.6-wsl&shallow=1";
       flake = false;
     };
+    # Used instead once nixpkgs' Mesa is 27, whose package fails on 26.x.
+    mesa-main-src = {
+      url = "git+https://github.com/weaselway/mesa?ref=main&shallow=1";
+      flake = false;
+    };
   };
 
   outputs =
@@ -41,6 +46,7 @@
       dxgdrm,
       freerdp,
       mesa-src,
+      mesa-main-src,
     }:
     let
       inherit (nixpkgs) lib;
@@ -69,6 +75,7 @@
       overlays.default = import ./nix/overlay.nix {
         inherit
           mesa-src
+          mesa-main-src
           freerdp
           dxgdrm
           ;
