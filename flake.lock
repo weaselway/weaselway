@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793804615,
-        "narHash": "sha256-9GYXFRUL5IjUrm4LakrmJy2yBSMWl0pE1JYXBBwoexU=",
+        "lastModified": 1794163491,
+        "narHash": "sha256-BQIfP05aD6feYhx+NwJ9VJcKWdrzuDQadl4O8dYhVag=",
         "owner": "weaselway",
         "repo": "dxgdrm",
-        "rev": "92150f705c664fb1f6dc7dcb496e3bc2d943dafa",
+        "rev": "14fca58a9f84278fe86b8acb0ca39e6e738dd327",
         "type": "github"
       },
       "original": {
@@ -61,10 +61,10 @@
     "mesa-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1793896747,
-        "narHash": "sha256-oqeyRUGKIueZUth5NcMXdoVyQHwrhZ8uuFB/B6Bq4XA=",
+        "lastModified": 1794200526,
+        "narHash": "sha256-qO6ysiupYy87I64/hshhY7QtKHHuu+GVPotB4jfzovY=",
         "ref": "mesa-26.2.6-wsl",
-        "rev": "81eb1ecb386ea0494d54765fc10530bdb02a2734",
+        "rev": "513100689f8ad894eeffde1eee089d9e194bd798",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/mesa"
