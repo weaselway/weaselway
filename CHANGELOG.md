@@ -3,7 +3,7 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
-## Unreleased
+## v1.7.0 - 2026-11-10
 
 - `weaselway.bluetooth.enable` loads Bluetooth modules rebuilt with rfkill
   for every supported WSL kernel. WSL's kernel has no rfkill, so GNOME hid a
@@ -11,7 +11,7 @@ release they led to. Weekly nixpkgs updates are not listed.
   sticks (Realtek, Barrot, Actions, CSR clones) work.
 - `vhci_hcd` is loaded at boot, so `usbipd attach --wsl` works on NixOS,
   where usbipd could not find `modprobe`.
-- WSL kernel 6.18.58.1 (WSL 3.0.5).
+- WSL kernel 6.18.58.1 (WSL 3.0.5), with dxgdrm v1.3.2.
 - The kernel trees dxgdrm builds against come from the new
   [wsl-kernel](https://github.com/weaselway/wsl-kernel) flake, which pins its
   own nixpkgs, so nixpkgs updates no longer rebuild them.
