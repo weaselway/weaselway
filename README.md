@@ -320,6 +320,7 @@ Weaselway adds these options:
 | `weaselway.adapter` | `null` | The GPU to render on, as a substring of its name (`"nvidia"`, `"Intel"`). `null` selects the first adapter Windows lists. |
 | `weaselway.session` | `"gnome"` | The session `ww-start-session` starts when none is given. |
 | `weaselway.bluetooth.enable` | `false` | Bluetooth with rfkill, so the desktop shows a USB adapter attached with `usbipd`. Loads Bluetooth modules rebuilt with `CONFIG_RFKILL` in place of WSL's own. Attach the adapter after the distro started. |
+| `weaselway.usbip.devices` | `[]` | USB devices by VID:PID (`[ "2357:0604" ]`) that a service keeps attached with `usbipd attach --wsl`, also after replugging. Needs [usbipd-win](https://github.com/dorssel/usbipd-win) in its default location, and each device shared once with `usbipd bind`. |
 
 `ww-start-session --adapter <name>` overrides the adapter for one session
 without a rebuild.

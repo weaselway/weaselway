@@ -143,6 +143,10 @@
           find . -name '*.sh' -print0 | xargs -0 shellcheck --shell=bash --severity=error
           touch $out
         '';
+        usbipd-auto-attach = pkgs.runCommand "weaselway-usbipd-auto-attach" { } ''
+          ${pkgs.python3}/bin/python3 -m doctest ${./libexec/usbipd-auto-attach.py}
+          touch $out
+        '';
       });
     };
 }

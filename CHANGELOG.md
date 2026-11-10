@@ -3,6 +3,12 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
+## Unreleased
+
+- `weaselway.usbip.devices` keeps the listed USB devices (by VID:PID)
+  attached from Windows with usbipd-win, also after they are plugged in
+  again. The service is only installed when the list is not empty.
+
 ## v1.7.0 - 2026-11-10
 
 - `weaselway.bluetooth.enable` loads Bluetooth modules rebuilt with rfkill
