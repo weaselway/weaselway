@@ -105,8 +105,7 @@ ww-start-viewer
 `ww-start-session` starts GNOME on the virtual display. `ww-start-viewer`
 opens it in a window on Windows. `ww-install-viewer-link` puts a shortcut on
 the Windows desktop that does both. The main README describes these commands
-under [Installation](../README.md#3-start-the-session) and
-[The viewer](../README.md#the-viewer).
+under [Using it](../README.md#using-it).
 
 To stop the session, run `ww-start-session stop`.
 
