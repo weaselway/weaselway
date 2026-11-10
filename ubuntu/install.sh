@@ -181,7 +181,7 @@ KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660"
 EOF
 sudo usermod -aG render,video,input "$(id -un)"
 
-# Loads dxgdrm, evdev and uinput, takes /tmp/.X11-unix back from WSLg and
+# Loads dxgdrm, evdev, uinput and vhci_hcd, takes /tmp/.X11-unix back from WSLg and
 # mounts WSLg's shared memory, once per boot.
 sudo tee /etc/systemd/system/weaselway-prep.service > /dev/null <<EOF
 [Unit]

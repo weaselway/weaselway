@@ -27,20 +27,12 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
 fi
 
 # weaselwayd creates the input devices through uinput and the compositor reads
-# them as evdev. Both are modules in the WSL kernel and nothing loads them.
-# By path from WSL's own /lib/modules, which NixOS' modprobe does not search.
-# Not fatal: the session works without them, just without input.
-for MODULE in evdev uinput; do
-    if grep -q "^${MODULE} " /proc/modules; then
-        continue
-    fi
-    MODULE_KO="$(find "/lib/modules/$(uname -r)" "/usr/lib/modules/$(uname -r)" \
-        -name "${MODULE}.ko*" 2>/dev/null | head -n 1 || true)"
-    if [ -n "${MODULE_KO}" ]; then
-        modprobe "${MODULE_KO}" || echo "warning: loading ${MODULE_KO} failed" >&2
-    else
-        echo "warning: no ${MODULE}.ko under /lib/modules/$(uname -r) -- no input from the viewer" >&2
-    fi
+# them as evdev. vhci_hcd is the USB/IP client usbipd-win attaches devices
+# through; usbipd runs modprobe itself, but NixOS has none on root's PATH.
+# All are modules in WSL's /lib/modules that nothing else loads.
+# Not fatal: without evdev and uinput the session just has no input.
+for MODULE in evdev uinput vhci_hcd; do
+    modprobe "${MODULE}" || echo "warning: loading ${MODULE} failed" >&2
 done
 
 # WSL's kernel boots with voluntary preemption. Full preemption lets the

@@ -19,7 +19,6 @@ let
     name = "weaselway-prep-session";
     runtimeInputs = with pkgs; [
       coreutils
-      findutils
       gnugrep
       gnused
       kmod
@@ -181,7 +180,7 @@ in
           ];
         };
 
-        # Loads dxgdrm, evdev and uinput, sets full preemption, takes
+        # Loads dxgdrm, evdev, uinput and vhci_hcd, sets full preemption, takes
         # /tmp/.X11-unix back from wslg.service, and mounts WSLg's shared
         # memory (fails without WSLg).
         systemd.services.weaselway-prep = {

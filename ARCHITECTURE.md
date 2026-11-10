@@ -262,6 +262,8 @@ on a WSL installation. This section records those failures.
     that does not contain it;
   - loads `evdev` and `uinput` from WSL's own `/lib/modules`, where both are modules that nothing
     else loads;
+  - loads `vhci_hcd`, the USB/IP client that `usbipd attach --wsl` needs. usbipd would run
+    `modprobe` itself, but NixOS has none on root's `PATH`;
   - sets the scheduler's preemption mode to `full` through debugfs;
   - takes `/tmp/.X11-unix` back from WSL's read-only bind mount, so that the compositor can create
     its X socket there;

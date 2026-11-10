@@ -9,6 +9,8 @@ release they led to. Weekly nixpkgs updates are not listed.
   for every supported WSL kernel. WSL's kernel has no rfkill, so GNOME hid a
   working adapter. Realtek Bluetooth firmware is included, so common USB
   sticks (Realtek, Barrot, Actions, CSR clones) work.
+- `vhci_hcd` is loaded at boot, so `usbipd attach --wsl` works on NixOS,
+  where usbipd could not find `modprobe`.
 - WSL kernel 6.18.58.1 (WSL 3.0.5).
 - The kernel trees dxgdrm builds against come from the new
   [wsl-kernel](https://github.com/weaselway/wsl-kernel) flake, which pins its
