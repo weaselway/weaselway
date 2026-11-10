@@ -81,7 +81,10 @@
       };
 
       nixosModules.weaselway = {
-        imports = [ (import ./nix/module.nix { inherit dxgdrm; }) ];
+        imports = [
+          (import ./nix/module.nix { inherit dxgdrm; })
+          (import ./nix/bluetooth.nix { inherit (dxgdrm.inputs) wsl-kernel; })
+        ];
         nixpkgs.overlays = [ self.overlays.default ];
       };
       nixosModules.default = self.nixosModules.weaselway;

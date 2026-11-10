@@ -47,6 +47,7 @@ are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 | [0032](0032-stable-and-unstable-nixpkgs.md) | One lock with a stable and an unstable nixpkgs | Accepted |
 | [0033](0033-gpu-priority-through-dxgkrnl-contexts.md) | GPU priority through dxgkrnl context priorities, set in Mesa | Accepted |
 | [0034](0034-cpu-priority-for-weaselwayd.md) | weaselwayd runs at nice -11, on a fully preemptible kernel | Accepted |
+| [0035](0035-bluetooth-modules-with-rfkill.md) | Bluetooth modules are rebuilt with rfkill and loaded in place of WSL's | Accepted |
 
 ## Known risks
 
