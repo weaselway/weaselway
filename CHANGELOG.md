@@ -3,7 +3,7 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
-## Unreleased
+## v1.7.1 - 2026-11-10
 
 - `weaselway.usbip.devices` keeps the listed USB devices (by VID:PID)
   attached from Windows with usbipd-win, also after they are plugged in
