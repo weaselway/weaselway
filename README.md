@@ -224,7 +224,8 @@ usbipd-win shares USB devices from Windows with WSL. Its latest release,
 build from its
 [Build workflow](https://github.com/dorssel/usbipd-win/actions/workflows/build-installer.yml?query=branch%3Amaster+is%3Asuccess)
 instead: open the most recent run and download the artifact
-`usbipd-win_<version>_x64.msi` (GitHub requires a login for this). For
+`usbipd-win_<version>_x64.msi` (GitHub requires a login for this). Build
+5.3.1 from there works with cameras. For
 devices other than cameras, `winget install usbipd` installs the release.
 
 Then share a device once, in a PowerShell with administrator rights:
