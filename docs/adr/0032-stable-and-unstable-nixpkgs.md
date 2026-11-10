@@ -14,15 +14,16 @@ viewer's mingw toolchain, is missing from cache.nixos.org.
 - weaselway's flake has a second input, `nixpkgs-unstable`
   (`nixos-unstable`), in the same lock. `nixosConfigurations.wsl-gnome-unstable`
   and `wsl-plasma-unstable` build the image configurations with it.
-- dxgdrm, freerdp (the viewer) and NixOS-WSL follow the stable `nixpkgs`, so
-  the kernel trees and the mingw toolchain are the same paths on both and are
-  built once.
+- freerdp (the viewer) and NixOS-WSL follow the stable `nixpkgs`, so the
+  mingw toolchain is the same path on both and is built once. dxgdrm does
+  not follow it: its kernel trees come from wsl-kernel, which pins its own
+  nixpkgs (dxgdrm 0022), so they are shared too and nixpkgs updates do not
+  rebuild them.
 - The image's `flake.nix` (0016) selects the channel with
   `weaselway.inputs.nixpkgs.lib.nixosSystem` or
   `weaselway.inputs.nixpkgs-unstable.lib.nixosSystem`, a one-line change.
   A nixpkgs of the user's own is used the same way, without
-  `weaselway.inputs.nixpkgs.follows`, which would rebuild dxgdrm and the
-  viewer.
+  `weaselway.inputs.nixpkgs.follows`, which would rebuild the viewer.
 - CI builds the unstable systems for the cache only. There are no unstable
   images or releases.
 - `update-nixpkgs.yml` updates `nixpkgs` on Fridays and `nixpkgs-unstable`

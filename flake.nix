@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     # For images that track nixos-unstable, see nixosConfigurations below.
-    # dxgdrm, the viewer and NixOS-WSL stay on the stable nixpkgs either way.
+    # The viewer and NixOS-WSL stay on the stable nixpkgs either way.
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     nixos-wsl = {
@@ -13,10 +13,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    dxgdrm = {
-      url = "github:weaselway/dxgdrm";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # Not following nixpkgs: its kernel trees (from wsl-kernel) pin their
+    # own, so nixpkgs updates don't rebuild them.
+    dxgdrm.url = "github:weaselway/dxgdrm";
 
     # The Windows viewer. git, not a tarball, for the reason given at mesa-src.
     freerdp = {

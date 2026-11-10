@@ -5,6 +5,10 @@ release they led to. Weekly nixpkgs updates are not listed.
 
 ## Unreleased
 
+- WSL kernel 6.18.58.1 (WSL 3.0.5).
+- The kernel trees dxgdrm builds against come from the new
+  [wsl-kernel](https://github.com/weaselway/wsl-kernel) flake, which pins its
+  own nixpkgs, so nixpkgs updates no longer rebuild them.
 - Mesa: `eglExportDMABUFImageMESA` fails with `EGL_BAD_ALLOC` when d3d12
   cannot share the texture, instead of returning success without fds. GTK 4
   apps (ptyxis, for example) closed one of their own fds after that, which

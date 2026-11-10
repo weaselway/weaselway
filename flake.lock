@@ -3,15 +3,18 @@
     "dxgdrm": {
       "inputs": {
         "nixpkgs": [
+          "dxgdrm",
+          "wsl-kernel",
           "nixpkgs"
-        ]
+        ],
+        "wsl-kernel": "wsl-kernel"
       },
       "locked": {
-        "lastModified": 1794229072,
-        "narHash": "sha256-fgk8tGn1NIZ4LEhpUXvBVYHcKyiJm7QppkXPqQhJlLU=",
+        "lastModified": 1794300005,
+        "narHash": "sha256-9tvdoy8FTB6A6tRKYaiVabv9Z5XHe8OEWUUKLhPUVvI=",
         "owner": "weaselway",
         "repo": "dxgdrm",
-        "rev": "51633c2840b913995cb09e400523524119b3fe7a",
+        "rev": "5798598a64ae33f3913f11eaf9684a46ed452302",
         "type": "github"
       },
       "original": {
@@ -147,6 +150,22 @@
         "type": "github"
       }
     },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1793633738,
+        "narHash": "sha256-tItrb9M8eYA6WhFgmT9tpGKueri3+wRuVA952o/2xSU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "7dcdd87373d72e7a2173e4db02e20d3d7f495cfd",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "dxgdrm": "dxgdrm",
@@ -154,8 +173,26 @@
         "mesa-main-src": "mesa-main-src",
         "mesa-src": "mesa-src",
         "nixos-wsl": "nixos-wsl",
-        "nixpkgs": "nixpkgs",
+        "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable"
+      }
+    },
+    "wsl-kernel": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1794299984,
+        "narHash": "sha256-Rc65J1ZD/SYgPPw7aSJV/OjSqR5Fwr1s8D7Ch2QPC4Y=",
+        "owner": "weaselway",
+        "repo": "wsl-kernel",
+        "rev": "c7ffb91f2b33f34b1d908735d6eee47c5084d6d8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "weaselway",
+        "repo": "wsl-kernel",
+        "type": "github"
       }
     }
   },

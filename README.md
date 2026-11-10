@@ -41,8 +41,9 @@ installation instructions.
 - Windows with WSL2, on an x86_64 machine. The image is x86_64 only.
 - A GPU with a Windows driver that supports WSL GPU compute (the same driver
   that provides GPU access to other WSL distros).
-- One of the WSL kernels `6.18.40.1-microsoft-standard-WSL2` (WSL 3.0.1) or
-  `6.18.54.1-microsoft-standard-WSL2` (WSL 3.0.3). The `dxgdrm` module is built
+- One of the WSL kernels `6.18.40.1-microsoft-standard-WSL2` (WSL 3.0.1),
+  `6.18.54.1-microsoft-standard-WSL2` (WSL 3.0.3) or
+  `6.18.58.1-microsoft-standard-WSL2` (WSL 3.0.5). The `dxgdrm` module is built
   for these kernel releases, and another release cannot load it.
   Check yours with `uname -r` inside any WSL distro, and see
   [Limitations](#limitations) for what happens when WSL updates its kernel.
@@ -148,7 +149,7 @@ Then delete the desktop shortcut if you installed it.
 ## Limitations
 
 - Weaselway supports the WSL kernel releases it was built for, currently
-  `6.18.40.1` and `6.18.54.1` (`-microsoft-standard-WSL2`).
+  `6.18.40.1`, `6.18.54.1` and `6.18.58.1` (`-microsoft-standard-WSL2`).
   After `wsl --update` installs a kernel that is not among them, the module is
   missing and no session starts until a Weaselway release adds that kernel.
   Each kernel needs its own build of `dxgdrm`, with the kernel's configuration
@@ -421,12 +422,13 @@ existing NixOS-WSL system; pick one of the three `nixpkgs` lines:
 `services.desktopManager.gnome.enable = true;`. The image's
 [configuration.nix](nix/image-gnome/configuration.nix) is a complete example.
 
-The kernel module, the viewer and NixOS-WSL always come from weaselway's
-stable nixpkgs, whichever one the system uses, so they stay cached. Do not set
-`inputs.weaselway.inputs.nixpkgs.follows`: it would move them to your
-nixpkgs as well, and then the kernel trees (the kernel sources dxgdrm is
-built against) and the viewer's mingw toolchain (the compiler for Windows
-programs) compile on your machine.
+The viewer and NixOS-WSL always come from weaselway's stable nixpkgs,
+whichever one the system uses, so they stay cached. The kernel modules are
+built with a nixpkgs pinned in
+[wsl-kernel](https://github.com/weaselway/wsl-kernel). Do not set
+`inputs.weaselway.inputs.nixpkgs.follows`: it would move the viewer and
+NixOS-WSL to your nixpkgs as well, and then the viewer's mingw toolchain (the
+compiler for Windows programs) compiles on your machine.
 
 ## Troubleshooting
 

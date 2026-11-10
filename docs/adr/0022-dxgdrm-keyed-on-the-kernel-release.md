@@ -13,9 +13,9 @@ package brings what is missing along as modules (see dxgdrm 0017).
 ## Decision
 
 - The `dxgdrm` flake input builds one module per supported kernel release
-  (`dxgdrm-all`), currently `6.18.40.1` (WSL 3.0.1) and `6.18.54.1`
-  (WSL 3.0.3). `6.18.33.2` (WSL 2.7) was dropped: it lacks the DRM vblank
-  timer helpers (dxgdrm 0006, 0019).
+  (`dxgdrm-all`), currently `6.18.40.1` (WSL 3.0.1), `6.18.54.1`
+  (WSL 3.0.3) and `6.18.58.1` (WSL 3.0.5). `6.18.33.2` (WSL 2.7) was
+  dropped: it lacks the DRM vblank timer helpers (dxgdrm 0006, 0019).
 - `weaselway-prep.service` loads it once per boot with
   `modprobe -d "$DXGDRM_ROOT"`, which uses the package's own `modules.dep`.
   On a kernel the package does not cover, the file is missing, the unit logs
