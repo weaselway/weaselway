@@ -1268,6 +1268,12 @@ on_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
         return TRUE;
     }
 
+    /* A left click with fingers on the touchpad is its button being pressed:
+     * libinput makes a right click of it with two fingers. The pointer is
+     * where the fingers put it, so the position is left alone. */
+    if ((flags & PTR_FLAGS_BUTTON1) && input_touchpad_button(input, flags & PTR_FLAGS_DOWN))
+        return TRUE;
+
     pointer_position(peer_ctx, x, y);
     pointer_button(input, flags);
     return TRUE;
@@ -1306,10 +1312,12 @@ on_rel_mouse_event(rdpInput *rdp_input, UINT16 flags, INT16 dx, INT16 dy)
         g_mutex_unlock(&peer_ctx->notes_lock);
         input_pointer_relative(input, dx, dy);
     }
-    /* The extended buttons have flags of their own, in the same field. */
+    /* The extended buttons have flags of their own, in the same field. As in
+     * on_mouse_event, a left click with fingers down is the touchpad's. */
     if (flags & (PTR_XFLAGS_BUTTON1 | PTR_XFLAGS_BUTTON2))
         pointer_xbutton(input, flags);
-    else
+    else if (!(flags & PTR_FLAGS_BUTTON1) ||
+             !input_touchpad_button(input, flags & PTR_FLAGS_DOWN))
         pointer_button(input, flags);
     return TRUE;
 }
@@ -1373,8 +1381,10 @@ on_synchronize_event(rdpInput *rdp_input, UINT32 flags)
 /*
  * The client sends the contacts on its touchpad once three or more fingers
  * are down; with fewer, Windows makes pointer motion and scrolling of them,
- * which arrive as mouse events. They go to the uinput touchpad as they are,
- * and it is libinput in the compositor that makes swipes and pinches of them.
+ * which arrive as mouse events. With /sdl-touchpad-raw it sends every contact
+ * instead, and the pad's button as a left click. They go to the uinput
+ * touchpad as they are, and it is libinput in the compositor that makes
+ * pointer motion, taps, scrolling, swipes and pinches of them.
  *
  * A contact's position is the finger's place on the pad, mapped onto the
  * desktop: a fraction of the desktop's size is that fraction of the pad's.
