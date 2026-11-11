@@ -21,11 +21,13 @@
 
 #include "audio.h"
 
+#include <errno.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include <gio/gio.h>
 
@@ -108,6 +110,16 @@ connect_retrying(const char *env_var, const char *default_addr, GCancellable *ca
             if (!g_socket_set_option(g_socket_connection_get_socket(connection), IPPROTO_TCP,
                                      TCP_NODELAY, 1, &error))
                 g_warning("TCP_NODELAY failed: %s", error->message);
+
+            /* Close with RST, not FIN. protocol-simple only drops a client on
+             * HUP or ERR, or when recv() in its process callback sees EOF. An
+             * idle microphone node is suspended and never reads, so after a FIN
+             * its node stayed in the graph for good. */
+            if (setsockopt(g_socket_get_fd(g_socket_connection_get_socket(connection)),
+                           SOL_SOCKET, SO_LINGER, &(struct linger){ .l_onoff = 1 },
+                           sizeof(struct linger)) < 0)
+                g_warning("SO_LINGER failed: %s", g_strerror(errno));
+
             if (warned)
                 g_message("%s connected to %s", what, spec);
             return connection;

@@ -35,5 +35,8 @@ module-rdp-source, which had a socket protocol of their own.
   plays, or feed the microphone.
 - Audio from browsers crackled, because they ask for the largest quantum and the
   viewer has no jitter buffer. The drop-in caps the quantum at 512 frames.
-- PipeWire leaves a "Remote Desktop Microphone" node behind after each
-  reconnect.
+- protocol-simple only notices a closed client on HUP or ERR, or when its
+  process callback reads EOF. An idle microphone node is suspended and never
+  reads, so a normal close left a "Remote Desktop Microphone" node behind
+  after each reconnect. weaselwayd sets `SO_LINGER` to 0, so its sockets
+  close with RST, which raises HUP.

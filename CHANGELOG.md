@@ -11,6 +11,8 @@ release they led to. Weekly nixpkgs updates are not listed.
 - `ww-start-viewer` passes `/sdl-allow-screensaver`, so Windows can turn the
   monitor off again while the viewer runs. It stayed on before, even with
   Windows locked.
+- A "Remote Desktop Microphone" no longer stays behind in PipeWire after
+  each viewer reconnect.
 
 ## v1.7.1 - 2026-11-10
 

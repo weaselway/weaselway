@@ -688,8 +688,6 @@ when working on the code.
   arrives, with no jitter buffer. At a 2048-frame quantum the audio left in 43 ms bursts and popped;
   mpv asks for less and did not. The PipeWire drop-in caps the quantum at 512 frames, which stopped
   the popping with Cider. Drift between the WSL clock and the Windows audio device is unmeasured.
-- PipeWire leaves "Remote Desktop Microphone" nodes behind after a viewer reconnects, because
-  protocol-simple keeps the node of the closed socket.
 - The microphone opens, but samples from a real microphone have not been verified.
 - The section objects of the shared memory live in the namespace of the Windows logon session that
   started the VM (`\Sessions\<n>\BaseNamedObjects\WSL\<VM ID>\wslg`), and a client in another
