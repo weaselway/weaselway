@@ -731,6 +731,15 @@ audio_in_thread(gpointer data)
         bool connected;
 
         g_mutex_lock(&audio_in->source_lock);
+        /* The server never writes on this connection, so readable means it
+         * closed it, as a restarting PipeWire does. on_audin_data() only
+         * notices on a write, and with no samples coming there is none. */
+        if (audio_in->source &&
+            g_socket_condition_check(g_socket_connection_get_socket(audio_in->source),
+                                     G_IO_IN | G_IO_HUP | G_IO_ERR)) {
+            g_message("capture server closed the connection");
+            g_clear_object(&audio_in->source);
+        }
         connected = audio_in->source != NULL;
         g_mutex_unlock(&audio_in->source_lock);
 
