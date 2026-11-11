@@ -145,6 +145,9 @@ struct peer_context {
     /* When the last touch frame came, while fingers are down; 0 otherwise.
      * Under notes_lock. */
     gint64 touch_last;
+    /* The fingers moved the pointer last, not the mouse: the client is told
+     * where it went. Under notes_lock. */
+    bool touch_moves_pointer;
 
     /* The gfxredir, disp and rdpei callbacks run on the channels' own reader
      * threads. They only record what happened here, under this lock, and wake
@@ -221,6 +224,8 @@ struct rdp_server {
     uint8_t *pointer;
     int pointer_width, pointer_height;
     int pointer_hot_x, pointer_hot_y;
+    /* Where it is on the screen. */
+    int pointer_x, pointer_y;
 
     /* The size the client asked for, and until when the screen may take to
      * get there. */
@@ -1053,6 +1058,9 @@ pointer_position(struct peer_context *peer_ctx, UINT16 x, UINT16 y)
 {
     struct rdp_server *server = peer_ctx->server;
 
+    g_mutex_lock(&peer_ctx->notes_lock);
+    peer_ctx->touch_moves_pointer = false;
+    g_mutex_unlock(&peer_ctx->notes_lock);
     input_pointer_motion(server->config.input, x, y, server->screen_width, server->screen_height);
 }
 
@@ -1217,6 +1225,7 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
 
     g_mutex_lock(&peer_ctx->notes_lock);
     peer_ctx->touch_last = g_get_monotonic_time();
+    peer_ctx->touch_moves_pointer = true;
     g_mutex_unlock(&peer_ctx->notes_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
@@ -1356,6 +1365,33 @@ rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int str
 
     if (server->peer)
         peer_send_pointer(server->peer);
+}
+
+void
+rdp_server_set_pointer_position(struct rdp_server *server, int x, int y)
+{
+    struct peer_context *peer_ctx = server->peer;
+    POINTER_POSITION_UPDATE position = { .xPos = (UINT32)MAX(x, 0), .yPos = (UINT32)MAX(y, 0) };
+    rdpUpdate *update;
+    bool send;
+
+    if (x == server->pointer_x && y == server->pointer_y)
+        return;
+    server->pointer_x = x;
+    server->pointer_y = y;
+
+    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed)
+        return;
+    g_mutex_lock(&peer_ctx->notes_lock);
+    send = peer_ctx->touch_moves_pointer;
+    g_mutex_unlock(&peer_ctx->notes_lock);
+    if (!send)
+        return;
+
+    update = peer_ctx->peer->context->update;
+    update->BeginPaint(update->context);
+    update->pointer->PointerPosition(update->context, &position);
+    update->EndPaint(update->context);
 }
 
 /* ------------------------------------------------------------------ */

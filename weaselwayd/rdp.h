@@ -110,6 +110,12 @@ void rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, in
                             int width, int height, int hot_x, int hot_y);
 
 /*
+ * Where the pointer is on the screen. Passed on to the client only while the
+ * fingers on its touchpad move the pointer, rather than its mouse.
+ */
+void rdp_server_set_pointer_position(struct rdp_server *server, int x, int y);
+
+/*
  * Writing a frame, in three steps so that the pixels can arrive later:
  *
  *   begin   picks a buffer the client is not reading and brings it up to date

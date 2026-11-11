@@ -823,9 +823,9 @@ read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
 
 /*
  * The cursor plane is the client's to draw: its image becomes the client's
- * mouse pointer, and no plane means no pointer. Only the image is sent. The
- * client moves the pointer itself, so a commit that only moves the plane is
- * nothing to it.
+ * mouse pointer, and no plane means no pointer. The client moves the pointer
+ * itself, except while the fingers on its touchpad move it here: the plane's
+ * position is then where it has to go.
  *
  * A compositor makes the plane's buffer as large as the plane can be (256
  * square) and draws a much smaller cursor into its corner, so the image is cut
@@ -848,6 +848,7 @@ update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
         p->cursor_sent = true;
         return;
     }
+    rdp_server_set_pointer_position(p->rdp, frame->cursor_x + hot_x, frame->cursor_y + hot_y);
     if (p->have_cursor && p->cursor_sent && frame->cursor_seq == p->cursor_seq)
         return;
     p->have_cursor = true;
