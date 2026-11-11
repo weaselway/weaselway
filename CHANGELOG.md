@@ -8,6 +8,9 @@ release they led to. Weekly nixpkgs updates are not listed.
 - weaselwayd shows "Screen is off" while the compositor has the display off,
   for example when the desktop blanks the screen after idling. The viewer
   kept the last frame before.
+- `ww-start-viewer` passes `/sdl-allow-screensaver`, so Windows can turn the
+  monitor off again while the viewer runs. It stayed on before, even with
+  Windows locked.
 
 ## v1.7.1 - 2026-11-10
 

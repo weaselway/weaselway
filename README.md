@@ -405,6 +405,10 @@ deviates from the NixOS defaults in two places:
 `ww-start-viewer` appends its arguments to the `sdl-freerdp.exe` command line,
 so any FreeRDP option can be added or overridden for one run.
 
+The viewer lets Windows turn the monitor off and start the screen saver
+(`/sdl-allow-screensaver`). Without that option, SDL keeps the monitor on
+while the viewer runs, even when Windows is locked.
+
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
 ```sh

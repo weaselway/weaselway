@@ -69,6 +69,8 @@ COMMAND=(
     /sdl-touchpad-gestures
     /audio-mode:redirect
     /microphone
+    # SDL keeps the monitor on otherwise, even while Windows is locked.
+    /sdl-allow-screensaver
     "$@"
 )
 
