@@ -5,6 +5,9 @@ release they led to. Weekly nixpkgs updates are not listed.
 
 ## Unreleased
 
+- GNOME no longer hangs when WSL's vgem device is announced again, for
+  example when another distro starts in the same WSL VM. mutter closed its
+  own display connection and spun at 100% CPU with a black viewer.
 - weaselwayd shows "Screen is off" while the compositor has the display off,
   for example when the desktop blanks the screen after idling. The viewer
   kept the last frame before.

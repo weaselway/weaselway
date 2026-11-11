@@ -74,6 +74,12 @@ in
         name = "mutter-stage-relayout.patch";
         path = ./mutter-stage-relayout.patch;
       })
+      # A failed device open closed fd 0, which can be the KMS fd: GNOME hung
+      # when WSL's vgem came back through udev. Also from that main.
+      (builtins.path {
+        name = "mutter-kms-fd0.patch";
+        path = ./mutter-kms-fd0.patch;
+      })
     ];
   });
 

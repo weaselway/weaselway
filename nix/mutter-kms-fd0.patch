@@ -1,0 +1,48 @@
+From 8707b15de6fd625afe2b3ce0301771d73b6d91be Mon Sep 17 00:00:00 2001
+From: Oliver Bestmann <oliver.bestmann@googlemail.com>
+Date: Wed, 11 Nov 2026 23:44:59 +0100
+Subject: [PATCH] kms/impl-device: Don't close fd 0 when init fails
+
+sync_file was only set to -1 at the end of initable_init(), so when
+opening the device file failed, finalize() closed the zero-initialized
+value: fd 0. Opening a device that cannot do mode setting fails that way
+(WSL's vgem, for one), twice, once per backend tried.
+
+At startup that closed stdin, and the KMS fd of the next device opened
+landed on fd 0. When the device without mode setting came back through
+udev, the failed hotplug closed that KMS fd; a timerfd took fd 0 over,
+and drmHandleEvent() looped forever on the 8 bytes it reads, an event of
+length 0.
+
+Set sync_file to -1 when the object is created.
+---
+ src/backends/native/meta-kms-impl-device.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/backends/native/meta-kms-impl-device.c b/src/backends/native/meta-kms-impl-device.c
+index 96f829542c..1733ef2d07 100644
+--- a/src/backends/native/meta-kms-impl-device.c
++++ b/src/backends/native/meta-kms-impl-device.c
+@@ -2744,8 +2744,6 @@ meta_kms_impl_device_initable_init (GInitable     *initable,
+     g_hash_table_new_full (NULL, NULL,
+                            NULL, (GDestroyNotify) crtc_frame_free);
+ 
+-  priv->sync_file = -1;
+-
+   meta_thread_inhibit_realtime_in_impl (thread);
+   priv->realtime_inhibited_pending_mode_set = TRUE;
+ 
+@@ -2755,6 +2753,10 @@ meta_kms_impl_device_initable_init (GInitable     *initable,
+ static void
+ meta_kms_impl_device_init (MetaKmsImplDevice *impl_device)
+ {
++  MetaKmsImplDevicePrivate *priv =
++    meta_kms_impl_device_get_instance_private (impl_device);
++
++  priv->sync_file = -1;
+ }
+ 
+ static void
+-- 
+2.56.0
+
