@@ -1,0 +1,87 @@
+# Runs ubuntu/install.sh in a fresh Ubuntu 26.04 WSL distro, restarts WSL and
+# checks what the script set up. The runner has no GPU, so this covers the
+# install and the boot-time preparation, not a session on the viewer.
+name: Ubuntu install script
+
+on:
+  push:
+    branches: [main]
+    # What install.sh installs; README-only pushes would just recompile Mesa.
+    paths:
+      - ubuntu/**
+      - weaselwayd/**
+      - bin/**
+      - libexec/**
+      - environment.d/**
+      - pipewire/**
+      - .github/workflows/ubuntu-install.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-install-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DISTRO: Ubuntu-26.04
+  # wsl.exe writes UTF-16 otherwise.
+  WSL_UTF8: 1
+  # Git Bash would rewrite the Linux paths passed to wsl.exe.
+  MSYS_NO_PATHCONV: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  install:
+    # Windows Server 2025 runners have nested virtualization, so WSL2 works.
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      # dxgdrm has modules only for recent WSL kernels, and the runner image's
+      # WSL can be older.
+      - name: Update WSL
+        run: |
+          wsl --update --web-download
+          wsl --version
+
+      - name: Install Ubuntu
+        run: |
+          wsl --install "${DISTRO}" --no-launch --web-download
+          # The first start would ask for a user; the script needs one with
+          # sudo that does not ask for a password.
+          wsl -d "${DISTRO}" -u root -- bash -euxs <<'EOF'
+          useradd -m -s /bin/bash -G sudo ci
+          echo 'ci ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ci
+          printf '\n[user]\ndefault=ci\n' >> /etc/wsl.conf
+          EOF
+          wsl --terminate "${DISTRO}"
+
+      # Cloned inside the distro: a Windows checkout would have CRLF scripts.
+      - name: Run install.sh
+        run: |
+          wsl -d "${DISTRO}" --cd '~' -- bash -euxs <<EOF
+          git clone --quiet "https://github.com/${GITHUB_REPOSITORY}.git" weaselway
+          git -C weaselway checkout --quiet "${GITHUB_SHA}"
+          ./weaselway/ubuntu/install.sh
+          EOF
+
+      # Not a login shell: Ubuntu's byobu profile script fails under set -u.
+      - name: Check after a WSL restart
+        run: |
+          wsl --shutdown
+          wsl -d "${DISTRO}" -- bash -euxs <<'EOF'
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          systemctl is-system-running --wait || systemctl --failed
+          systemctl status --no-pager weaselway-prep.service
+          grep '^dxgdrm ' /proc/modules
+          ldconfig -p | grep -m1 'libEGL_mesa.so.0 ' | grep /opt/weaselway/mesa/lib
+          # llvmpipe here, but from the Mesa install.sh built.
+          eglinfo -B -p surfaceless | grep -i 'renderer'
+          # It needs a GPU behind dxgdrm and exits without one.
+          systemctl --user is-enabled weaselwayd.service
+          pw-metadata -n settings 0 clock.max-quantum | grep "value:'512'"
+          EOF
