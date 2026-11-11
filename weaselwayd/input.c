@@ -64,6 +64,7 @@ struct input {
     int next_tracking_id;
     /* The BTN_TOOL_* that says how many there are, 0 for none. */
     uint16_t touchpad_tool;
+    bool touchpad_button;
 };
 
 static void
@@ -433,6 +434,25 @@ touchpad_frame_locked(struct input *input)
     emit(fd, EV_SYN, SYN_REPORT, 0);
 }
 
+bool
+input_touchpad_button(struct input *input, bool pressed)
+{
+    bool taken;
+
+    if (input->touchpad_fd < 0)
+        return false;
+
+    g_mutex_lock(&input->lock);
+    taken = pressed ? input->touchpad_tool != 0 : input->touchpad_button;
+    if (taken && input->touchpad_button != pressed) {
+        input->touchpad_button = pressed;
+        emit(input->touchpad_fd, EV_KEY, BTN_LEFT, pressed);
+        touchpad_frame_locked(input);
+    }
+    g_mutex_unlock(&input->lock);
+    return taken;
+}
+
 void
 input_touchpad_frame(struct input *input)
 {
@@ -458,6 +478,11 @@ touchpad_release_locked(struct input *input)
         input->slots[i].used = false;
         emit(input->touchpad_fd, EV_ABS, ABS_MT_SLOT, i);
         emit(input->touchpad_fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
+        any = true;
+    }
+    if (input->touchpad_button) {
+        input->touchpad_button = false;
+        emit(input->touchpad_fd, EV_KEY, BTN_LEFT, 0);
         any = true;
     }
     if (any)

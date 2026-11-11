@@ -38,6 +38,12 @@ void input_sync_locks(struct input *input, bool num, bool caps, bool scroll);
  */
 void input_touchpad_contact(struct input *input, uint32_t id, bool down, double x, double y);
 void input_touchpad_frame(struct input *input);
+/*
+ * The pad's own button, for a client that clicks it while fingers are down.
+ * False, and nothing done, if the press is not the touchpad's: no finger is
+ * down, or for a release, the button is not pressed.
+ */
+bool input_touchpad_button(struct input *input, bool pressed);
 /* Lift every finger, for a client that stopped saying where they are. */
 void input_touchpad_release(struct input *input);
 
