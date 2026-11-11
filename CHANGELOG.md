@@ -17,6 +17,10 @@ release they led to. Weekly nixpkgs updates are not listed.
 - The viewer's notifications, such as "Mouse and keyboard captured", fade
   and slide in and out instead of appearing at once. This needs a new
   viewer.
+- `ww-start-viewer /sdl-touchpad-raw` (experimental) forwards every finger on
+  the touchpad, not only gestures of three or more, so the desktop handles
+  pointer motion, taps and scrolling as on a Linux laptop.
+  Right Ctrl+Right Shift+T turns it off and on. This needs a new viewer.
 
 ## v1.10.0 - 2026-11-25
 

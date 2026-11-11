@@ -61,7 +61,9 @@ screen, so pushing on past the edge (GNOME's hot corner) reaches the session as 
 events: the viewer reads them from Raw Input, and weaselwayd writes them to a second, relative
 uinput pointer. With `/mouse:relative` the viewer sends all motion that way. weaselwayd then
 reports where the pointer went, from the cursor plane of the output it is on, and the viewer
-holds the Windows cursor at that spot.
+holds the Windows cursor at that spot. With `/sdl-touchpad-raw` the viewer sends every touchpad
+contact, not only gestures of three or more fingers, and libinput moves the pointer with them;
+weaselwayd reports the position the same way while fingers move it.
 
 The compositor maps those axes onto its logical layout (where it placed the outputs, in units that
 already include each output's scale). weaselwayd reads that layout as a Wayland client with
