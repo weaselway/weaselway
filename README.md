@@ -214,6 +214,12 @@ The viewer forwards touchpad gestures with three or more fingers, audio
 playback and the microphone. The session sees a touchpad of its own, so the
 desktop's swipe and pinch gestures work.
 
+To leave all of the touchpad to the session, start the viewer with
+`ww-start-viewer /sdl-touchpad-raw` (experimental). Then pointer motion, taps
+and scrolling come from the desktop's touchpad settings too, not from
+Windows'. Right Ctrl+Right Shift+T switches back to Windows handling one and
+two fingers, and again.
+
 <!-- VIDEO (short GIF, 5 s): a three-finger swipe opening the GNOME overview in
      the viewer. Touchpad gestures are unusual for a remote desktop and hard to
      explain in words. A screen recording of the trackpad is not needed, the

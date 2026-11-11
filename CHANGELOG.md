@@ -20,6 +20,9 @@ release they led to. Weekly nixpkgs updates are not listed.
   session.
 - The "Remote Desktop Microphone" comes back after PipeWire restarts, also
   while the client sends no samples.
+- `ww-start-viewer /sdl-touchpad-raw` (experimental) forwards every finger on
+  the touchpad, not only gestures of three or more, so the desktop handles
+  pointer motion, taps and scrolling as on a Linux laptop.
 
 ## v1.7.1 - 2026-11-10
 
