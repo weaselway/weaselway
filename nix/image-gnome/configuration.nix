@@ -7,7 +7,7 @@
   wsl.enable = true;
   # uid 1000: WSL only wires up /run/user/1000.
   wsl.defaultUser = "nixos";
-  # For the lock screen. Change it with `passwd`.
+  # Change it with `passwd`. GNOME has no lock screen without gdm.
   users.users.nixos.initialPassword = "nixos";
 
   weaselway.enable = true;

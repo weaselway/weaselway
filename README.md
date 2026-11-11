@@ -107,9 +107,11 @@ instead.
    wsl -d Weaselway
    ```
 
-   The shell runs as the user `nixos`, with the password `nixos`. The desktop
-   asks for it on the lock screen; `sudo` does not ask for it. Change it with
-   `passwd`.
+   The shell runs as the user `nixos`, with the password `nixos`. Plasma asks
+   for it on the lock screen; `sudo` does not ask for it. Change it with
+   `passwd`. GNOME has no lock screen here: gnome-shell only locks when its
+   display manager (GDM) runs, and the session starts without one. Lock
+   Windows instead.
 
 [Using it](#using-it) continues from here.
 

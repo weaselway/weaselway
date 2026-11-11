@@ -18,7 +18,10 @@ while idle, and an account without a password cannot unlock it (`dbfa629`).
 
 ## Consequences
 
-- The lock screen works out of the box.
+- Plasma's lock screen works out of the box. GNOME has none: gnome-shell
+  enables its lock screen only when GDM answers on the system bus
+  (`org.gnome.DisplayManager`), and the GNOME image runs without GDM. It
+  shows "Screen Lock disabled" once instead.
 - Every installation starts with the same known password. With sshd enabled
   and mirrored WSL networking, the distro is reachable from the LAN, so the
   password must be changed or a key added first.

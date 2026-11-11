@@ -28,7 +28,9 @@ wsl --install Ubuntu-26.04
 ```
 
 Ubuntu asks for a user name and a password on the first start. The password
-is the one for `sudo` and for the GNOME lock screen.
+is the one for `sudo`. GNOME has no lock screen here: gnome-shell only locks
+when GDM runs, and the install script keeps GDM out (see below). Lock Windows
+instead.
 
 systemd is on by default in Ubuntu's WSL image. If you changed that, set
 `systemd=true` under `[boot]` in `/etc/wsl.conf` and run `wsl --shutdown`.
