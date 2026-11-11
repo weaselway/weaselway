@@ -45,7 +45,6 @@
 #include <freerdp/locale/keyboard.h>
 #include <freerdp/peer.h>
 #include <freerdp/server/disp.h>
-#include <freerdp/server/drdynvc.h>
 #include <freerdp/server/gfxredir.h>
 #include <freerdp/server/rdpei.h>
 #include <freerdp/channels/rdpei.h>
@@ -122,7 +121,6 @@ struct peer_context {
      * the next dispatch. */
     bool failed;
 
-    DrdynvcServerContext *drdynvc;
     bool drdynvc_waiting;
     gint64 drdynvc_wait_start;
 
@@ -1490,17 +1488,12 @@ on_peer_activate(freerdp_peer *client)
     if (!peer_ctx->vcm)
         return FALSE;
 
-    /* gfxredir is a dynamic virtual channel, so drdynvc has to be up first. */
-    if (!peer_ctx->drdynvc) {
-        DrdynvcServerContext *drdynvc = drdynvc_server_context_new(peer_ctx->vcm);
-
-        if (!drdynvc)
-            return FALSE;
-        if (drdynvc->Start(drdynvc) != CHANNEL_RC_OK) {
-            drdynvc_server_context_free(drdynvc);
-            return FALSE;
-        }
-        peer_ctx->drdynvc = drdynvc;
+    /* gfxredir is a dynamic virtual channel, so drdynvc has to be up first.
+     * The channel manager opens and closes drdynvc itself; FreeRDP's
+     * drdynvc server context would only leak its StopEvent on every session. */
+    if (!WTSVirtualChannelManagerIsChannelJoined(peer_ctx->vcm, DRDYNVC_SVC_CHANNEL_NAME)) {
+        g_warning("client has not joined drdynvc");
+        return FALSE;
     }
 
     if (WTSVirtualChannelManagerGetDrdynvcState(peer_ctx->vcm) != DRDYNVC_STATE_READY) {
@@ -1660,12 +1653,6 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         peer_ctx->gfxredir = NULL;
     }
     g_mutex_clear(&peer_ctx->notes_lock);
-
-    if (peer_ctx->drdynvc) {
-        peer_ctx->drdynvc->Stop(peer_ctx->drdynvc);
-        drdynvc_server_context_free(peer_ctx->drdynvc);
-        peer_ctx->drdynvc = NULL;
-    }
 
     if (peer_ctx->vcm) {
         WTSCloseServer(peer_ctx->vcm);

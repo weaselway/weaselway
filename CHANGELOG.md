@@ -13,6 +13,8 @@ release they led to. Weekly nixpkgs updates are not listed.
   Windows locked.
 - A "Remote Desktop Microphone" no longer stays behind in PipeWire after
   each viewer reconnect.
+- weaselwayd no longer leaks a file descriptor (an eventfd) per viewer
+  session.
 
 ## v1.7.1 - 2026-11-10
 
