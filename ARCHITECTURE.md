@@ -1,8 +1,8 @@
 # Weaselway reference
 
 This document describes how weaselway is put together: the path a frame takes, where each component
-comes from, what the NixOS module configures and why, and how to build and debug the image. For
-installation and day-to-day use, see the [README](README.md).
+comes from, what the NixOS module configures and why, and how to build and debug the image. It is
+for people who work on weaselway. For installation and day-to-day use, see the [README](README.md).
 
 ## Architecture
 
@@ -20,30 +20,45 @@ flowchart TD
 
     comp -- "gbm + EGL (mesa d3d12)" --> dxgdrm
     dxgdrm -- "commit: buffer, damage,<br/>cursor, mode" --> wwd
-    wwd -- "GL readback into shared memory,<br/>RDP on a vsock" --> viewer
-    viewer -- "keyboard, mouse, touchpad" --> wwd
+    wwd -- "GPU readback into shared memory,<br/>RDP on a vsock" --> viewer
+    viewer -- "keyboard, mouse, touchpad,<br/>refresh rate, vblank timing" --> wwd
     wwd -- "creates uinput devices" --> input
     input -- "libinput" --> comp
     wwd <--> audio
 ```
 
-The compositor runs on its regular KMS backend and has no knowledge of Windows. dxgdrm presents one
-CRTC, a primary plane with `FB_DAMAGE_CLIPS`, a cursor plane with a hotspot, and one connector.
+The compositor runs on its regular KMS (kernel mode setting, the Linux interface for driving
+displays) backend and has no knowledge of Windows. dxgdrm is a kernel module that presents a virtual
+display: one CRTC (the display controller that scans a buffer out), a primary plane with
+`FB_DAMAGE_CLIPS` (the changed rectangles of each frame), a cursor plane with a hotspot, and one
+connector.
 
-The scanout buffers are D3D12 textures. weaselwayd waits for a commit on the dxgdrm node, imports the
-buffer into its own GL context (mesa d3d12), reads the damaged region back with `glReadPixels` into a
-pixel buffer, and copies it into a gfxredir buffer in the shared memory that the Windows client maps.
-There is no codec fallback. A client that does not support gfxredir is disconnected.
+The scanout buffers are D3D12 textures. weaselwayd waits for a commit on the dxgdrm node and imports
+the buffer into its own GL context (mesa d3d12). It reads the damaged region back into a pixel
+buffer, with a compute shader where the context has OpenGL ES 3.1 and with `glReadPixels` otherwise
+([0007](docs/adr/0007-damage-readback-paced-by-the-client.md)). It then copies the pixels into a
+gfxredir buffer (the frame format of WSLg's RDP extension) in the shared memory that the Windows
+client maps. The client opens that memory as a Direct3D 12 heap and copies the damaged rectangles
+on the GPU into the texture it draws. Layouts it cannot open that way go through a CPU copy.
 
-weaselwayd acknowledges a frame once the client has it, and dxgdrm withholds the compositor's
-page-flip event until then. A slow client therefore slows the compositor down, and frames do not
-queue up.
+weaselwayd acknowledges a frame to dxgdrm before it issues the readback, unless the previous
+readback is still running or the client holds every buffer. dxgdrm withholds the compositor's
+page-flip event until then, and completes it on its next virtual vblank. A slow client therefore
+slows the compositor down, and frames do not queue up.
 
-The client's keyboard, mouse and touchpad become uinput devices, which libinput handles like any
-others. The size of the session follows the viewer's window: weaselwayd sets the mode on dxgdrm, and
-the compositor sees a hotplug event. The mode's refresh rate follows the monitor the window is on,
-which the viewer reports on its own channel, `Weaselway::Display`
-([0029](docs/adr/0029-refresh-rate-from-the-viewer.md)).
+The client's keyboard, mouse and touchpad become uinput devices (input devices created from user
+space), which libinput handles like any others. The size of the session follows the viewer's window:
+weaselwayd sets the mode on dxgdrm, and the compositor sees a hotplug event. The viewer has its own
+channel, `Weaselway::Display`, on which it reports two things about the monitor the window is on:
+
+- its refresh rate, which weaselwayd uses as the mode's rate
+  ([0029](docs/adr/0029-refresh-rate-from-the-viewer.md));
+- how long before that monitor's vblank each frame was ready. weaselwayd shifts dxgdrm's vblank to
+  keep this at about 3 ms ([0031](docs/adr/0031-vblank-phase-from-the-viewer.md)).
+
+While no compositor owns the display, the client gets a screen with "No compositor running". While
+the compositor has the display off, it gets "Screen is off"
+([0026](docs/adr/0026-placeholder-without-a-compositor.md)).
 
 The clipboard is the only feature that needs the compositor's cooperation, and there is no protocol
 for it that every compositor implements. weaselwayd runs two backends and uses the one that finds
@@ -54,17 +69,17 @@ its compositor:
   never starts it, so gnome-shell shows no screen-sharing indicator.
 - With KWin and the wlroots compositors, it is a Wayland client with `ext-data-control-v1`. It
   watches `$XDG_RUNTIME_DIR` for `wayland-*` sockets and connects to the first compositor that
-  offers the protocol. mutter does not, and is left alone.
+  offers the protocol. mutter does not offer it and is left alone.
 
 Text, HTML and images are converted between Windows clipboard formats and MIME types.
 
 A KMS compositor needs a logind session on `seat0` that owns the devices. `ww-start-session` creates
-one by running the compositor in a transient system unit with a PAM session, as a display manager
-would.
+one by running the compositor in a transient system unit with a PAM (the Linux login framework)
+session, as a display manager would.
 
 ## Components
 
-Everything comes from the flake.
+The NixOS image takes everything from the flake.
 
 | Component | Source | Where it runs |
 |---|---|---|
@@ -72,69 +87,112 @@ Everything comes from the flake.
 | dxgdrm kernel module | `weaselway/dxgdrm` flake | user distro kernel, loaded from the store |
 | weaselwayd | [weaselwayd/](weaselwayd) in this repo | user distro, as a unit of the user manager |
 | mutter | nixpkgs, plus [one patch](nix/mutter-stage-relayout.patch) | user distro (gnome-shell links it) |
-| KWin (optional) | nixpkgs, plus a [damage patch](nix/kwin-6.7-fb-damage-clips.patch) | user distro |
+| KWin (optional) | nixpkgs, plus a damage patch per release | user distro |
+| aquamarine, Hyprland (optional) | nixpkgs, plus one patch each | user distro |
 | Windows viewer `sdl-freerdp.exe` | `weaselway/freerdp` flake, `packages.sdl-freerdp` | Windows, started from the store through interop |
+
+[ubuntu/install.sh](ubuntu/install.sh) sets up the same session on Ubuntu 26.04, see
+[Ubuntu](#ubuntu).
 
 ### The shared-memory share
 
 WSL creates the `wslg` shared-memory device only when GUI applications are enabled, which is the
-default (`guiApplications` in `.wslconfig`). The device is virtiofs with DAX, and nothing in the
-guest can create it. The frames are handed over through it. Without the share, weaselwayd logs "the
+default (`guiApplications` in `.wslconfig`). The device is virtiofs (a file system shared between
+the VM and Windows) with DAX (direct mapping of the host's memory), and nothing in the guest can
+create it. The frames are handed over through it. Without the share, weaselwayd logs "the
 shared-memory share is not mounted" and exits.
 
 WSL's system distro keeps running its own Weston and PulseAudio next to the session. Weston
 allocates on the same share and takes its RDP connection on a socket that WSL hands it, so neither
-gets in the way of weaselwayd.
+interferes with weaselwayd.
 
 ### Values the guest derives
 
 | Value | Source |
 |---|---|
-| vsock port | fixed: `WEASELWAY_VSOCK_PORT=3389` in [environment.d/10-weaselway.conf](environment.d/10-weaselway.conf) |
-| VM ID | `wslinfo --vm-id -n`. NixOS-WSL has no `/bin/wslinfo`, so `ww-start-viewer` falls back to `exec -a wslinfo /init --vm-id -n` when `wslinfo` is not on the `PATH` |
+| vsock port | fixed: `WEASELWAY_VSOCK_PORT=3389` |
+| VM ID | `wslinfo --vm-id -n` |
 | shared-memory NT path for the client | `WSL\<VM ID, upper case, no braces>\wslg` |
-| virtiofs tag | always `wslg`. `prep-session.sh` mounts it at `/run/wsl/virtiofs-mounts/weaselway-wslg`, private, with `/mnt/wslg-shared-memory` a link to it: WSL unmounts other virtiofs mounts when the first `wsl.exe` of the other elevation starts |
+| virtiofs tag | always `wslg` |
+
+A vsock is a socket between the VM and Windows. The port is set in
+[environment.d/10-weaselway.conf](environment.d/10-weaselway.conf). NixOS-WSL has no
+`/bin/wslinfo`, so `ww-start-viewer` falls back to `exec -a wslinfo /init --vm-id -n` when
+`wslinfo` is not on the `PATH`.
+
+`prep-session.sh` mounts the share at `/run/wsl/virtiofs-mounts/weaselway-wslg`, private, with
+`/mnt/wslg-shared-memory` a link to it. The mount is private because WSL unmounts other virtiofs
+mounts when the first `wsl.exe` of the other elevation starts.
 
 ### Compositor patches
 
-A compositor needs no patch to run on the virtual display. The two that the image carries fix
+A compositor needs no patch to run on the virtual display. The patches the image carries fix
 problems that show up there but are unrelated to RDP:
 
 - mutter: the overview keeps its old size when the stage is resized, which happens whenever the
   viewer's window is resized. The fix is the single commit on `main` of `weaselway/mutter`.
-- KWin: it told the kernel that the whole buffer changed, so every frame was read back in full. The patch sets
-  `FB_DAMAGE_CLIPS`. It is on `master` of `weaselway/kde-kwin`, with backports on `weaselway-6.6.6`
-  and `weaselway-6.7.5`.
+- KWin: it told the kernel that the whole buffer changed, so every frame was read back in full. The
+  patch sets `FB_DAMAGE_CLIPS`. It is on `master` of `weaselway/kde-kwin`, with backports on
+  `weaselway-6.6.6` and `weaselway-6.7.5`. The overlay picks the patch for KWin 6.6, 6.7 or 6.8
+  from `nix/kwin-*-fb-damage-clips.patch`.
+- aquamarine and Hyprland: Hyprland kept the size it started with, because aquamarine ignored new
+  modes of a connector that stays connected, and Hyprland tested a larger mode with the last frame's
+  smaller buffer, which dxgdrm rejects. The fixes are commits on `main` of `weaselway/aquamarine`
+  and `weaselway/Hyprland` ([0030](docs/adr/0030-hyprland-follows-the-window-size.md)). No image
+  includes Hyprland. The patches apply when a configuration enables it.
 
 ## Repositories
 
-- **weaselway** (this repository): the flake, the NixOS module, the overlay, the image
-  configuration, weaselwayd and the shell scripts.
+- **weaselway** (this repository): the flake, the NixOS modules, the overlay, the image
+  configuration, weaselwayd, the shell scripts and the Ubuntu install script.
 - **mesa**: the image builds the branch `mesa-26.2.6-wsl` with nixpkgs' Mesa package definition.
-  `main` carries the same commits on top of upstream main; the image builds it instead once
-  nixpkgs' Mesa is 27 or newer, because nixpkgs' package only builds the Mesa major it targets.
-- **dxgdrm**: `main`. The module is built with the toolchain the WSL kernel itself is built with,
-  the kernel.org crosstool gcc 13.2.0 with binutils 2.41. The kernel sets `CONFIG_MODVERSIONS` and
-  rejects a module built with nixpkgs' gcc. The configure phase compares the regenerated `.config`
-  with the captured one. References to the kernel tree are stripped from the `.ko`; they would add
-  about 1.6 GiB to the image. `dxgdrm_drm.h` in that repository is the interface that weaselwayd and
-  mesa use.
+  `main` carries the same commits on top of upstream main. The image builds it instead once
+  nixpkgs' Mesa is 27 or newer, because nixpkgs' package only builds the Mesa major it targets. The
+  commits change d3d12 and dzn (Mesa's Vulkan driver on D3D12):
+  - scanout buffers on the dxgdrm KMS node, with a GEM handle (the kernel's buffer handle) and a
+    linear modifier, and dma-bufs between d3d12 processes through their shared handles;
+  - fences exported as sync_files and DRM syncobjs through dxgdrm, and dzn presenting through
+    dma-bufs;
+  - dxgkrnl context priorities ([0033](docs/adr/0033-gpu-priority-through-dxgkrnl-contexts.md))
+    and write-back upload heaps on GPUs that share memory with the CPU;
+  - the driver's compiled pipeline states in the Mesa shader cache, off on NVIDIA, whose driver
+    crashes when asked for them. `MESA_D3D12_PSO_CACHE=0` or `1` overrides the default;
+  - fixes for Chromium, Firefox, dma-buf export to GTK 4 and Intel's video driver.
+- **dxgdrm**: `main`. It builds against the kernel trees from wsl-kernel. `dxgdrm_drm.h` in that
+  repository is the interface that weaselwayd and mesa use.
+- **wsl-kernel**: `main`. It provides the prepared WSL kernel trees and `mkModules`, which dxgdrm
+  and the Bluetooth modules are built with. The trees use the toolchain the WSL kernel itself is
+  built with, the kernel.org crosstool gcc 13.2.0 with binutils 2.41, because the kernel sets
+  `CONFIG_MODVERSIONS` (symbol checksums) and rejects a module built with nixpkgs' gcc. The
+  configure phase compares the regenerated `.config` with the captured one. References to the
+  kernel tree are stripped from the modules; they would add about 1.6 GiB to the image. wsl-kernel
+  pins its own nixpkgs, so nixpkgs updates do not rebuild the trees.
 - **freerdp**: `main`. Its flake provides a Windows cross-compilation dev shell and
   `packages.sdl-freerdp`, which runs `build-freerdp.sh` with the SDL3, SDL3_ttf and OpenSSL archives
-  fetched by Nix beforehand. Versions and hashes are read from the script.
+  fetched by Nix beforehand. Versions and hashes are read from the script. The commits change the
+  SDL3 client:
+  - a Direct3D 11 presenter on a render thread, which copies gfxredir buffers on the GPU through a
+    Direct3D 12 heap on the shared memory (`-sdl-zero-copy` turns that off);
+  - the `wwdisplay` channel, which reports the monitor's refresh rate and the vblank timing;
+  - touchpad gestures, Alt+F4 sent to the session, and the signed 16-bit PCM fix.
 - **mutter**: `main` is upstream main plus the relayout fix, kept in a form that can be submitted
   upstream. The image does not build the fork. It applies the same commit to nixpkgs' mutter as a
   patch. The `*-wslg` branches contain the retired RDP backend, from which weaselwayd's RDP and audio
   code was ported.
-- **kde-kwin**: see [Compositor patches](#compositor-patches). The image applies the backport as a
-  patch.
+- **kde-kwin**, **aquamarine** and **Hyprland**: see [Compositor patches](#compositor-patches). The
+  image applies the backports as patches.
 - **NixOS-WSL**: upstream, used unmodified as a flake input.
 
 ## Flake layout
 
 ### Inputs
 
-`nixpkgs` (nixos-26.05), `nixos-wsl`, `dxgdrm`, `freerdp`, and `mesa-src` and `mesa-main-src` (`flake = false`).
+- `nixpkgs` (nixos-26.05) and `nixpkgs-unstable` (nixos-unstable), in one lock
+  ([0032](docs/adr/0032-stable-and-unstable-nixpkgs.md)).
+- `nixos-wsl` and `freerdp`, which follow `nixpkgs`.
+- `dxgdrm`, which does not follow `nixpkgs`. It brings `wsl-kernel` along, and the Bluetooth module
+  uses that.
+- `mesa-src` and `mesa-main-src` (`flake = false`).
 
 The mesa inputs and `freerdp` are fetched as `git+https://…?ref=…&shallow=1` and not as `github:` inputs.
 GitHub tarballs of repositories with `eol=` rules in `.gitattributes` produce different NAR hashes
@@ -147,19 +205,23 @@ affected.
 
 - `weaselway-mesa`: nixpkgs' mesa with `src` replaced and the driver list reduced to d3d12,
   llvmpipe, softpipe and zink, plus the `microsoft-experimental` and swrast Vulkan drivers. rusticl,
-  teflon, intel-rt and the tools are disabled. It does not replace `pkgs.mesa`. The module passes it
-  to `hardware.graphics.package`, so no other package is rebuilt.
+  teflon, intel-rt and the tools are disabled. LLVM is linked statically: Intel's driver brings its
+  own `libLLVM-14`, and with a shared `libLLVM` loaded first, the Intel driver used that library's
+  symbols and crashed. `weaselway-mesa` does not replace `pkgs.mesa`. The module passes it to
+  `hardware.graphics.package`, so no other package is rebuilt.
 - `mutter`: nixpkgs' mutter with the relayout patch. It replaces `pkgs.mutter`, so gnome-shell links
   it.
 - `kdePackages.kwin`: nixpkgs' KWin with the damage patch for its release. It is only built when
   Plasma is enabled.
+- `aquamarine` and `hyprland`: nixpkgs' packages with their patches, the Hyprland one picked by
+  version. They are only built when a configuration enables Hyprland.
 - `weaselwayd`: built from [weaselwayd/](weaselwayd) with its Makefile, against nixpkgs' libglvnd
   and libgbm (which load the patched mesa at run time), `weaselway-freerdp`, and the uapi header from
   the dxgdrm input. The gfxredir server channel is compiled in from
   [weaselwayd/gfxredir](weaselwayd/gfxredir), because distributions build FreeRDP without it.
-  weaselwayd is a GLib program with one main loop. It uses GIO for D-Bus and sockets, libpng for
-  images on the clipboard, and libwayland-client for the clipboard of compositors other than mutter.
-  The build runs `make check`.
+  weaselwayd is a GLib program with one main loop. It uses GIO for D-Bus and sockets, libcrypto for
+  its certificate, libpng for images on the clipboard, and libwayland-client for the clipboard of
+  compositors other than mutter. The build runs `make check`.
 - `weaselway-freerdp`: nixpkgs' freerdp plus
   [nix/freerdp-dsp-ffmpeg-pcm-s16.patch](nix/freerdp-dsp-ffmpeg-pcm-s16.patch). Only weaselwayd
   links it.
@@ -171,13 +233,15 @@ affected.
 
 ### Modules and configurations
 
-- [nix/module.nix](nix/module.nix) is `nixosModules.weaselway`. See
+- `nixosModules.weaselway` (also `nixosModules.default`) imports [nix/module.nix](nix/module.nix)
+  and [nix/bluetooth.nix](nix/bluetooth.nix) and adds the overlay. See
   [The NixOS module](#the-nixos-module).
 - [nix/image-gnome/](nix/image-gnome) and [nix/image-plasma/](nix/image-plasma) each contain a
   `configuration.nix` and a `flake.nix`, which the image ships as its `/etc/nixos`. The image flake
   takes nixpkgs and NixOS-WSL from weaselway's lock and builds the same toplevel as
   `nixosConfigurations.wsl-gnome` or `wsl-plasma`. The hostname is `nixos`, so `nixos-rebuild`
-  builds `#nixos`.
+  builds `#nixos`. Switching the image flake to `weaselway.inputs.nixpkgs-unstable` is a one-line
+  change, and `wsl-gnome-unstable` and `wsl-plasma-unstable` build the same systems on it.
 - The two `flake.nix` files are identical, and the desktop is selected in `configuration.nix`. The
   Plasma one sets `services.desktopManager.plasma6.enable` and `weaselway.session`, and does not install GNOME.
   There are two directories because `wsl.tarball.configPath` takes a source directory and copies
@@ -197,14 +261,23 @@ affected.
 ### Outputs
 
 - `packages.<system>`: `weaselway-mesa`, `mutter`, `weaselwayd`, `weaselway-scripts`,
-  `weaselway-viewer`, `tarballBuilder-gnome` and `tarballBuilder-plasma`.
+  `weaselway-viewer`, `tarballBuilder-gnome` and `tarballBuilder-plasma`. CI also builds
+  `dxgdrm-all`, `gnome-shell`, `gnome-control-center`, `kwin`, `plasma-workspace` and
+  `plasma-desktop` from here in jobs of their own (see [CI](#ci)).
+- `nixosConfigurations`: `wsl-gnome`, `wsl-plasma`, `wsl-gnome-unstable` and
+  `wsl-plasma-unstable`.
 - `devShells.<system>.default`: shellcheck and the build dependencies of weaselwayd.
-- `checks.<system>.shellcheck`: runs shellcheck on the scripts with `--severity=error`.
+- `checks.<system>`: `shellcheck` runs shellcheck on the scripts with `--severity=error`, and
+  `usbipd-auto-attach` runs the doctests of
+  [libexec/usbipd-auto-attach.py](libexec/usbipd-auto-attach.py).
 
 ## The NixOS module
 
 Most settings in [nix/module.nix](nix/module.nix) work around a specific failure that was observed
-on a WSL installation. This section records those failures.
+on a WSL installation. This section records those failures. The module's options are
+`weaselway.enable`, `weaselway.adapter` (the GPU), `weaselway.session` (the default session of
+`ww-start-session`) and `weaselway.usbip.devices`. [nix/bluetooth.nix](nix/bluetooth.nix) adds
+`weaselway.bluetooth.enable`.
 
 ### Graphics
 
@@ -216,6 +289,8 @@ on a WSL installation. This section records those failures.
   search path on which they would be found. Without the variable, d3d12 fails silently and rendering
   falls back to llvmpipe or kms_swrast. Stock nixpkgs mesa fails the same way. `ww-start-session`
   passes the variable on to the session's unit.
+- `weaselway.adapter` sets `MESA_D3D12_DEFAULT_ADAPTER_NAME`, which d3d12 and dzn both read, to a
+  substring of the GPU's name. Unset, both take the first integrated adapter, else the first.
 - KWin's setcap wrapper is disabled when Plasma is enabled. NixOS's wrappers drop
   `LD_LIBRARY_PATH`, and KWin then cannot create its gbm device.
 - `wslDriverCompat` adds `libedit.so.2`, a link to nixpkgs' `libedit.so.0`, to
@@ -231,26 +306,20 @@ on a WSL installation. This section records those failures.
 ### Kernel modules and device nodes
 
 - The module is keyed on the kernel release. `weaselway-prep` loads
-  `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and dxgdrm is built
-  for every release the `wsl-kernel` flake lists in its `kernels` attribute,
-  currently `6.18.40.1`, `6.18.54.1` and `6.18.58.1`
-  (`-microsoft-standard-WSL2`).
-  On any other kernel the file does not
-  exist, the unit logs that, and `ww-start-session` refuses to start for lack of
-  the KMS node. Supporting a new WSL kernel means running wsl-kernel's
-  `add-kernel.sh`, then updating dxgdrm's and weaselway's locks.
-- `6.18.40.1` has no DRM core, `6.18.54.1` and `6.18.58.1` have it but no KMS
-  helpers. For
+  `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and dxgdrm is built for every release the
+  `wsl-kernel` flake lists in its `kernels` attribute, currently `6.18.40.1`, `6.18.54.1` and
+  `6.18.58.1` (`-microsoft-standard-WSL2`). On any other kernel the file does not exist, the unit
+  logs that, and `ww-start-session` refuses to start for lack of the KMS node. Supporting a new WSL
+  kernel means running wsl-kernel's `add-kernel.sh`, then updating dxgdrm's and weaselway's locks.
+- `6.18.40.1` has no DRM core, and `6.18.54.1` and `6.18.58.1` have it but no KMS helpers. For
   those kernels the package also contains what is missing (`hdmi.ko`, `drm.ko`,
-  `drm_kms_helper.ko`, or only the last), built from the same kernel source,
-  and a `modules.dep` that loads them before `dxgdrm`. From `6.18.54.1` on WSL's
-  built-in `vgem` takes `card0` and `renderD128`, and dxgdrm gets the next
-  nodes; nothing in weaselway relies on the numbers.
-  Where it is a module, `drm.ko` has to be loaded before systemd-logind
-  starts: logind's device policy (`DeviceAllow=char-drm`) only covers device
-  classes that are registered at that moment, and without it logind refuses to
-  open dxgdrm's KMS node for the compositor. A drop-in for `modprobe@drm.service`,
-  which logind already orders itself after, loads it from the package.
+  `drm_kms_helper.ko`, or only the last), built from the same kernel source, and a `modules.dep`
+  that loads them before `dxgdrm`. From `6.18.54.1` on, WSL's built-in `vgem` takes `card0` and
+  `renderD128`, and dxgdrm gets the next nodes. Nothing in weaselway relies on the numbers.
+- Where it is a module, `drm.ko` has to be loaded before systemd-logind starts. logind's device
+  policy (`DeviceAllow=char-drm`) only covers device classes that are registered at that moment,
+  and without it logind refuses to open dxgdrm's KMS node for the compositor. A drop-in for
+  `modprobe@drm.service`, which logind already orders itself after, loads it from the package.
 - `services.udev.enable` is set because NixOS-WSL disables udev, and dxgdrm's rule, which sets mode
   0666 on its nodes, needs it.
 - The user is a member of `render` and `video` in case a node appears before udev applies the rule.
@@ -271,19 +340,35 @@ on a WSL installation. This section records those failures.
     `guiApplications`.
 - The NixOS-WSL bind mount for X0 (`tmp-.X11\x2dunix-X0.mount`) is masked for the same reason.
 
+### USB devices and Bluetooth
+
+- With `weaselway.usbip.devices` set to a list of VID:PID pairs,
+  `weaselway-usbipd-auto-attach.service` runs
+  [libexec/usbipd-auto-attach.py](libexec/usbipd-auto-attach.py). It polls `usbipd.exe list`
+  every second and attaches the listed devices that are not attached, so they come back after they
+  are plugged in again. systemd services do not get the Windows `PATH`, so the service calls
+  usbipd-win by its full path under `C:\Program Files`.
+- WSL's kernel has no rfkill, so GNOME hides a working Bluetooth adapter.
+  `weaselway.bluetooth.enable` builds rfkill, the Bluetooth core and the USB Bluetooth drivers for
+  every supported kernel with wsl-kernel's `mkModules`, and `wsl-bluetooth-modules.service` loads
+  them before udev and bluetoothd can load the stock ones
+  ([0035](docs/adr/0035-bluetooth-modules-with-rfkill.md)). The kernel cannot read firmware from
+  `/nix/store`, so a udev rule answers its firmware requests from `hardware.firmware`, which holds
+  Realtek's `rtl_bt` files.
+
 ### Session
 
-- There is no display manager. [bin/ww-start-session.sh](bin/ww-start-session.sh) runs the session command
-  (`gnome-session`, `startplasma-wayland` or `custom-weaselway-session`) in a transient system unit,
-  `weaselway-session.service`, with `PAMName=login` and `XDG_SEAT=seat0` on `tty7`. This makes it a
-  logind session on the seat, and logind gives the compositor the KMS node and the input devices.
-  Creating the unit requires `sudo`.
-- The VTs belong to the kernel, which all WSL distros share. Another distro with systemd runs a getty
-  on `tty1`, and that getty hangs the VT up when it starts, which ends a session on it. So the
-  session is on `tty7`. The script switches to that VT with `chvt` before it starts the session,
-  because a compositor whose session is not the active one on the seat does not render. With this,
-  the order in which distros are started does not matter (tested with Ubuntu started before and
-  after the session).
+- There is no display manager. [bin/ww-start-session.sh](bin/ww-start-session.sh) runs the session
+  command (`gnome-session`, `startplasma-wayland` or `custom-weaselway-session`) in a transient
+  system unit, `weaselway-session.service`, with `PAMName=login` and `XDG_SEAT=seat0` on `tty7`.
+  This makes it a logind session on the seat, and logind gives the compositor the KMS node and the
+  input devices. Creating the unit requires `sudo`.
+- The VTs (virtual terminals) belong to the kernel, which all WSL distros share. Another distro
+  with systemd runs a getty on `tty1`, and that getty hangs the VT up when it starts, which ends a
+  session on it. So the session is on `tty7`. The script switches to that VT with `chvt` before it
+  starts the session, because a compositor whose session is not the active one on the seat does not
+  render. With this, the order in which distros are started does not matter (tested with Ubuntu
+  started before and after the session).
 - The unit starts with an empty environment. The script passes on `PATH` (without the Windows
   directories), `XDG_DATA_DIRS`, `LD_LIBRARY_PATH`, the d3d12 variables and the adapter.
 - The script first removes `WAYLAND_DISPLAY` and `DISPLAY` from the user manager's environment. A
@@ -306,7 +391,9 @@ on a WSL installation. This section records those failures.
 - The module enables no desktop. Each image's `configuration.nix` enables one, and a system built
   from the module alone has to do the same.
 - `ww-start-viewer` runs `sdl-freerdp.exe` from the store through `\\wsl.localhost`. Windows loads
-  `SDL3.dll` and `SDL3_ttf.dll` from the same directory.
+  `SDL3.dll` and `SDL3_ttf.dll` from the same directory. The script passes
+  `/sdl-allow-screensaver`. Without it, SDL holds a display power request, and Windows keeps the
+  monitor on while the viewer runs, even when Windows is locked.
 
 ### WSL integration
 
@@ -340,7 +427,8 @@ on a WSL installation. This section records those failures.
   `/etc/pipewire/pipewire.conf.d/`.
 - It defines a permanent null sink, "Remote Desktop Audio", and two `protocol-simple` servers on
   127.0.0.1: port 4711 for playback (S16LE, stereo, 44.1 kHz) and port 4712 for the microphone
-  (S16LE, mono, 44.1 kHz).
+  (S16LE, mono, 44.1 kHz). It also caps the quantum (the block size PipeWire processes at a time)
+  at 512 frames, see [Known issues](#known-issues).
 - weaselwayd connects to both while a viewer with audio is attached
   ([weaselwayd/audio.c](weaselwayd/audio.c)).
 
@@ -352,13 +440,26 @@ on a WSL installation. This section records those failures.
 - The user is `nixos` with uid 1000. WSL only sets up `/run/user/1000`.
 - `weaselway.enable` is set. `weaselway.adapter` is present but commented out.
 - The desktop is enabled without its display manager. The Plasma file also sets
-  `weaselway.session = "plasma"`.
+  `weaselway.session = "plasma"`. gnome-shell only locks the screen when GDM runs, so the GNOME
+  image has no lock screen. Users lock Windows instead.
 - speech-dispatcher and Orca are disabled in both files, because the voices take about
   650 MB. A comment explains how to restore them.
+- The Plasma file leaves out Elisa, KRdp, the extra wallpapers, KWin for X11, KDE PIM and fwupd, to
+  keep the image under GitHub's 2 GiB limit for release assets.
 - Flakes are enabled, channels are disabled, and git is installed because the flake has git inputs.
-- sshd is disabled. Uncomment the line in `configuration.nix` to debug over SSH. The user's
-  password is `nixos`, so change it with `passwd` first. With mirrored WSL networking the distro is
-  reachable from the LAN.
+- The user's password is `nixos`. sshd is disabled. Uncomment the line in `configuration.nix` to
+  debug over SSH, and change the password with `passwd` first. With mirrored WSL networking the
+  distro is reachable from the LAN.
+
+## Ubuntu
+
+[ubuntu/install.sh](ubuntu/install.sh) installs the session into an Ubuntu 26.04 distro, with the
+steps in [ubuntu/README.md](ubuntu/README.md). GNOME and PipeWire come from Ubuntu. The script
+compiles the Mesa fork at a pinned commit (`MESA_REV`) and weaselwayd, and downloads a dxgdrm
+release for the running kernel and a viewer release, all into `/opt/weaselway`. It installs the
+same units, environment files and PipeWire drop-in as the NixOS module. An apt pin keeps out the
+packages GNOME recommends that do not work in WSL, GDM and NetworkManager among them. `DXGDRM_VERSION`, `VIEWER_VERSION` and `MESA_REV` at the top of the script need updating when
+those components change.
 
 ## Building
 
@@ -369,11 +470,11 @@ sudo nix run .#tarballBuilder-plasma   # the same with Plasma
 
 Images are also available from CI runs and releases, see [CI](#ci).
 
-Several packages are not on cache.nixos.org and take time to build: the kernel tree for dxgdrm,
-mesa, mutter, and gnome-shell, which is relinked against mutter. CI pushes them to
-weaselway.cachix.org. A machine that uses it as a substituter (`extra-substituters`; the key is in
-[nix/module.nix](nix/module.nix)) downloads them for any commit that CI has built. The patched
-FreeRDP and the Windows viewer build quickly; the mingw gcc is cached for x86_64.
+Several packages are not on cache.nixos.org and take time to build: the kernel trees for dxgdrm,
+mesa, mutter, gnome-shell (which is relinked against mutter), KWin and what links it, and the
+viewer's mingw cross toolchain. CI pushes them to weaselway.cachix.org. A machine that uses it as a
+substituter (`extra-substituters`; the key is in [nix/module.nix](nix/module.nix)) downloads them
+for any commit that CI has built.
 
 To build against unpushed commits of the other repositories, override the input, for example
 `--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.6-wsl'`. The same works for `freerdp` and
@@ -396,8 +497,8 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 ### Building weaselwayd alone
 
 Run `make` in [weaselwayd/](weaselwayd). It needs `DXGDRM_INCLUDE` set to a dxgdrm checkout, and
-FreeRDP 3, GLib, libpng, EGL, GLES, gbm, libdrm, wayland-client and wayland-protocols from
-pkg-config, and `wayland-scanner`. `nix develop` provides all of these.
+FreeRDP 3, GLib, libcrypto, libpng, EGL, GLES, gbm, libdrm, wayland-client and wayland-protocols
+from pkg-config, and `wayland-scanner`. `nix develop` provides all of these.
 
 - `make check` tests the format conversions of the clipboard.
 - [tests/clipboard-rdp.sh](weaselwayd/tests/clipboard-rdp.sh) copies and pastes text, HTML and an
@@ -408,6 +509,8 @@ pkg-config, and `wayland-scanner`. `nix develop` provides all of these.
 - [tests/selection-kwin.sh](weaselwayd/tests/selection-kwin.sh) tests the `ext-data-control-v1`
   side alone against KWin, with `wl-copy` and `wl-paste` as the other clients. It also restarts
   KWin to check that weaselwayd finds the new one.
+- [tests/egl-load.c](weaselwayd/tests/egl-load.c) (`make tests/egl-load`) is a fullscreen EGL
+  window that redraws every pixel every frame, as GPU load for measuring the frame path.
 
 The shell tests are not part of the build. They need mutter or KWin, D-Bus and, for
 `clipboard-rdp.sh`, an X server.
@@ -418,7 +521,9 @@ The shell tests are not part of the build. They need mutter or KWin, D-Bus and, 
 [release-image.yml](.github/workflows/release-image.yml) runs on `v*` tags and attaches
 `nixos-weaselway-gnome-<tag>.wsl` and `nixos-weaselway-plasma-<tag>.wsl` to the release. Both use
 the composite action [.github/actions/build-image](.github/actions/build-image) on the
-`ubuntu-26.04` runner, once per desktop. actionlint does not know that label yet, but it exists.
+`ubuntu-26.04` runner, once per desktop, and set up Nix and Cachix with
+[.github/actions/setup-nix](.github/actions/setup-nix). actionlint does not know the runner label
+yet, but it exists.
 
 - Before the images, build-image.yml builds what cache.nixos.org lacks in one job per part: the
   kernel trees with dxgdrm, the Windows viewer, mesa with weaselwayd's freerdp, and the patched
@@ -429,28 +534,30 @@ the composite action [.github/actions/build-image](.github/actions/build-image) 
 - The `unstable` jobs build the same two systems on `nixpkgs-unstable`
   (`nixosConfigurations.wsl-*-unstable`), only to fill the cache: they are not packed, kept or
   released. The viewer and NixOS-WSL follow the stable `nixpkgs`, and dxgdrm's kernel trees come
-  from wsl-kernel with a nixpkgs of their own, so both share them
+  from wsl-kernel with a nixpkgs of their own, so both channels share them
   ([ADR 0032](docs/adr/0032-stable-and-unstable-nixpkgs.md)). Updating `nixpkgs` does not rebuild
   the kernel trees.
 - The `hyprland` jobs build Hyprland with the patched aquamarine on both channels. No image has
-  Hyprland, so this is what notices when a nixpkgs update breaks those patches
+  Hyprland, so these jobs are what notices when a nixpkgs update breaks those patches
   ([ADR 0030](docs/adr/0030-hyprland-follows-the-window-size.md)).
 - [update-nixpkgs.yml](.github/workflows/update-nixpkgs.yml) runs `nix flake update nixpkgs` on
   Fridays and `nix flake update nixpkgs-unstable` on Saturdays, calls build-image.yml with the
   new lock, and commits the lock to `main` only if that build passes. The push uses
   `GITHUB_TOKEN`, so it starts no further build.
+- [ubuntu-install.yml](.github/workflows/ubuntu-install.yml) runs `ubuntu/install.sh` in a fresh
+  Ubuntu 26.04 distro on a `windows-2025` runner, restarts WSL and checks what the script set up.
+  It runs on pushes to `main` that change what the script installs. The runner has no GPU, so it
+  tests the install and the preparation at boot, not a session on the viewer.
 - The release workflow builds the two images in separate jobs and creates the release in a third,
   so a release is never published with only one of them.
-
-- The image is about 1.4 GiB. GitHub limits release assets to 2 GiB, so keep an eye on the closure:
-  the kernel tree, the kernel toolchain or Orca's voices each add hundreds of MB if they find their
-  way back in.
-- The workflows push every path they build, except separate `-debug` outputs, to weaselway.cachix.org
-  with `cachix/cachix-action`. The
-  token is the `CACHIX_AUTH_TOKEN` secret, which is passed to the composite action as an input
-  because composite actions cannot read secrets. A run with an empty cache took about 45 minutes.
-  With a warm cache only the changed packages are compiled. Pull requests from forks receive no
-  secrets and only read from the cache.
+- The images of v1.7.1 are 1.3 GiB (GNOME) and 1.7 GiB (Plasma). GitHub limits release assets to
+  2 GiB, so check the closure size after changes: the kernel tree, the kernel toolchain or Orca's
+  voices each add hundreds of MB when they end up in the closure again.
+- The workflows push every path they build, except separate `-debug` outputs, to
+  weaselway.cachix.org with `cachix/cachix-action`. The token is the `CACHIX_AUTH_TOKEN` secret,
+  which is passed to the composite action as an input because composite actions cannot read
+  secrets. A run with an empty cache took about 45 minutes. With a warm cache only the changed
+  packages are compiled. Pull requests from forks receive no secrets and only read from the cache.
 - The module configures the same cache as a substituter, so `nixos-rebuild` on a WSL machine
   downloads these paths too. An installation that predates this setting gets it with its first
   rebuild after updating. That rebuild still compiles everything unless it is run with
@@ -494,7 +601,8 @@ journalctl --user -u weaselwayd -b              # weaselwayd: …, rdp: …, aud
 
 `weaselwayd --verbose` logs one line per frame (the buffer, the share of the screen that changed,
 and the duration of the readback) and every step of a copy and paste. `G_MESSAGES_DEBUG=clipboard`
-(or `rdp`, `audio`, `weaselwayd`) enables the same output for one part.
+(or `rdp`, `audio`, `weaselwayd`) enables the same output for one part. The startup log and the
+statistics line name the readback path in use (`compute` or `glReadPixels`).
 
 To run weaselwayd by hand, stop the unit first with `systemctl --user stop weaselwayd`. `--tcp N`
 listens on 127.0.0.1 instead of the vsock, for a client on the Linux side. `--no-clipboard` keeps the
@@ -511,6 +619,8 @@ clipboard"), and through which backend.
   weaselwayd shows the protocol traffic.
 
 `ww-start-viewer /sdl-show-stats:2` and `/sdl-show-damage` show the client's view of the same data.
+The statistics overlay also shows the busy and wait time of each upload, for the GPU and the CPU
+copy.
 
 ### The session
 
@@ -535,7 +645,7 @@ peak of about 9800.
 These decisions and fixes are easy to undo by accident.
 
 - **No codec fallback.** The client either supports gfxredir or is disconnected, with the reason in
-  weaselwayd's log. This is intentional.
+  weaselwayd's log.
 - **The certificate is generated in memory.** `winpr-makecert` is not on `PATH` on NixOS, so
   weaselwayd creates a self-signed RSA-2048 certificate with libcrypto. The certificate cannot be
   omitted: FreeRDP's server refuses to initialise a peer without one, even with standard RDP
@@ -589,10 +699,10 @@ when working on the code.
   runs inside. `ww-start-session` therefore starts a hidden `wsl.exe` that loops while the session
   unit is active. It is started through PowerShell so that it is not attached to the terminal's
   console, which would take it along when closed.
-- KWin's patch on `master` has only been compiled as the 6.6 and 6.7 backports. Rotated outputs and
-  direct scanout are untested with it.
+- KWin's patch on `master` has only been built as the 6.6, 6.7 and 6.8 backports. Rotated outputs
+  and direct scanout are untested with it.
 - PipeWire runs without realtime scheduling. rtkit is enabled and running, but `data-loop.0` stays
   at `SCHED_OTHER`.
 - dxgdrm's udev rule is not always applied in time. On one boot the render node had mode `0666`, as
   the rule intends. On another it was `root:render`. The group memberships cover both cases.
-- Compositors other than mutter and KWin have seen little testing on the virtual display.
+- Compositors other than mutter, KWin and Hyprland have seen little testing on the virtual display.
