@@ -126,7 +126,8 @@ struct weaselwayd {
     size_t dumb_size;
 
     /* While no compositor owns the display the client gets placeholder.c's
-     * screen, as large as the window it asked for. @placeholder_owed: it has
+     * screen, as large as the window it asked for, and while the compositor
+     * has the display off its "Screen is off". @placeholder_owed: it has
      * to be drawn (again). @placeholder_up: the client may be showing it, so
      * the compositor's screen has to be sent whole when one is back. */
     bool placeholder_owed, placeholder_up;
@@ -923,8 +924,12 @@ fetch_frame(struct weaselwayd *p, GError **error)
     }
 
     if (!(frame.flags & DXGDRM_FRAME_PRIMARY)) {
-        if (p->have_frame)
+        if (p->have_frame) {
             g_message("the compositor turned the display off");
+            /* The client would keep the last frame up, as if the screen were
+             * still on; it gets "Screen is off" instead. */
+            p->placeholder_owed = true;
+        }
         p->have_frame = false;
         p->pending = false;
         return true;
@@ -1080,8 +1085,9 @@ sync_screen_size(struct weaselwayd *p)
     rdp_server_set_screen_size(p->rdp, width, height);
 }
 
-/* "No compositor running", in one frame and only when the client has not got
- * it yet: nothing changes on the screen until a compositor is back. */
+/* "No compositor running", or "Screen is off" while the compositor has it off,
+ * in one frame and only when the client has not got it yet: nothing changes on
+ * the screen until a compositor is back or turns the display on. */
 static void
 present_placeholder(struct weaselwayd *p)
 {
@@ -1103,11 +1109,12 @@ present_placeholder(struct weaselwayd *p)
         return;
     }
 
-    placeholder_draw(pixels, stride, rect.width, rect.height);
+    placeholder_draw(pixels, stride, rect.width, rect.height, p->owned);
     rdp_server_end_frame(p->rdp, &frame, &rect);
     p->placeholder_owed = false;
     p->placeholder_up = true;
-    g_debug("no compositor: placeholder sent at %dx%d", rect.width, rect.height);
+    g_debug("%s: placeholder sent at %dx%d", p->owned ? "display off" : "no compositor",
+            rect.width, rect.height);
 }
 
 /*
@@ -1130,13 +1137,10 @@ try_present(struct weaselwayd *p)
     if (rb->active)
         return;
 
-    if (!p->owned) {
+    if (!p->owned || !p->have_frame) {
         present_placeholder(p);
         return;
     }
-
-    if (!p->have_frame)
-        return;
 
     if (rdp_server_take_full_request(p->rdp))
         add_full_damage(p);

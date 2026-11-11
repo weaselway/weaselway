@@ -13,7 +13,11 @@ compositor left behind.
 - While no client holds DRM master on dxgdrm (`DXGDRM_FRAME_OWNED`), the client
   gets a dark screen with "No compositor running" centred, as large as its
   window (`932a955`). It is sent once per client, resize or reconnect.
-- When a compositor takes over, its first frame goes out whole.
+- While the compositor has the display off (no primary plane), the client gets
+  a black screen with "Screen is off" the same way. Otherwise it would keep
+  the last frame, as if the screen were still on.
+- When a compositor takes over or turns the display on, its first frame goes
+  out whole.
 - The text is drawn from a small built-in bitmap font (`placeholder.c`) with
   only the letters of the message, rather than a font library for one line.
 

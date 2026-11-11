@@ -3,6 +3,12 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
+## Unreleased
+
+- weaselwayd shows "Screen is off" while the compositor has the display off,
+  for example when the desktop blanks the screen after idling. The viewer
+  kept the last frame before.
+
 ## v1.7.1 - 2026-11-10
 
 - `weaselway.usbip.devices` keeps the listed USB devices (by VID:PID)
