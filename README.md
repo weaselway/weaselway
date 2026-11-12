@@ -524,6 +524,8 @@ ww-start-viewer /sdl-show-damage    # tint the regions updated in each frame
 ```
 
 The value after `/sdl-show-stats` is the text scale and is optional.
+Right Ctrl+Right Shift+A shows and hides the counters while the viewer runs,
+also without the option.
 
 <!-- IMAGE + VIDEO: (1) a screenshot of a 2560x1440 session with the
      /sdl-show-stats overlay showing 60 fps, with the GPU named in the caption.
