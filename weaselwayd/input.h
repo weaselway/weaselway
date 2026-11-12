@@ -1,6 +1,6 @@
 /*
- * weaselwayd's input devices: an absolute pointer, a keyboard and a
- * multitouch touchpad on uinput. To the compositor they are ordinary evdev
+ * weaselwayd's input devices: an absolute pointer, a relative one, a keyboard
+ * and a multitouch touchpad on uinput. To the compositor they are ordinary evdev
  * devices that libinput picks up.
  */
 
@@ -18,6 +18,8 @@ void input_free(struct input *input);
 
 /* A position in pixels on a screen of the given size. */
 void input_pointer_motion(struct input *input, int x, int y, int width, int height);
+/* A movement in pixels, before the compositor's acceleration. */
+void input_pointer_relative(struct input *input, int dx, int dy);
 /* An evdev button code (BTN_LEFT, ...). */
 void input_pointer_button(struct input *input, uint16_t button, bool pressed);
 /* Wheel travel in 1/120ths of a notch; positive is away from the user, or to

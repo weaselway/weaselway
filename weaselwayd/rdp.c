@@ -145,9 +145,9 @@ struct peer_context {
     /* When the last touch frame came, while fingers are down; 0 otherwise.
      * Under notes_lock. */
     gint64 touch_last;
-    /* The fingers moved the pointer last, not the mouse: the client is told
-     * where it went. Under notes_lock. */
-    bool touch_moves_pointer;
+    /* The fingers or relative mouse motion moved the pointer last, not an
+     * absolute position: the client is told where it went. Under notes_lock. */
+    bool server_moves_pointer;
 
     /* The gfxredir, disp and rdpei callbacks run on the channels' own reader
      * threads. They only record what happened here, under this lock, and wake
@@ -1059,9 +1059,39 @@ pointer_position(struct peer_context *peer_ctx, UINT16 x, UINT16 y)
     struct rdp_server *server = peer_ctx->server;
 
     g_mutex_lock(&peer_ctx->notes_lock);
-    peer_ctx->touch_moves_pointer = false;
+    peer_ctx->server_moves_pointer = false;
     g_mutex_unlock(&peer_ctx->notes_lock);
     input_pointer_motion(server->config.input, x, y, server->screen_width, server->screen_height);
+}
+
+/* The button in a mouse event's flags, if there is one. */
+static void
+pointer_button(struct input *input, UINT16 flags)
+{
+    uint16_t button = 0;
+
+    if (flags & PTR_FLAGS_BUTTON1)
+        button = BTN_LEFT;
+    else if (flags & PTR_FLAGS_BUTTON2)
+        button = BTN_RIGHT;
+    else if (flags & PTR_FLAGS_BUTTON3)
+        button = BTN_MIDDLE;
+    if (button)
+        input_pointer_button(input, button, !!(flags & PTR_FLAGS_DOWN));
+}
+
+/* The same for an extended mouse event's. */
+static void
+pointer_xbutton(struct input *input, UINT16 flags)
+{
+    uint16_t button = 0;
+
+    if (flags & PTR_XFLAGS_BUTTON1)
+        button = BTN_SIDE;
+    else if (flags & PTR_XFLAGS_BUTTON2)
+        button = BTN_EXTRA;
+    if (button)
+        input_pointer_button(input, button, !!(flags & PTR_XFLAGS_DOWN));
 }
 
 static BOOL
@@ -1069,7 +1099,6 @@ on_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
 {
     struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
     struct input *input = peer_ctx->server->config.input;
-    uint16_t button = 0;
 
     if (!peer_ctx->activated || !input)
         return TRUE;
@@ -1092,15 +1121,7 @@ on_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
         return TRUE;
 
     pointer_position(peer_ctx, x, y);
-
-    if (flags & PTR_FLAGS_BUTTON1)
-        button = BTN_LEFT;
-    else if (flags & PTR_FLAGS_BUTTON2)
-        button = BTN_RIGHT;
-    else if (flags & PTR_FLAGS_BUTTON3)
-        button = BTN_MIDDLE;
-    if (button)
-        input_pointer_button(input, button, !!(flags & PTR_FLAGS_DOWN));
+    pointer_button(input, flags);
     return TRUE;
 }
 
@@ -1109,19 +1130,37 @@ on_extended_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
 {
     struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
     struct input *input = peer_ctx->server->config.input;
-    uint16_t button = 0;
 
     if (!peer_ctx->activated || !input)
         return TRUE;
 
     pointer_position(peer_ctx, x, y);
+    pointer_xbutton(input, flags);
+    return TRUE;
+}
 
-    if (flags & PTR_XFLAGS_BUTTON1)
-        button = BTN_SIDE;
-    else if (flags & PTR_XFLAGS_BUTTON2)
-        button = BTN_EXTRA;
-    if (button)
-        input_pointer_button(input, button, !!(flags & PTR_XFLAGS_DOWN));
+/* A client that grabbed the mouse sends how far it moved instead of where it
+ * is, and the buttons with it. */
+static BOOL
+on_rel_mouse_event(rdpInput *rdp_input, UINT16 flags, INT16 dx, INT16 dy)
+{
+    struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
+    struct input *input = peer_ctx->server->config.input;
+
+    if (!peer_ctx->activated || !input)
+        return TRUE;
+
+    if (flags & PTR_FLAGS_MOVE) {
+        g_mutex_lock(&peer_ctx->notes_lock);
+        peer_ctx->server_moves_pointer = true;
+        g_mutex_unlock(&peer_ctx->notes_lock);
+        input_pointer_relative(input, dx, dy);
+    }
+    /* The extended buttons have flags of their own, in the same field. */
+    if (flags & (PTR_XFLAGS_BUTTON1 | PTR_XFLAGS_BUTTON2))
+        pointer_xbutton(input, flags);
+    else
+        pointer_button(input, flags);
     return TRUE;
 }
 
@@ -1233,7 +1272,7 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
 
     g_mutex_lock(&peer_ctx->notes_lock);
     peer_ctx->touch_last = g_get_monotonic_time();
-    peer_ctx->touch_moves_pointer = true;
+    peer_ctx->server_moves_pointer = true;
     g_mutex_unlock(&peer_ctx->notes_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
@@ -1391,7 +1430,7 @@ rdp_server_set_pointer_position(struct rdp_server *server, int x, int y)
     if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed)
         return;
     g_mutex_lock(&peer_ctx->notes_lock);
-    send = peer_ctx->touch_moves_pointer;
+    send = peer_ctx->server_moves_pointer;
     g_mutex_unlock(&peer_ctx->notes_lock);
     if (!send)
         return;
@@ -1765,6 +1804,7 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     (void)freerdp_settings_set_bool(settings, FreeRDP_SupportMonitorLayoutPdu, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_HasExtendedMouseEvent, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_HasHorizontalWheel, TRUE);
+    (void)freerdp_settings_set_bool(settings, FreeRDP_HasRelativeMouseEvent, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_FastPathInput, TRUE);
     /* FreeRDP 3 added two connect-time steps that need callbacks or a UDP
      * path we do not have; without them the state machine is the 2.x one. */
@@ -1782,6 +1822,7 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     input->SynchronizeEvent = on_synchronize_event;
     input->MouseEvent = on_mouse_event;
     input->ExtendedMouseEvent = on_extended_mouse_event;
+    input->RelMouseEvent = on_rel_mouse_event;
     input->KeyboardEvent = on_keyboard_event;
     input->UnicodeKeyboardEvent = on_unicode_keyboard_event;
 

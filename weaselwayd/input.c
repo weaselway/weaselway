@@ -34,6 +34,7 @@ static const struct {
 
 struct input {
     int pointer_fd;
+    int relative_fd; /* -1 if it could not be created */
     int keyboard_fd;
     int touchpad_fd; /* -1 if it could not be created */
 
@@ -111,6 +112,33 @@ create_pointer(void)
 fail:
     close(fd);
     return -1;
+}
+
+/* For a client that grabbed the mouse: a game or a 3D view under pointer lock
+ * gets deltas only from a device that moves relatively. The buttons stay on
+ * the absolute pointer; the compositor has one cursor for both. */
+static int
+create_relative_pointer(void)
+{
+    struct uinput_setup setup = {
+        .id = { .bustype = BUS_VIRTUAL, .vendor = 0x1d6b, .product = 0x0107 },
+        .name = "Weaselway relative pointer",
+    };
+    int fd = open("/dev/uinput", O_WRONLY | O_CLOEXEC);
+
+    if (fd < 0)
+        return -1;
+
+    /* udev takes a device for a mouse only if it has a button too. */
+    if (ioctl(fd, UI_SET_EVBIT, EV_KEY) || ioctl(fd, UI_SET_EVBIT, EV_REL) ||
+        ioctl(fd, UI_SET_RELBIT, REL_X) || ioctl(fd, UI_SET_RELBIT, REL_Y) ||
+        ioctl(fd, UI_SET_KEYBIT, BTN_LEFT) || ioctl(fd, UI_SET_KEYBIT, BTN_RIGHT) ||
+        ioctl(fd, UI_SET_KEYBIT, BTN_MIDDLE) || ioctl(fd, UI_DEV_SETUP, &setup) ||
+        ioctl(fd, UI_DEV_CREATE)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 static int
@@ -204,6 +232,7 @@ input_new(void)
 
     g_mutex_init(&input->lock);
     input->touchpad_fd = -1;
+    input->relative_fd = -1;
     input->pointer_fd = create_pointer();
     input->keyboard_fd = input->pointer_fd >= 0 ? create_keyboard() : -1;
     if (input->pointer_fd < 0 || input->keyboard_fd < 0) {
@@ -215,8 +244,10 @@ input_new(void)
     }
 
     input->touchpad_fd = create_touchpad();
-    g_message("uinput pointer, keyboard%s created",
-              input->touchpad_fd >= 0 ? " and touchpad" : " (but no touchpad)");
+    input->relative_fd = create_relative_pointer();
+    g_message("uinput pointer, keyboard%s%s created",
+              input->touchpad_fd >= 0 ? ", touchpad" : " (but no touchpad)",
+              input->relative_fd >= 0 ? ", relative pointer" : " (but no relative pointer)");
     return input;
 }
 
@@ -238,6 +269,10 @@ input_free(struct input *input)
         ioctl(input->touchpad_fd, UI_DEV_DESTROY);
         close(input->touchpad_fd);
     }
+    if (input->relative_fd >= 0) {
+        ioctl(input->relative_fd, UI_DEV_DESTROY);
+        close(input->relative_fd);
+    }
     g_mutex_clear(&input->lock);
     g_free(input);
 }
@@ -254,6 +289,21 @@ input_pointer_motion(struct input *input, int x, int y, int width, int height)
     emit(input->pointer_fd, EV_ABS, ABS_X, (int32_t)((int64_t)x * POINTER_ABS_MAX / (width - 1)));
     emit(input->pointer_fd, EV_ABS, ABS_Y, (int32_t)((int64_t)y * POINTER_ABS_MAX / (height - 1)));
     emit(input->pointer_fd, EV_SYN, SYN_REPORT, 0);
+    g_mutex_unlock(&input->lock);
+}
+
+void
+input_pointer_relative(struct input *input, int dx, int dy)
+{
+    if (input->relative_fd < 0 || (!dx && !dy))
+        return;
+
+    g_mutex_lock(&input->lock);
+    if (dx)
+        emit(input->relative_fd, EV_REL, REL_X, dx);
+    if (dy)
+        emit(input->relative_fd, EV_REL, REL_Y, dy);
+    emit(input->relative_fd, EV_SYN, SYN_REPORT, 0);
     g_mutex_unlock(&input->lock);
 }
 
