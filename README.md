@@ -524,6 +524,8 @@ ww-start-viewer /sdl-show-damage    # tint the regions updated in each frame
 ```
 
 The value after `/sdl-show-stats` is the text scale and is optional.
+Below the counters, a bar per frame shows how long each drawing stage took,
+with a line at 16.7 ms (60 Hz).
 Right Ctrl+Right Shift+A shows and hides the counters while the viewer runs,
 also without the option.
 
