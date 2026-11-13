@@ -83,7 +83,7 @@ The NixOS image takes everything from the flake.
 
 | Component | Source | Where it runs |
 |---|---|---|
-| mesa with the d3d12 changes | `weaselway/mesa`, branch `mesa-26.2.6-wsl` | user distro (`/run/opengl-driver`) |
+| mesa with the d3d12 changes | `weaselway/mesa`, branch `mesa-26.2.7-wsl` | user distro (`/run/opengl-driver`) |
 | dxgdrm kernel module | `weaselway/dxgdrm` flake | user distro kernel, loaded from the store |
 | weaselwayd | [weaselwayd/](weaselwayd) in this repo | user distro, as a unit of the user manager |
 | mutter | nixpkgs, plus [one patch](nix/mutter-stage-relayout.patch) | user distro (gnome-shell links it) |
@@ -145,7 +145,7 @@ problems that show up there but are unrelated to RDP:
 
 - **weaselway** (this repository): the flake, the NixOS modules, the overlay, the image
   configuration, weaselwayd, the shell scripts and the Ubuntu install script.
-- **mesa**: the image builds the branch `mesa-26.2.6-wsl` with nixpkgs' Mesa package definition.
+- **mesa**: the image builds the branch `mesa-26.2.7-wsl` with nixpkgs' Mesa package definition.
   `main` carries the same commits on top of upstream main. The image builds it instead once
   nixpkgs' Mesa is 27 or newer, because nixpkgs' package only builds the Mesa major it targets. The
   commits change d3d12 and dzn (Mesa's Vulkan driver on D3D12):
@@ -491,7 +491,7 @@ substituter (`extra-substituters`; the key is in [nix/module.nix](nix/module.nix
 for any commit that CI has built.
 
 To build against unpushed commits of the other repositories, override the input, for example
-`--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.6-wsl'`. The same works for `freerdp` and
+`--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.7-wsl'`. The same works for `freerdp` and
 `dxgdrm`.
 
 ### Building on aarch64

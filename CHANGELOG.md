@@ -5,6 +5,7 @@ release they led to. Weekly nixpkgs updates are not listed.
 
 ## Unreleased
 
+- Mesa 26.2.7.
 - Ubuntu: `install.sh` needs `--with-flatpak` or `--without-flatpak`. With
   `--with-flatpak` it builds weaselway's Mesa as a local Flatpak GL
   extension for the `25.08` and `26.08` runtimes, so Flatpak apps such as
