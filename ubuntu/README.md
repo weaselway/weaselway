@@ -62,11 +62,8 @@ The script changes the system in these places:
   display, and NetworkManager would interfere with the network WSL sets up.
 - It removes snapd and all installed snaps. Snaps bring their own Mesa, which
   cannot use the GPU through dxgdrm. Ubuntu's `chromium` and `firefox`
-  packages only install snaps, so apt would refuse them.
-- It adds the [xtradeb PPA](https://launchpad.net/~xtradeb/+archive/ubuntu/apps),
-  a community repository with Chromium as a `.deb`, and pins it in
-  `/etc/apt/preferences.d/xtradeb` so that apt takes only `chromium*`
-  packages from it. `sudo apt install chromium` then installs that build.
+  packages only install snaps, so apt would refuse them. Install Chromium
+  from Flathub instead, see [Flatpak apps](#flatpak-apps).
 - It adds Mozilla's apt repository (`/etc/apt/sources.list.d/mozilla.sources`)
   and prefers it for `firefox` in `/etc/apt/preferences.d/mozilla`.
   `sudo apt install firefox` then installs Mozilla's `.deb`.
@@ -156,6 +153,12 @@ on, and installs it as the local GL extension `org.freedesktop.Platform.GL.host`
 over the runtime's Mesa. At boot, `weaselway-prep.service` creates
 `/dev/dri/dxg`, a copy of `/dev/dxg` that apps with GPU access see, and binds
 `/usr/lib/wsl` into the extension.
+
+Chromium and Firefox from Flathub are on `25.08` and render on the GPU:
+
+```sh
+flatpak install flathub org.chromium.Chromium org.mozilla.firefox
+```
 
 Apps on older runtimes, GNOME 48 and earlier for example, keep their
 runtime's Mesa, which renders on the CPU. Without LLVM in the SDK the
