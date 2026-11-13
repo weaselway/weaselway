@@ -60,21 +60,12 @@ The script changes the system in these places:
   BlueZ, Plymouth and snapd in `/etc/apt/preferences.d/weaselway`. GNOME
   recommends them, but in WSL a display manager would take the virtual
   display, and NetworkManager would interfere with the network WSL sets up.
-  With `--without-flatpak` it blocks `flatpak` too: without weaselway's GL
-  extension, Flatpak apps render on the CPU.
 - It removes snapd and all installed snaps. Snaps bring their own Mesa, which
   cannot use the GPU through dxgdrm. Ubuntu's `chromium` and `firefox`
   packages only install snaps, so apt would refuse them. With
   `--with-flatpak`, install both from Flathub, see
-  [Flatpak apps](#flatpak-apps).
-- With `--without-flatpak`, it adds the
-  [xtradeb PPA](https://launchpad.net/~xtradeb/+archive/ubuntu/apps), a
-  community repository with Chromium as a `.deb`, and pins it in
-  `/etc/apt/preferences.d/xtradeb` so that apt takes only `chromium*`
-  packages from it. It also adds Mozilla's apt repository
-  (`/etc/apt/sources.list.d/mozilla.sources`) and prefers it for `firefox` in
-  `/etc/apt/preferences.d/mozilla`. `sudo apt install chromium firefox` then
-  installs these `.deb`s.
+  [Flatpak apps](#flatpak-apps). Otherwise use another source of `.deb`s,
+  such as Mozilla's apt repository for Firefox.
 - It installs Mesa to `/opt/weaselway/mesa` and puts that directory ahead of
   Ubuntu's libraries with `/etc/ld.so.conf.d/00-weaselway-mesa.conf`. Ubuntu's
   Mesa packages stay installed but are no longer used.
