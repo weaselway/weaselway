@@ -74,7 +74,7 @@ The script changes the system in these places:
   dxgdrm module to `/opt/weaselway/dxgdrm` and the viewer to
   `/opt/weaselway/viewer`.
 - It adds the system unit `weaselway-prep.service`, which loads the module at
-  boot, and the user unit `weaselwayd.service`.
+  boot, and the user unit `weaselwayd.service`, which runs only for your user.
 - It adds your user to the groups `render`, `video` and `input`.
 - It masks WSL's `wslg-session.service` for all users. That unit replaces
   PipeWire's PulseAudio socket with a link to WSLg's PulseAudio, and the

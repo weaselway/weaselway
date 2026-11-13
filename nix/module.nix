@@ -231,6 +231,9 @@ in
           description = "Weaselway display server for the Windows viewer";
           documentation = [ "https://github.com/weaselway/weaselway" ];
           wantedBy = [ "default.target" ];
+          # A copy in another user's session, e.g. root's after wsl -u root,
+          # can't get the vsock port and restarts forever.
+          unitConfig.ConditionUser = config.wsl.defaultUser;
           # PipeWire is socket activated; the audio threads retry until it is up.
           serviceConfig = {
             ExecStart = lib.getExe' pkgs.weaselwayd "weaselwayd";

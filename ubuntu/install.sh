@@ -215,10 +215,13 @@ sudo tee /etc/systemd/system/user@.service.d/weaselway.conf > /dev/null <<'EOF'
 LimitNICE=-11
 EOF
 
-sudo tee /etc/systemd/user/weaselwayd.service > /dev/null <<'EOF'
+# Only for this user: a copy in another user's session, e.g. root's after
+# wsl -u root, can't get the vsock port and restarts forever.
+sudo tee /etc/systemd/user/weaselwayd.service > /dev/null <<EOF
 [Unit]
 Description=Weaselway display server for the Windows viewer
 Documentation=https://github.com/weaselway/weaselway
+ConditionUser=$(id -un)
 
 [Service]
 ExecStart=/usr/local/bin/weaselwayd

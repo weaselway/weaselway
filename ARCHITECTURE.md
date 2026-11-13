@@ -375,6 +375,8 @@ on a WSL installation. This section records those failures. The module's options
   compositor that finds them there, left over from a previous session, tries to run nested.
 - `weaselwayd.service` is a unit of the user manager, wanted by `default.target`. It waits for a
   compositor and keeps running when the compositor exits, so it is not bound to the session.
+  `ConditionUser=` limits it to the desktop user. A copy in another user's session, such as root's
+  after `wsl -u root`, could not get the vsock port and would restart forever.
 - weaselwayd sets its nice value to -11 before it starts any thread, so all its threads inherit it,
   Mesa's and FreeRDP's included. `LimitNICE=-11` on `user@.service` allows this. rtkit, which
   PipeWire uses, raises single threads only and sets `SCHED_RESET_ON_FORK`, so threads that Mesa
