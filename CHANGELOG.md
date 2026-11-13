@@ -8,10 +8,9 @@ release they led to. Weekly nixpkgs updates are not listed.
 - Ubuntu: `install.sh` needs `--with-flatpak` or `--without-flatpak`. With
   `--with-flatpak` it builds weaselway's Mesa as a local Flatpak GL
   extension for the `25.08` and `26.08` runtimes, so Flatpak apps such as
-  Flathub's Chromium and Firefox render on the GPU. The xtradeb PPA is no
-  longer added; install Chromium from Flathub. Existing installs keep the
-  PPA until `sudo add-apt-repository -r ppa:xtradeb/apps` and
-  `sudo rm /etc/apt/preferences.d/xtradeb`.
+  Flathub's Chromium and Firefox render on the GPU, and it adds neither the
+  xtradeb PPA nor Mozilla's repository. With `--without-flatpak` it adds
+  both as before and blocks the `flatpak` package.
 - GNOME no longer hangs when WSL's vgem device is announced again, for
   example when another distro starts in the same WSL VM. mutter closed its
   own display connection and spun at 100% CPU with a black viewer.

@@ -58,26 +58,44 @@ curl -fsSL -o "${BUILD}/dxgdrm_drm.h" \
 step "Installing packages"
 # GNOME recommends a display manager, NetworkManager and more that have no
 # place in WSL: gdm would take the display, NetworkManager the network.
-sudo tee /etc/apt/preferences.d/weaselway > /dev/null <<'EOF'
-# Installed by weaselway: GNOME's recommends that do not work in WSL.
-Package: gdm3 network-manager modemmanager wpasupplicant cups cups-daemon bluez plymouth snapd
+# Without our GL extension, Flatpak apps render on the CPU, so no Flatpak.
+BLOCKED="gdm3 network-manager modemmanager wpasupplicant cups cups-daemon bluez plymouth snapd"
+[ "${WITH_FLATPAK}" = 1 ] || BLOCKED+=" flatpak"
+sudo tee /etc/apt/preferences.d/weaselway > /dev/null <<EOF
+# Installed by weaselway: packages that do not work in WSL or with its GPU.
+Package: ${BLOCKED}
 Pin: release *
 Pin-Priority: -1
 EOF
 # The WSL image ships snapd, and the pin above only stops new installs. Snaps
 # bring their own Mesa without d3d12 on dxgdrm, so remove snapd and its snaps.
 sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove snapd
-# Ubuntu's firefox is a snap too; Mozilla publishes a .deb in its own repository.
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo curl -fsSL -o /etc/apt/keyrings/packages.mozilla.org.asc https://packages.mozilla.org/apt/repo-signing-key.gpg
-sudo tee /etc/apt/sources.list.d/mozilla.sources > /dev/null <<'EOF'
+# Ubuntu's chromium and firefox are snaps. With Flatpak they come from
+# Flathub; without, from repositories with .debs. xtradeb has Chromium; take
+# only Chromium from there, so the PPA replaces nothing else.
+if [ "${WITH_FLATPAK}" = 0 ]; then
+    sudo add-apt-repository -y -n ppa:xtradeb/apps
+    sudo tee /etc/apt/preferences.d/xtradeb > /dev/null <<'EOF'
+# Installed by weaselway: only Chromium from the xtradeb PPA.
+Package: chromium*
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: 700
+
+Package: *
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: -1
+EOF
+    # Mozilla publishes Firefox as a .deb in its own repository.
+    sudo install -d -m 0755 /etc/apt/keyrings
+    sudo curl -fsSL -o /etc/apt/keyrings/packages.mozilla.org.asc https://packages.mozilla.org/apt/repo-signing-key.gpg
+    sudo tee /etc/apt/sources.list.d/mozilla.sources > /dev/null <<'EOF'
 Types: deb
 URIs: https://packages.mozilla.org/apt
 Suites: mozilla
 Components: main
 Signed-By: /etc/apt/keyrings/packages.mozilla.org.asc
 EOF
-sudo tee /etc/apt/preferences.d/mozilla > /dev/null <<'EOF'
+    sudo tee /etc/apt/preferences.d/mozilla > /dev/null <<'EOF'
 # Installed by weaselway: Firefox from Mozilla, never Ubuntu's snap wrapper.
 Package: *
 Pin: origin packages.mozilla.org
@@ -87,6 +105,7 @@ Package: firefox*
 Pin: release o=Ubuntu
 Pin-Priority: -1
 EOF
+fi
 # Mesa's build dependencies come from its source package.
 sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
 sudo apt-get update
