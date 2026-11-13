@@ -26,6 +26,28 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
     fi
 fi
 
+# The Flatpak GL extension ubuntu/install.sh builds runs Mesa in sandboxes that
+# have neither /dev/dxg nor /usr/lib/wsl. The dri device permission brings
+# /dev/dri, so a copy of the dxg node goes there, and WSL's libraries and
+# driver store are bound into the extension's wsl/ directory, where Mesa looks
+# for them. Here, in systemd's mount namespace: binds made from a wsl.exe
+# shell are not seen by the user manager that starts the apps.
+# Not fatal: only Flatpak apps lose the GPU.
+for WSL_DIR in /var/lib/flatpak/extension/org.freedesktop.Platform.GL.host/*/*/wsl; do
+    [ -d "${WSL_DIR}" ] || continue
+    if [ ! -e /dev/dri/dxg ]; then
+        mkdir -p /dev/dri
+        # shellcheck disable=SC2046 # the major and the minor number
+        mknod -m 0666 /dev/dri/dxg c $(tr : ' ' < /sys/class/misc/dxg/dev) ||
+            echo "warning: creating /dev/dri/dxg failed" >&2
+    fi
+    for DIR in lib drivers; do
+        mountpoint -q "${WSL_DIR}/${DIR}" ||
+            mount --bind -o ro "/usr/lib/wsl/${DIR}" "${WSL_DIR}/${DIR}" ||
+            echo "warning: binding /usr/lib/wsl/${DIR} into ${WSL_DIR} failed" >&2
+    done
+done
+
 # weaselwayd creates the input devices through uinput and the compositor reads
 # them as evdev. vhci_hcd is the USB/IP client usbipd-win attaches devices
 # through; usbipd runs modprobe itself, but NixOS has none on root's PATH.
