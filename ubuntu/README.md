@@ -15,9 +15,10 @@ releases. The steps below explain what to run before and after it.
 - Everything listed under [Requirements](../README.md#requirements) in the
   main README: an x86_64 Windows machine with WSL2, a GPU driver with WSL
   support, WSLg enabled and one of the supported WSL kernels.
-- About 5 GB of disk space in the distro for the packages and the Mesa build.
-- About 15 minutes on a laptop with 8 CPU threads, most of it for apt and the
-  Mesa compile.
+- About 7 GB of disk space in the distro for the packages, the Flatpak SDK and
+  the two Mesa builds.
+- About 25 minutes on a laptop with 8 CPU threads, most of it for apt and the
+  Mesa compiles.
 
 ## 1. Install Ubuntu
 
@@ -73,6 +74,11 @@ The script changes the system in these places:
 - It installs weaselwayd and the `ww-*` scripts to `/usr/local/bin`, the
   dxgdrm module to `/opt/weaselway/dxgdrm` and the viewer to
   `/opt/weaselway/viewer`.
+- It installs Flatpak, adds the Flathub remote and installs the
+  `org.freedesktop.Sdk//26.08` runtime. It builds a second Mesa in that SDK
+  and installs it to
+  `/var/lib/flatpak/extension/org.freedesktop.Platform.GL.host`, see
+  [Flatpak apps](#flatpak-apps).
 - It adds the system unit `weaselway-prep.service`, which loads the module at
   boot, and the user unit `weaselwayd.service`, which runs only for your user.
 - It adds your user to the groups `render`, `video` and `input`.
@@ -139,6 +145,23 @@ echo MESA_D3D12_DEFAULT_ADAPTER_NAME=nvidia | sudo tee /etc/environment.d/20-wea
 This takes effect after `wsl --shutdown`. `ww-start-session --adapter nvidia`
 chooses the GPU for one session only.
 
+## Flatpak apps
+
+Flatpak apps run on a runtime with its own Mesa, which has no d3d12 driver,
+and in a sandbox without `/dev/dxg` and WSL's libraries. The install script
+builds weaselway's Mesa against the `26.08` runtime and installs it as the
+local GL extension `org.freedesktop.Platform.GL.host`, which Flatpak prefers
+over the runtime's Mesa. At boot, `weaselway-prep.service` creates
+`/dev/dri/dxg`, a copy of `/dev/dxg` that apps with GPU access see, and binds
+`/usr/lib/wsl` into the extension.
+
+Only apps on the `26.08` runtime (GNOME 51 apps, for example) use it. Apps on
+older runtimes keep their runtime's Mesa, which renders on the CPU. Without
+LLVM in the SDK the extension has softpipe instead of llvmpipe as the CPU
+fallback, which is slow.
+
+Run `flatpak info --show-runtime <app>` to see an app's runtime.
+
 ## Differences from the NixOS image
 
 - mutter is Ubuntu's, without weaselway's patch. When you resize the viewer's
@@ -158,3 +181,8 @@ specific to this setup:
   should list `/opt/weaselway/mesa/lib` first.
 - `systemctl status weaselway-prep` reports when no module exists for the
   running kernel.
+- In a Flatpak app on the `26.08` runtime,
+  `flatpak run --command=eglinfo <app> -B -p x11` should report a D3D12
+  renderer, if the app ships `eglinfo`. If it reports `softpipe`, check that
+  `/dev/dri/dxg` exists and that `systemctl status weaselway-prep` shows no
+  warnings.
