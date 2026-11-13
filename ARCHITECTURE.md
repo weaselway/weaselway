@@ -460,7 +460,19 @@ steps in [ubuntu/README.md](ubuntu/README.md). GNOME and PipeWire come from Ubun
 compiles the Mesa fork at a pinned commit (`MESA_REV`) and weaselwayd, and downloads a dxgdrm
 release for the running kernel and a viewer release, all into `/opt/weaselway`. It installs the
 same units, environment files and PipeWire drop-in as the NixOS module. An apt pin keeps out the
-packages GNOME recommends that do not work in WSL, GDM and NetworkManager among them. `DXGDRM_VERSION`, `VIEWER_VERSION` and `MESA_REV` at the top of the script need updating when
+packages GNOME recommends that do not work in WSL, GDM and NetworkManager among them.
+
+With `--with-flatpak` the script builds the same Mesa a second time in each `org.freedesktop.Sdk`
+branch in `FLATPAK_BRANCHES` and installs it as the unmaintained GL extension
+`org.freedesktop.Platform.GL.host` in `/var/lib/flatpak/extension`, which Flatpak activates for
+every app and prefers over `GL.default`. A sandbox has no `/dev/dxg` and no `/usr/lib/wsl`, so
+`prep-session.sh` copies the dxg node to `/dev/dri/dxg`, which `--device=dri` exposes, and binds
+`/usr/lib/wsl/lib` and `/usr/lib/wsl/drivers` into the extension's `wsl/` directory. Mesa's
+`wsl_sandbox.c` links `/dev/dxg` to that copy inside the sandbox, loads WSL's libraries from
+`wsl/`, and rewrites the driver paths `libd3d12core.so` passes to `dlopen` through its GOT. The
+extension also carries `libedit.so.2`, which Intel's driver needs and the runtimes lack.
+
+`DXGDRM_VERSION`, `VIEWER_VERSION` and `MESA_REV` at the top of the script need updating when
 those components change.
 
 ## Building

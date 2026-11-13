@@ -66,7 +66,7 @@ jobs:
           wsl -d "${DISTRO}" --cd '~' -- bash -euxs <<EOF
           git clone --quiet "https://github.com/${GITHUB_REPOSITORY}.git" weaselway
           git -C weaselway checkout --quiet "${GITHUB_SHA}"
-          ./weaselway/ubuntu/install.sh
+          ./weaselway/ubuntu/install.sh --with-flatpak
           EOF
 
       # Not a login shell: Ubuntu's byobu profile script fails under set -u.
@@ -83,5 +83,10 @@ jobs:
           eglinfo -B -p surfaceless | grep -i 'renderer'
           # It needs a GPU behind dxgdrm and exits without one.
           systemctl --user is-enabled weaselwayd.service
+          # The Flatpak GL extensions and the binds prep-session.sh makes for them.
+          for EXT in /var/lib/flatpak/extension/org.freedesktop.Platform.GL.host/x86_64/{25.08,26.08}; do
+            ls "${EXT}"/lib/libgallium-*.so "${EXT}/vulkan/icd.d/dzn_icd.x86_64.json"
+            sudo nsenter -t 1 -m mountpoint "${EXT}/wsl/lib"
+          done
           pw-metadata -n settings 0 clock.max-quantum | grep "value:'512'"
           EOF

@@ -4,7 +4,8 @@
 # Ubuntu, the patched Mesa and weaselwayd compiled here, the dxgdrm module and
 # the Windows viewer from GitHub releases. See ubuntu/README.md.
 #
-# Run it from a checkout of this repository, as your user (it uses sudo).
+# Run it from a checkout of this repository, as your user (it uses sudo), with
+# --with-flatpak or --without-flatpak.
 # Running it again rebuilds and reinstalls, e.g. after a WSL kernel update.
 
 set -euo pipefail
@@ -13,9 +14,9 @@ set -euo pipefail
 DXGDRM_VERSION=v1.3.2
 VIEWER_VERSION=v1.2.0
 MESA_REV=8d9fc5da13127d588386c59beeaceb14285f5aed # branch flatpak-wsl
-# The runtime branch the Flatpak GL extension is built for; apps on other
+# The runtime branches the Flatpak GL extension is built for; apps on other
 # branches get the runtime's own Mesa.
-FLATPAK_BRANCH=26.08
+FLATPAK_BRANCHES=(25.08 26.08)
 
 PREFIX=/opt/weaselway
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,6 +32,14 @@ step() {
     echo
     echo "==> $*"
 }
+
+# No default: the Flatpak extension adds two Mesa builds and the Flatpak SDKs,
+# so the user decides.
+case "$*" in
+--with-flatpak) WITH_FLATPAK=1 ;;
+--without-flatpak) WITH_FLATPAK=0 ;;
+*) die "usage: $0 --with-flatpak|--without-flatpak" ;;
+esac
 
 [ "$(id -u)" != 0 ] || die "run this as your user, not as root; it uses sudo where needed"
 [ -n "${WSL_DISTRO_NAME:-}" ] || die "this is not a WSL distro"
@@ -97,7 +106,7 @@ sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     gnome-session gnome-shell gnome-terminal nautilus gnome-control-center \
     gnome-text-editor gnome-backgrounds xdg-desktop-portal-gnome pipewire-pulse wireplumber \
-    mesa-utils vulkan-tools kbd curl git unzip build-essential pkg-config flatpak \
+    mesa-utils vulkan-tools kbd curl git unzip build-essential pkg-config \
     freerdp3-dev libwinpr3-dev libssl-dev libglib2.0-dev libpng-dev \
     libwayland-dev wayland-protocols libgbm-dev libdrm-dev libegl-dev libgles-dev
 sudo DEBIAN_FRONTEND=noninteractive apt-get build-dep -y mesa
@@ -144,86 +153,97 @@ sudo ldconfig
 sudo mkdir -p /etc/vulkan/icd.d
 sudo ln -sf "${PREFIX}/mesa/share/vulkan/icd.d/dzn_icd.x86_64.json" /etc/vulkan/icd.d/
 
-step "Building the Flatpak GL extension for ${FLATPAK_BRANCH}"
-# Flatpak apps bring their own Mesa, without d3d12. This builds ours in the SDK,
-# against the runtime's libraries, and installs it as an unmaintained extension,
-# which Flatpak prefers over the runtime's GL.default. prep-session.sh gives it
-# /dev/dxg and WSL's libraries at boot.
-sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-sudo flatpak install -y --noninteractive --or-update flathub "org.freedesktop.Sdk//${FLATPAK_BRANCH}"
+if [ "${WITH_FLATPAK}" = 1 ]; then
+    step "Building the Flatpak GL extension for ${FLATPAK_BRANCHES[*]}"
+    # Flatpak apps bring their own Mesa, without d3d12. This builds ours in the
+    # SDK of each runtime branch, against its libraries, and installs it as an
+    # unmaintained extension, which Flatpak prefers over the runtime's
+    # GL.default. Apps see the one for their runtime's branch. prep-session.sh
+    # gives it /dev/dxg and WSL's libraries at boot.
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak
+    sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+    for BRANCH in "${FLATPAK_BRANCHES[@]}"; do
+        sudo flatpak install -y --noninteractive --or-update flathub "org.freedesktop.Sdk//${BRANCH}"
+    done
 
-# The Intel driver needs libedit.so.2, which the runtime lacks. The SDK has
-# libtinfo but no libncurses.so to link it by.
-rm -rf "${BUILD}/libedit"
-mkdir -p "${BUILD}/libedit/src"
-(cd "${BUILD}/libedit" && apt-get source -q --download-only libedit)
-tar -xf "${BUILD}"/libedit/libedit_*.orig.tar.* -C "${BUILD}/libedit/src" --strip-components=1
-ln -s /usr/lib/x86_64-linux-gnu/libtinfo.so.6 "${BUILD}/libedit/libncurses.so"
+    # The Intel driver needs libedit.so.2, which the runtimes lack.
+    rm -rf "${BUILD}/libedit"
+    mkdir -p "${BUILD}/libedit"
+    (cd "${BUILD}/libedit" && apt-get source -q --download-only libedit)
 
-# Like the Mesa above, but without LLVM, which the SDK only has as an
-# extension: softpipe instead of llvmpipe, and no Vulkan swrast.
-GL_PREFIX=/usr/lib/x86_64-linux-gnu/GL/host
-# shellcheck disable=SC2054 # meson takes comma-separated lists
-FLATPAK_MESON_FLAGS=(
-    --prefix="${GL_PREFIX}"
-    --libdir=lib
-    --buildtype=release
-    -Dglvnd=enabled
-    -Dplatforms=x11,wayland
-    -Dgallium-drivers=d3d12,softpipe,zink
-    -Dvulkan-drivers=microsoft-experimental
-    -Dllvm=disabled
-    -Dgallium-d3d12-graphics=enabled
-    -Dgallium-d3d12-video=enabled
-    -Dgallium-va=enabled
-    -Dvideo-codecs=all
-    -Dgallium-rusticl=false
-    -Dteflon=false
-    -Dintel-rt=disabled
-    -Dtools=
-)
-# The SDK lacks PyYAML, hence the network.
-# shellcheck disable=SC2016 # expanded by the SDK's shell
-flatpak run --share=network --filesystem="${BUILD}" --command=sh \
-    "org.freedesktop.Sdk//${FLATPAK_BRANCH}" -euc '
-    B="$1" GL_PREFIX="$2"
-    shift 2
-    [ -d "${B}/mesa-flatpak-python/yaml" ] ||
-        python3 -m pip install -q --target "${B}/mesa-flatpak-python" pyyaml
-    export PYTHONPATH="${B}/mesa-flatpak-python"
-    if [ -f "${B}/mesa-flatpak-build/build.ninja" ]; then
-        meson setup --reconfigure "${B}/mesa-flatpak-build" "${B}/mesa" "$@"
-    else
-        meson setup "${B}/mesa-flatpak-build" "${B}/mesa" "$@"
-    fi
-    meson compile -C "${B}/mesa-flatpak-build"
-    rm -rf "${B}/mesa-flatpak-dest"
-    DESTDIR="${B}/mesa-flatpak-dest" meson install -C "${B}/mesa-flatpak-build" --no-rebuild --quiet
+    # Like the Mesa above, but only the drivers for WSL and without LLVM,
+    # which the SDK only has as an extension: softpipe instead of llvmpipe.
+    GL_PREFIX=/usr/lib/x86_64-linux-gnu/GL/host
+    # shellcheck disable=SC2054 # meson takes comma-separated lists
+    FLATPAK_MESON_FLAGS=(
+        --prefix="${GL_PREFIX}"
+        --libdir=lib
+        --buildtype=release
+        -Dglvnd=enabled
+        -Dplatforms=x11,wayland
+        -Dgallium-drivers=d3d12,softpipe
+        -Dvulkan-drivers=microsoft-experimental
+        -Dllvm=disabled
+        -Dgallium-d3d12-graphics=enabled
+        -Dgallium-d3d12-video=enabled
+        -Dgallium-va=enabled
+        -Dvideo-codecs=all
+        -Dgallium-rusticl=false
+        -Dteflon=false
+        -Dintel-rt=disabled
+        -Dtools=
+    )
 
-    # ldconfig finds libraries by SONAME, and the driver asks for libedit.so.2.
-    cd "${B}/libedit/src"
-    ./configure -q --prefix="${GL_PREFIX}" --disable-static LDFLAGS="-L${B}/libedit"
-    make -s -j"$(nproc)" LT_VERSION=2:0:0
-' sh "${BUILD}" "${GL_PREFIX}" "${FLATPAK_MESON_FLAGS[@]}"
+    for BRANCH in "${FLATPAK_BRANCHES[@]}"; do
+        OUT="${BUILD}/flatpak-${BRANCH}"
+        rm -rf "${OUT}/libedit" "${OUT}/dest" "${OUT}/stage"
+        mkdir -p "${OUT}/libedit"
+        tar -xf "${BUILD}"/libedit/libedit_*.orig.tar.* -C "${OUT}/libedit" --strip-components=1
+        # The SDK has libtinfo but no libncurses.so to link it by.
+        ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 "${OUT}/libncurses.so"
 
-# The layout of a GL extension: the vendor and ICD files at the top, where
-# Flatpak merges them with the other extensions'. wsl/ gets its binds at boot.
-STAGE="${BUILD}/flatpak-gl"
-rm -rf "${STAGE}"
-mkdir -p "${STAGE}"
-mv "${BUILD}/mesa-flatpak-dest${GL_PREFIX}"/{lib,share} "${STAGE}/"
-mv "${STAGE}"/share/{glvnd,vulkan} "${STAGE}/"
-rm -rf "${STAGE}/lib/pkgconfig" "${STAGE}"/lib/*.a
-install -m755 "${BUILD}/libedit/src/src/.libs/libedit.so.2.0.0" "${STAGE}/lib/libedit.so.2"
+        # The SDK lacks PyYAML, hence the network.
+        # shellcheck disable=SC2016 # expanded by the SDK's shell
+        flatpak run --share=network --filesystem="${BUILD}" --command=sh \
+            "org.freedesktop.Sdk//${BRANCH}" -euc '
+            SRC="$1" OUT="$2" GL_PREFIX="$3"
+            shift 3
+            [ -d "${OUT}/python/yaml" ] ||
+                python3 -m pip install -q --target "${OUT}/python" pyyaml
+            export PYTHONPATH="${OUT}/python"
+            if [ -f "${OUT}/mesa-build/build.ninja" ]; then
+                meson setup --reconfigure "${OUT}/mesa-build" "${SRC}" "$@"
+            else
+                meson setup "${OUT}/mesa-build" "${SRC}" "$@"
+            fi
+            meson compile -C "${OUT}/mesa-build"
+            DESTDIR="${OUT}/dest" meson install -C "${OUT}/mesa-build" --no-rebuild --quiet
 
-# Never rm -rf the extension itself: wsl/ may hold binds of WSL's files.
-GL_EXTENSION="/var/lib/flatpak/extension/org.freedesktop.Platform.GL.host/x86_64/${FLATPAK_BRANCH}"
-sudo mkdir -p "${GL_EXTENSION}/wsl/lib" "${GL_EXTENSION}/wsl/drivers"
-sudo rm -rf "${GL_EXTENSION}"/{lib,share,glvnd,vulkan}
-sudo cp -R "${STAGE}"/{lib,share,glvnd,vulkan} "${GL_EXTENSION}/"
-# Flatpak keeps a library cache per app and never renews it for unmaintained
-# extensions (flatpak#5948).
-rm -rf "${HOME}"/.var/app/*/.ld.so
+            # ldconfig finds libraries by SONAME, and the driver asks for libedit.so.2.
+            cd "${OUT}/libedit"
+            ./configure -q --prefix="${GL_PREFIX}" --disable-static LDFLAGS="-L${OUT}"
+            make -s -j"$(nproc)" LT_VERSION=2:0:0
+        ' sh "${BUILD}/mesa" "${OUT}" "${GL_PREFIX}" "${FLATPAK_MESON_FLAGS[@]}"
+
+        # The layout of a GL extension: the vendor and ICD files at the top, where
+        # Flatpak merges them with the other extensions'. wsl/ gets its binds at boot.
+        mkdir -p "${OUT}/stage"
+        mv "${OUT}/dest${GL_PREFIX}"/{lib,share} "${OUT}/stage/"
+        mv "${OUT}"/stage/share/{glvnd,vulkan} "${OUT}/stage/"
+        rm -rf "${OUT}/stage/lib/pkgconfig" "${OUT}"/stage/lib/*.a
+        install -m755 "${OUT}/libedit/src/.libs/libedit.so.2.0.0" "${OUT}/stage/lib/libedit.so.2"
+
+        # Never rm -rf the extension itself: wsl/ may hold binds of WSL's files.
+        GL_EXTENSION="/var/lib/flatpak/extension/org.freedesktop.Platform.GL.host/x86_64/${BRANCH}"
+        sudo mkdir -p "${GL_EXTENSION}/wsl/lib" "${GL_EXTENSION}/wsl/drivers"
+        sudo rm -rf "${GL_EXTENSION}"/{lib,share,glvnd,vulkan}
+        sudo cp -R "${OUT}"/stage/{lib,share,glvnd,vulkan} "${GL_EXTENSION}/"
+    done
+
+    # Flatpak keeps a library cache per app and never renews it for unmaintained
+    # extensions (flatpak#5948).
+    rm -rf "${HOME}"/.var/app/*/.ld.so
+fi
 
 step "Building weaselwayd"
 make -C "${REPO}/weaselwayd" DXGDRM_INCLUDE="${BUILD}" weaselwayd check
