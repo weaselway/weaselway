@@ -17,22 +17,12 @@
     # own, so nixpkgs updates don't rebuild them.
     dxgdrm.url = "github:weaselway/dxgdrm";
 
-    # The Windows viewer. git, not a tarball, for the reason given at mesa-src.
+    # The Windows viewer. git, not a tarball: its .gitattributes has eol=
+    # rules, which Nix versions apply differently to GitHub tarballs, breaking
+    # the hash. The mesa fork is fetched in nix/overlay.nix.
     freerdp = {
       url = "git+https://github.com/weaselway/freerdp?ref=main&shallow=1";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    # The mesa fork. Fetched with git: its .gitattributes has eol=crlf rules,
-    # which Nix versions apply differently to GitHub tarballs, breaking the hash.
-    mesa-src = {
-      url = "git+https://github.com/weaselway/mesa?ref=mesa-26.2.7-wsl&shallow=1";
-      flake = false;
-    };
-    # Used instead once nixpkgs' Mesa is 27, whose package fails on 26.x.
-    mesa-main-src = {
-      url = "git+https://github.com/weaselway/mesa?ref=main&shallow=1";
-      flake = false;
     };
   };
 
@@ -44,8 +34,6 @@
       nixos-wsl,
       dxgdrm,
       freerdp,
-      mesa-src,
-      mesa-main-src,
     }:
     let
       inherit (nixpkgs) lib;
@@ -73,8 +61,6 @@
     {
       overlays.default = import ./nix/overlay.nix {
         inherit
-          mesa-src
-          mesa-main-src
           freerdp
           dxgdrm
           ;

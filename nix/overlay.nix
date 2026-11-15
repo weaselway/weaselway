@@ -1,7 +1,5 @@
 # weaselway's packages and patches to nixpkgs.
 {
-  mesa-src,
-  mesa-main-src,
   freerdp,
   dxgdrm,
 }:
@@ -10,8 +8,33 @@ final: prev:
 let
   inherit (prev) lib;
 
-  # nixpkgs' Mesa package only builds the Mesa major it was written for.
-  mesaSrc = if lib.versionOlder prev.mesa.version "27" then mesa-src else mesa-main-src;
+  # The mesa fork. nixpkgs' Mesa package only builds the Mesa major it was
+  # written for, so each nixpkgs Mesa gets the fork branch that matches it.
+  # To update one: set rev to the branch head and hash to "", build, and take
+  # the hash from the error. version is the branch's VERSION file; reading it
+  # from src would be import-from-derivation.
+  mesaFork =
+    if lib.versions.majorMinor prev.mesa.version == "26.3" then
+      # branch mesa-26.3.0-wsl
+      {
+        version = "26.3.0";
+        rev = "be0a2bb6d2460907c328369011c4f1d39ddc08b2";
+        hash = "sha256-lN//BxNx0fUZWhkPMfVKnguM6WxsOGcfrATeXOLpu5s=";
+      }
+    else if lib.versionOlder prev.mesa.version "27" then
+      # branch mesa-26.2.7-wsl
+      {
+        version = "26.2.7";
+        rev = "a820658c7c0f3f9ad94a544c252111ddbb089033";
+        hash = "sha256-5XM7xHckX6Bd/3tmJmhB2aQGKn6XvSSUvYSo8ugI/aE=";
+      }
+    else
+      # branch main
+      {
+        version = "27.0.0-devel";
+        rev = "95b90cff3e5a6d25151615ba9573f774270d1a13";
+        hash = "sha256-2mwa9bQn3Aa0Gd9yddB5WVHtKOEf0Bp8h1h8dtaBRd4=";
+      };
 
   mesaDrivers = {
     # d3d12 does the work, llvmpipe is the fallback without a GPU.
@@ -31,8 +54,12 @@ in
   # Not a replacement for pkgs.mesa, which would rebuild everything linking
   # libgbm. The module uses it as hardware.graphics.package.
   weaselway-mesa = (prev.mesa.override mesaDrivers).overrideAttrs (old: {
-    version = "${lib.fileContents "${mesaSrc}/VERSION"}-weaselway";
-    src = mesaSrc;
+    version = "${mesaFork.version}-weaselway";
+    src = final.fetchFromGitHub {
+      owner = "weaselway";
+      repo = "mesa";
+      inherit (mesaFork) rev hash;
+    };
 
     # Drops nixpkgs' check that the GL headers match its own mesa release.
     postPatch = ''

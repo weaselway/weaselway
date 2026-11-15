@@ -146,8 +146,9 @@ problems that show up there but are unrelated to RDP:
 - **weaselway** (this repository): the flake, the NixOS modules, the overlay, the image
   configuration, weaselwayd, the shell scripts and the Ubuntu install script.
 - **mesa**: the image builds the branch `mesa-26.2.7-wsl` with nixpkgs' Mesa package definition.
-  `main` carries the same commits on top of upstream main. The image builds it instead once
-  nixpkgs' Mesa is 27 or newer, because nixpkgs' package only builds the Mesa major it targets. The
+  `mesa-26.3.0-wsl` and `main` carry the same commits on top of the 26.3.0 tag and upstream main.
+  The image builds `mesa-26.3.0-wsl` while nixpkgs' Mesa is 26.3 (nixos-unstable now), and `main`
+  once it is 27 or newer, because nixpkgs' package only builds the Mesa major it targets. The
   commits change d3d12 and dzn (Mesa's Vulkan driver on D3D12):
   - scanout buffers on the dxgdrm KMS node, with a GEM handle (the kernel's buffer handle) and a
     linear modifier, and dma-bufs between d3d12 processes through their shared handles;
@@ -192,12 +193,12 @@ problems that show up there but are unrelated to RDP:
 - `nixos-wsl` and `freerdp`, which follow `nixpkgs`.
 - `dxgdrm`, which does not follow `nixpkgs`. It brings `wsl-kernel` along, and the Bluetooth module
   uses that.
-- `mesa-src` and `mesa-main-src` (`flake = false`).
 
-The mesa inputs and `freerdp` are fetched as `git+https://…?ref=…&shallow=1` and not as `github:` inputs.
-GitHub tarballs of repositories with `eol=` rules in `.gitattributes` produce different NAR hashes
-with different Nix versions, and CI then fails with "NAR hash mismatch". Both repositories have been
-affected.
+`freerdp` is fetched as `git+https://…?ref=…&shallow=1` and not as a `github:` input. GitHub
+tarballs of repositories with `eol=` rules in `.gitattributes` produce different NAR hashes with
+different Nix versions, and CI then fails with "NAR hash mismatch". mesa is not an input: the
+overlay fetches it with `fetchFromGitHub`, a fixed-output derivation that the Nix version does not
+affect ([0015](docs/adr/0015-forks-fetched-with-git.md)).
 
 ### Overlay
 
@@ -490,9 +491,11 @@ viewer's mingw cross toolchain. CI pushes them to weaselway.cachix.org. A machin
 substituter (`extra-substituters`; the key is in [nix/module.nix](nix/module.nix)) downloads them
 for any commit that CI has built.
 
-To build against unpushed commits of the other repositories, override the input, for example
-`--override-input mesa-src 'git+file:../mesa?ref=mesa-26.2.7-wsl'`. The same works for `freerdp` and
-`dxgdrm`.
+To build against unpushed commits of `freerdp` or `dxgdrm`, override the input, for example
+`--override-input freerdp 'git+file:../freerdp?ref=main'`. For mesa, point `src` of
+`weaselway-mesa` in [nix/overlay.nix](nix/overlay.nix) at a local checkout for the build, for
+example `builtins.fetchGit { url = "/path/to/mesa"; ref = "mesa-26.2.7-wsl"; }`, and build with
+`--impure`.
 
 ### Building on aarch64
 

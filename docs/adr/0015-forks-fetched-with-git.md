@@ -11,10 +11,18 @@ of a `github:` input failed in CI with "NAR hash mismatch" (`683046a`,
 
 ## Decision
 
-- `mesa-src`, `mesa-main-src` and `freerdp` are `git+https://…?ref=…&shallow=1` inputs.
+- `freerdp` is a `git+https://…?ref=…&shallow=1` input.
+- The mesa fork is fetched with `fetchFromGitHub` in `nix/overlay.nix`, one
+  rev and hash per branch. That is a fixed-output derivation that unpacks
+  GitHub's tarball itself, so the Nix version does not change the result.
+  The tarball differs from a checkout only in the line endings of `*.csv`
+  files, which the build does not read.
 - weaselway itself has no `.gitattributes`.
 
 ## Consequences
+
+- A mesa update is a new rev and hash in `nix/overlay.nix`, not
+  `nix flake update`.
 
 - The same tree, and the same store paths, with every Nix version.
 - The image's `/etc/nixos/flake.lock` pins `github:weaselway/weaselway` and

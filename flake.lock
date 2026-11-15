@@ -61,42 +61,6 @@
         "url": "https://github.com/weaselway/freerdp"
       }
     },
-    "mesa-main-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1794681905,
-        "narHash": "sha256-4uec7Ty0hiQhaJPdM6HiHcXfHWuAXScxcmwmLi1dF9Q=",
-        "ref": "main",
-        "rev": "95b90cff3e5a6d25151615ba9573f774270d1a13",
-        "shallow": true,
-        "type": "git",
-        "url": "https://github.com/weaselway/mesa"
-      },
-      "original": {
-        "ref": "main",
-        "shallow": true,
-        "type": "git",
-        "url": "https://github.com/weaselway/mesa"
-      }
-    },
-    "mesa-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1794681905,
-        "narHash": "sha256-B4jk+otzUhseay4pAZBGYhcSTEIDtmYbSzkHc0ybImY=",
-        "ref": "mesa-26.2.7-wsl",
-        "rev": "a820658c7c0f3f9ad94a544c252111ddbb089033",
-        "shallow": true,
-        "type": "git",
-        "url": "https://github.com/weaselway/mesa"
-      },
-      "original": {
-        "ref": "mesa-26.2.7-wsl",
-        "shallow": true,
-        "type": "git",
-        "url": "https://github.com/weaselway/mesa"
-      }
-    },
     "nixos-wsl": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -170,8 +134,6 @@
       "inputs": {
         "dxgdrm": "dxgdrm",
         "freerdp": "freerdp",
-        "mesa-main-src": "mesa-main-src",
-        "mesa-src": "mesa-src",
         "nixos-wsl": "nixos-wsl",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable"
