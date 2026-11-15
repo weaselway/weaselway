@@ -25,15 +25,15 @@ let
       # branch mesa-26.2.7-wsl
       {
         version = "26.2.7";
-        rev = "a820658c7c0f3f9ad94a544c252111ddbb089033";
-        hash = "sha256-5XM7xHckX6Bd/3tmJmhB2aQGKn6XvSSUvYSo8ugI/aE=";
+        rev = "91e9407c8f2b471db7e4d3b343629910fa78a4ab";
+        hash = "sha256-taf0WlG2KDHuEFny7cN+88VNHZFumHZOsQcMAjOY+TY=";
       }
     else
       # branch main
       {
         version = "27.0.0-devel";
-        rev = "95b90cff3e5a6d25151615ba9573f774270d1a13";
-        hash = "sha256-2mwa9bQn3Aa0Gd9yddB5WVHtKOEf0Bp8h1h8dtaBRd4=";
+        rev = "a5ff5bff50a971e7cbc58478bca7e073a464843f";
+        hash = "sha256-qMi+vneRtQoa4HTGaqmoxD9PYTOGKYOPnVtcg7pjnG0=";
       };
 
   mesaDrivers = {
