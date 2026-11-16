@@ -1,0 +1,137 @@
+# Runs distro/install.py in fresh Ubuntu 26.04 and Arch Linux WSL distros, with
+# each desktop, restarts WSL and checks what the script set up. The runner has
+# no GPU, so this covers the install and the boot-time preparation, not a
+# session on the viewer.
+name: Distro install script
+
+on:
+  push:
+    branches: [main]
+    # What install.py installs; README-only pushes would just recompile Mesa.
+    paths:
+      - distro/**
+      - nix/*.patch
+      - weaselwayd/**
+      - bin/**
+      - libexec/**
+      - environment.d/**
+      - pipewire/**
+      - .github/workflows/distro-install.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distro-install-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # wsl.exe writes UTF-16 otherwise.
+  WSL_UTF8: 1
+  # Git Bash would rewrite the Linux paths passed to wsl.exe.
+  MSYS_NO_PATHCONV: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Type check and doctests
+        run: |
+          pipx run mypy --strict distro/install.py
+          python3 -m doctest distro/install.py
+
+  install:
+    # Windows Server 2025 runners have nested virtualization, so WSL2 works.
+    runs-on: windows-2025
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # patched: a package install.py rebuilds for the desktop.
+        include:
+          - { distro: Ubuntu-26.04, desktop: gnome, flatpak: --flatpak, patched: mutter-common }
+          - { distro: Ubuntu-26.04, desktop: kde, flatpak: --no-flatpak, patched: kwin-wayland }
+          - { distro: Ubuntu-26.04, desktop: hyprland, flatpak: --no-flatpak, patched: hyprland }
+          - { distro: archlinux, desktop: gnome, flatpak: --no-flatpak, patched: mutter }
+          - { distro: archlinux, desktop: kde, flatpak: --flatpak, patched: kwin }
+          - { distro: archlinux, desktop: hyprland, flatpak: --no-flatpak, patched: hyprland }
+    env:
+      DISTRO: ${{ matrix.distro }}
+    steps:
+      # dxgdrm has modules only for recent WSL kernels, and the runner image's
+      # WSL can be older.
+      - name: Update WSL
+        run: |
+          wsl --update --web-download
+          wsl --version
+
+      - name: Install the distro
+        run: |
+          wsl --install "${DISTRO}" --no-launch --web-download
+          # The first start would ask for a user; the script needs one with
+          # sudo that does not ask for a password. The Arch image has no
+          # package keys, sudo, git or Python yet.
+          wsl -d "${DISTRO}" -u root -- bash -euxs <<'EOF'
+          if command -v pacman; then
+            pacman-key --init
+            pacman-key --populate archlinux
+            pacman -Syu --noconfirm --needed sudo git python
+            useradd -m -s /bin/bash -G wheel ci
+          else
+            useradd -m -s /bin/bash -G sudo ci
+          fi
+          echo 'ci ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ci
+          printf '\n[user]\ndefault=ci\n' >> /etc/wsl.conf
+          EOF
+          wsl --terminate "${DISTRO}"
+
+      # Cloned inside the distro: a Windows checkout would have CRLF scripts.
+      - name: Run install.py
+        run: |
+          wsl -d "${DISTRO}" --cd '~' -- bash -euxs <<EOF
+          git clone --quiet "https://github.com/${GITHUB_REPOSITORY}.git" weaselway
+          git -C weaselway checkout --quiet "${GITHUB_SHA}"
+          ./weaselway/distro/install.py --desktop ${{ matrix.desktop }} ${{ matrix.flatpak }} --no-bluetooth --quick-build
+          EOF
+
+      # Not a login shell: Ubuntu's byobu profile script fails under set -u.
+      - name: Check after a WSL restart
+        run: |
+          wsl --shutdown
+          wsl -d "${DISTRO}" -- bash -euxs <<'EOF'
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          systemctl is-system-running --wait || systemctl --failed
+          systemctl status --no-pager weaselway-prep.service
+          grep '^dxgdrm ' /proc/modules
+          ldconfig -p | grep -m1 'libEGL_mesa.so.0 ' | grep /opt/weaselway/mesa/lib
+          # llvmpipe here, but from the Mesa install.py built.
+          eglinfo -B -p surfaceless | grep -i 'renderer'
+          # It needs a GPU behind dxgdrm and exits without one.
+          systemctl --user is-enabled weaselwayd.service
+          pw-metadata -n settings 0 clock.max-quantum | grep "value:'512'"
+          EOF
+          wsl -d "${DISTRO}" -- bash -euxs <<'EOF'
+          # The compositor package carries weaselway's patches.
+          if command -v pacman; then
+            pacman -Q "${{ matrix.patched }}" | grep -E '\.1$'
+          else
+            dpkg-query -W -f '${Version}\n' "${{ matrix.patched }}" | grep '+weaselway1$'
+          fi
+          EOF
+
+      - name: Check the Flatpak GL extensions
+        if: matrix.flatpak == '--flatpak'
+        run: |
+          wsl -d "${DISTRO}" -- bash -euxs <<'EOF'
+          # The extensions and the binds prep-session.sh makes for them.
+          for EXT in /var/lib/flatpak/extension/org.freedesktop.Platform.GL.host/x86_64/{25.08,26.08}; do
+            ls "${EXT}"/lib/libgallium-*.so "${EXT}/vulkan/icd.d/dzn_icd.x86_64.json"
+            sudo nsenter -t 1 -m mountpoint "${EXT}/wsl/lib"
+          done
+          EOF
