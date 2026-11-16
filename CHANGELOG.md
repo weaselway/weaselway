@@ -3,9 +3,19 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
-## Unreleased
+## v1.8.0 - 2026-11-16
 
-- Mesa 26.2.7.
+- Mesa 26.2.7. Images on nixos-unstable, where Mesa is 26.3.0, get the same
+  fixes on Mesa 26.3.0.
+- dzn reports Vulkan 1.3 on GPUs with Shader Model 6.6. It gains demote,
+  terminate_invocation, zero_initialize_workgroup_memory, image_robustness,
+  pipeline_creation_feedback, maintenance4, extended_dynamic_state 1 and 2,
+  inline_uniform_block and vulkan_memory_model.
+- d3d12 GL fixes from a GL CTS run: tessellation and geometry shader
+  primitive counts, binding slots and ranges, stencil copies of array
+  layers, clip and cull distances.
+- dzn imports fds and orders timeline syncobjs correctly on dxgdrm.
+- VA-API: all VADisplays of a process share one lock.
 - `distro/install.py` replaces `ubuntu/install.sh` and installs weaselway on
   Ubuntu, Arch Linux and CachyOS (Arch support by Jexelus, #10). It asks for
   the desktop (`--desktop gnome|kde|hyprland`), for Flatpak support
