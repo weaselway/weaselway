@@ -13,7 +13,7 @@ set -euo pipefail
 # The versions the NixOS image ships (flake.lock, nix/overlay.nix).
 DXGDRM_VERSION=v1.3.2
 VIEWER_VERSION=v1.2.0
-MESA_REV=118d7c93713f7d1fa44b2138a8a1235128baa4a3 # branch mesa-26.2.7-wsl
+MESA_REV=1d6206c64f09fd1a1a25035b477e2d22f3b1058f # branch mesa-26.2.7-wsl
 # The runtime branches the Flatpak GL extension is built for; apps on other
 # branches get the runtime's own Mesa.
 FLATPAK_BRANCHES=(25.08 26.08)
