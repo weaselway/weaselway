@@ -134,12 +134,16 @@ in
 
   # Hyprland's backend ignores new modes of a connector that stays connected,
   # so Hyprland does not follow the viewer's window size. Backport of main of
-  # github.com/weaselway/aquamarine.
+  # github.com/weaselway/aquamarine, picked by aquamarine's version.
   aquamarine = prev.aquamarine.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [
       (builtins.path {
         name = "aquamarine-mode-changes.patch";
-        path = ./aquamarine-0.11-mode-changes.patch;
+        path =
+          if lib.versionOlder old.version "0.11" then
+            ./aquamarine-0.10-mode-changes.patch
+          else
+            ./aquamarine-0.11-mode-changes.patch;
       })
     ];
   });
