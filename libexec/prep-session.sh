@@ -26,7 +26,7 @@ if ! grep -q '^dxgdrm ' /proc/modules; then
     fi
 fi
 
-# The Flatpak GL extension ubuntu/install.sh builds runs Mesa in sandboxes that
+# The Flatpak GL extension distro/install.py builds runs Mesa in sandboxes that
 # have neither /dev/dxg nor /usr/lib/wsl. The dri device permission brings
 # /dev/dri, so a copy of the dxg node goes there, and WSL's libraries and
 # driver store are bound into the extension's wsl/ directory, where Mesa looks

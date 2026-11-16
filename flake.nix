@@ -139,6 +139,10 @@
           ${pkgs.python3}/bin/python3 -m doctest ${./libexec/usbipd-auto-attach.py}
           touch $out
         '';
+        distro-install = pkgs.runCommand "weaselway-distro-install" { } ''
+          ${pkgs.python3}/bin/python3 -m doctest ${self}/distro/install.py
+          touch $out
+        '';
       });
     };
 }
