@@ -1,0 +1,38 @@
+diff --git a/channels/drdynvc/server/drdynvc_main.c b/channels/drdynvc/server/drdynvc_main.c
+index baa67b0337..3ff1580a92 100644
+--- a/channels/drdynvc/server/drdynvc_main.c
++++ b/channels/drdynvc/server/drdynvc_main.c
+@@ -31,6 +31,15 @@
+ 
+ #define TAG CHANNELS_TAG("drdynvc.server")
+ 
++static DWORD WINAPI drdynvc_server_thread(WINPR_ATTR_UNUSED LPVOID arg)
++{
++	/* The application pumps the dynamic channels through the channel
++	 * manager; the server side only has to open the channel and hand Stop()
++	 * a thread handle to wait on. */
++	ExitThread(0);
++	return 0;
++}
++
+ /**
+  * Function description
+  *
+@@ -53,7 +62,16 @@ static UINT drdynvc_server_start(DrdynvcServerContext* context)
+ 		return ERROR_INTERNAL_ERROR;
+ 	}
+ 
+-	return ERROR_INTERNAL_ERROR;
++	if (!(context->priv->Thread =
++	          CreateThread(nullptr, 0, drdynvc_server_thread, (void*)context, 0, nullptr)))
++	{
++		WLog_ERR(TAG, "CreateThread failed!");
++		(void)CloseHandle(context->priv->StopEvent);
++		context->priv->StopEvent = nullptr;
++		return ERROR_INTERNAL_ERROR;
++	}
++
++	return CHANNEL_RC_OK;
+ }
+ 
+ /**
