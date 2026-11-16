@@ -156,8 +156,10 @@ in
       (builtins.path {
         name = "hyprland-modeset-buffer-size.patch";
         path =
-          if lib.versionOlder old.version "0.57" then
+          if lib.versionOlder old.version "0.56" then
             ./hyprland-0.55-modeset-buffer-size.patch
+          else if lib.versionOlder old.version "0.57" then
+            ./hyprland-0.56-modeset-buffer-size.patch
           else
             ./hyprland-0.57-modeset-buffer-size.patch;
       })
