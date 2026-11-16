@@ -372,7 +372,7 @@ class Ubuntu(Distro):
     # Ubuntu's freerdp3 is built without FFmpeg, and its PCM is right.
     freerdp_uses_ffmpeg = False
     base_packages = (
-        "pipewire-pulse", "wireplumber", "mesa-utils", "vulkan-tools", "kbd", "curl", "git", "unzip",
+        "pipewire-pulse", "wireplumber", "upower", "mesa-utils", "vulkan-tools", "kbd", "curl", "git", "unzip",
         "build-essential", "pkg-config", "freerdp3-dev", "libwinpr3-dev", "libssl-dev", "libglib2.0-dev",
         "libpng-dev", "libwayland-dev", "wayland-protocols", "libgbm-dev", "libdrm-dev", "libegl-dev",
         "libgles-dev",
@@ -479,7 +479,7 @@ class Arch(Distro):
     # freerdp is not listed: the patched package is built from Arch's PKGBUILD,
     # and asking for the repository's would replace it.
     base_packages = (
-        "pipewire", "pipewire-pulse", "wireplumber", "glib2", "openssl", "libpng", "libdrm", "libglvnd", "mesa",
+        "pipewire", "pipewire-pulse", "wireplumber", "upower", "glib2", "openssl", "libpng", "libdrm", "libglvnd", "mesa",
         "wayland", "wayland-protocols", "vulkan-icd-loader", "mesa-utils", "vulkan-tools", "libva", "kbd", "kmod",
         "base-devel", "git", "curl", "unzip",
         # Mesa's build dependencies, from Arch's mesa PKGBUILD without what
@@ -840,6 +840,17 @@ def install_configuration(options: Options) -> None:
     )
     # Lets weaselwayd lower its nice value to -11.
     write_root("/etc/systemd/system/user@.service.d/weaselway.conf", "[Service]\nLimitNICE=-11\n")
+    # Windows suspends the machine, not the distro, and acts on a critical
+    # battery, which UPower reads from Hyper-V's virtual battery.
+    write_root(
+        "/etc/systemd/sleep.conf.d/weaselway.conf",
+        f"# {MARKER}.\n[Sleep]\nAllowSuspend=no\nAllowHibernation=no\nAllowHybridSleep=no\n"
+        "AllowSuspendThenHibernate=no\n",
+    )
+    write_root(
+        "/etc/UPower/UPower.conf.d/weaselway.conf",
+        f"# {MARKER}.\n[UPower]\nCriticalPowerAction=Ignore\nAllowRiskyCriticalPowerAction=true\n",
+    )
     # Only for this user: a copy in another user's session, e.g. root's after
     # wsl -u root, can't get the vsock port and restarts forever.
     write_root(

@@ -3,6 +3,14 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
+## Unreleased
+
+- The laptop's battery shows in GNOME's quick settings and Plasma's battery
+  applet. Hyper-V already passed it into WSL; the image now runs UPower to
+  read it. UPower takes no action on a critical battery, Windows does.
+- The desktop no longer offers to suspend, or suspends when idle. Windows
+  suspends the machine.
+
 ## v1.8.0 - 2026-11-16
 
 - Mesa 26.2.7. Images on nixos-unstable, where Mesa is 26.3.0, get the same

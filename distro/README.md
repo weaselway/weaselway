@@ -132,6 +132,11 @@ The script changes the system in these places:
 - It masks WSL's `wslg-session.service` for all users. That unit replaces
   PipeWire's PulseAudio socket with a link to WSLg's PulseAudio, and the
   desktop would then show no audio devices.
+- It installs UPower, which shows the laptop's battery that Hyper-V passes
+  into WSL. `/etc/UPower/UPower.conf.d/weaselway.conf` stops UPower from
+  shutting the distro down when the battery is critical, and
+  `/etc/systemd/sleep.conf.d/weaselway.conf` stops the desktop from
+  suspending it when idle. Windows handles both for the whole machine.
 - It masks `tpm-udev.path` where it exists. WSL has no TPM (the security
   chip), and the unit fails at every boot.
 

@@ -214,6 +214,8 @@ The viewer forwards touchpad gestures with three or more fingers, audio
 playback and the microphone. The session sees a touchpad of its own, so the
 desktop's swipe and pinch gestures work.
 
+On a laptop, the desktop shows the battery's charge as Windows reports it.
+
 <!-- VIDEO (short GIF, 5 s): a three-finger swipe opening the GNOME overview in
      the viewer. Touchpad gestures are unusual for a remote desktop and hard to
      explain in words. A screen recording of the trackpad is not needed, the

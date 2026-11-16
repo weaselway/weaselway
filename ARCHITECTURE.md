@@ -418,6 +418,15 @@ on a WSL installation. This section records those failures. The module's options
   Without an argument systemd-binfmt first flushes all rules through that file and exits with the
   error, although the registration succeeds. The unit was then failed at every boot, and
   `nixos-rebuild switch` exited with status 4.
+- Hyper-V passes the host's battery into the VM over ACPI: `/sys/class/power_supply/BAT1`
+  ("Microsoft Hyper-V Virtual Battery") and `AC1`, with the host's charge and state. The desktops
+  show it through UPower, which the module enables. NixOS's GNOME and Plasma modules only enable
+  UPower with `powerManagement.enable`, and NixOS-WSL turns that off. UPower's critical action is
+  `Ignore`; its default, `HybridSleep` with `PowerOff` as fallback, would stop the distro while
+  Windows handles the critical battery itself.
+- Sleep is disabled in `systemd-sleep.conf` (`AllowSuspend=no` and the other `Allow*`). logind
+  then reports suspend as unavailable, and GNOME and Plasma neither offer it nor suspend the idle
+  session. Windows suspends the machine, and the distro with it.
 - The GNOME image disables NetworkManager and wpa_supplicant in its `configuration.nix`, not the
   module. GNOME enables them, wpa_supplicant fails to start in WSL, and that failure makes every
   `nixos-rebuild switch` fail. WSL manages the network itself.
