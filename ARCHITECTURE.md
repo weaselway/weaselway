@@ -340,6 +340,10 @@ on a WSL installation. This section records those failures. The module's options
   - mounts the `wslg` share. If the share is missing, the unit fails with a message that points to
     `guiApplications`.
 - The NixOS-WSL bind mount for X0 (`tmp-.X11\x2dunix-X0.mount`) is masked for the same reason.
+- WSL's generated `wslg.service` is masked as well. It bind-mounts `/mnt/wslg/.X11-unix` over
+  `/tmp/.X11-unix` unless `X0` exists there. `nixos-rebuild switch` starts it again, and after a
+  switch without a running session the next compositor could not create its X socket. The mount
+  WSL makes at boot is still removed by `prep-session.sh`.
 
 ### USB devices and Bluetooth
 

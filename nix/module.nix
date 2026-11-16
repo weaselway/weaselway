@@ -181,6 +181,12 @@ in
         # NixOS-WSL mounts WSLg's X0 socket where the compositor puts its own.
         systemd.units."tmp-.X11\\x2dunix-X0.mount".enable = lib.mkForce false;
 
+        # WSL's generated unit bind-mounts WSLg's read-only .X11-unix again
+        # whenever X0 is missing. switch-to-configuration starts it, and without
+        # a running session the next compositor gets no X socket. weaselway-prep
+        # removes the mount that WSL makes at boot.
+        systemd.units."wslg.service".enable = false;
+
         # logind only allows device classes that exist when it starts
         # (DeviceAllow=char-drm). Where DRM core is a module, it is in the dxgdrm
         # package, so load it from there before logind. Quiet if DRM is built in.

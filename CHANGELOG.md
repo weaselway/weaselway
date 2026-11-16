@@ -10,6 +10,9 @@ release they led to. Weekly nixpkgs updates are not listed.
   read it. UPower takes no action on a critical battery, Windows does.
 - The desktop no longer offers to suspend, or suspends when idle. Windows
   suspends the machine.
+- X11 applications work in a session started after `nixos-rebuild switch`.
+  The switch mounted WSLg's read-only `/tmp/.X11-unix` again when no session
+  was running.
 
 ## v1.8.0 - 2026-11-16
 
