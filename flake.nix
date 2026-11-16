@@ -99,6 +99,12 @@
         kwin = wsl.pkgs.kdePackages.kwin;
         plasma-workspace = wsl.pkgs.kdePackages.plasma-workspace;
         plasma-desktop = wsl.pkgs.kdePackages.plasma-desktop;
+        # wsl-bluetooth-<release>.tar.gz for distro/install.py, attached to releases.
+        wsl-bluetooth-tarballs =
+          (import ./nix/bluetooth-modules.nix {
+            inherit (dxgdrm.inputs) wsl-kernel;
+            inherit (wsl) pkgs;
+          }).tarballs;
         # sudo nix run .#tarballBuilder-gnome -> nixos.wsl
         tarballBuilder-gnome = self.nixosConfigurations.wsl-gnome.config.system.build.tarballBuilder;
         tarballBuilder-plasma = self.nixosConfigurations.wsl-plasma.config.system.build.tarballBuilder;

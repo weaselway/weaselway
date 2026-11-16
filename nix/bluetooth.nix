@@ -1,7 +1,8 @@
 # Bluetooth modules for the WSL kernel, rebuilt with CONFIG_RFKILL=m. The
 # stock kernel has no rfkill, so gsd-rfkill reports no Bluetooth and GNOME
 # hides the adapter even though bluez works. Built with wsl-kernel's
-# mkModules, in the prepared trees, with vmlinux untouched.
+# mkModules, in the prepared trees, with vmlinux untouched; see
+# bluetooth-modules.nix.
 { wsl-kernel }:
 
 {
@@ -14,51 +15,9 @@
 let
   cfg = config.weaselway.bluetooth;
 
-  # Of the common USB sticks only Realtek (RTL8761BUV/CU) needs firmware;
-  # Barrot, ATS2851 and CSR clones run without. All of rtl_bt is ~1.5 MiB,
-  # linux-firmware as a whole 1.9 GiB.
-  realtekFirmware = pkgs.runCommand "wsl-bluetooth-firmware" { } ''
-    mkdir -p $out/lib/firmware
-    cp -a ${pkgs.linux-firmware}/lib/firmware/rtl_bt $out/lib/firmware/
-  '';
-
-  # What gets shipped and loaded instead of the stock modules.
-  shipped = [
-    "net/rfkill/rfkill.ko"
-    "net/bluetooth/bluetooth.ko"
-    "net/bluetooth/rfcomm/rfcomm.ko"
-    "net/bluetooth/bnep/bnep.ko"
-    "net/bluetooth/hidp/hidp.ko"
-    "drivers/bluetooth/btusb.ko"
-    "drivers/bluetooth/btintel.ko"
-    "drivers/bluetooth/btbcm.ko"
-    "drivers/bluetooth/btrtl.ko"
-    "drivers/bluetooth/bcm203x.ko"
-  ];
-
-  # Stock modules the above import from. Built only so modpost knows their
-  # symbol CRCs; the running kernel loads its own copies.
-  symversOnly = [
-    "crypto/ecc.ko"
-    "crypto/ecdh_generic.ko"
-    "drivers/usb/common/usb-common.ko"
-    "drivers/usb/core/usbcore.ko"
-    "drivers/hid/hid.ko"
-  ];
-
-  # lib/modules/<release>/ for every release, modprobe -d picks `uname -r`.
-  modules =
-    wsl-kernel.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkModulesAll
-      "wsl-bluetooth-modules-all"
-      (release: {
-        pname = "wsl-bluetooth-modules";
-        inherit release;
-        # DELL_RBTN defaults to m with RFKILL; it is its own module and not wanted.
-        config = "-m RFKILL -d DELL_RBTN";
-        allowed = "RFKILL(_[A-Z0-9_]+)?";
-        targets = shipped ++ symversOnly;
-        install = shipped;
-      });
+  bluetooth = import ./bluetooth-modules.nix { inherit wsl-kernel pkgs; };
+  inherit (bluetooth) modules;
+  realtekFirmware = bluetooth.firmware;
 
   # udev passes FIRMWARE (the file name) and DEVPATH (the sysfs request).
   loadFirmware = pkgs.writeShellScript "wsl-load-firmware" ''

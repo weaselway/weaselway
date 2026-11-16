@@ -35,10 +35,34 @@ jobs:
           # nixos.wsl is already a gzipped tar.
           compression-level: 0
 
+  # The Bluetooth modules distro/install.py downloads, one tarball per kernel.
+  bluetooth:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build the tarballs
+        run: |
+          nix build --print-build-logs --out-link bluetooth .#wsl-bluetooth-tarballs
+          cp bluetooth/*.tar.gz .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-bluetooth
+          path: wsl-bluetooth-*.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
   # One job creates the release with both images, so that it is never
   # published with only one of them.
   release:
-    needs: build
+    needs: [build, bluetooth]
     runs-on: ubuntu-26.04
     # Needed to create the release and upload the assets to it.
     permissions:
@@ -59,6 +83,7 @@ jobs:
             sha256sum "${image}" > "${image}.sha256"
             assets+=("${image}" "${image}.sha256")
           done
+          assets+=(wsl-bluetooth-*.tar.gz)
           # Releases and their assets are immutable: if a release already
           # exists for this tag, `gh release create` fails and the workflow
           # fails with it rather than replacing a published artifact.
