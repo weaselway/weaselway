@@ -28,6 +28,6 @@ for a long kernel path of another task to finish.
   only weaselwayd.
 - Full preemption applies to the whole VM, and to every distro running in
   it, not only to the session.
-- Both the NixOS module and the Ubuntu install set them up.
+- Both the NixOS module and distro/install.py set them up.
 - Running the Nix daemon at idle CPU and I/O priority was tried and
   reverted (`3d11d75`, `ab035f1`). The reason was not recorded.

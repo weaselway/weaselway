@@ -83,8 +83,8 @@ ww-start-viewer
 The release images are the quickest way in. To add weaselway to a NixOS-WSL
 system you already have, see
 [Into an existing NixOS-WSL system](#into-an-existing-nixos-wsl-system).
-[ubuntu/README.md](ubuntu/README.md) installs it into an Ubuntu 26.04 distro
-instead.
+[distro/README.md](distro/README.md) installs it into an Ubuntu, Arch Linux or
+CachyOS distro instead.
 
 ### From the image
 
@@ -553,8 +553,8 @@ details.
 - [docs/adr](docs/adr) holds the architecture decision records, one file per
   design decision with its reasons.
 - [CHANGELOG.md](CHANGELOG.md) lists the changes in each release.
-- [ubuntu/README.md](ubuntu/README.md) installs weaselway on Ubuntu instead of
-  NixOS.
+- [distro/README.md](distro/README.md) installs weaselway on Ubuntu, Arch Linux
+  or CachyOS instead of NixOS.
 
 ## A note on AI
 

@@ -91,8 +91,8 @@ The NixOS image takes everything from the flake.
 | aquamarine, Hyprland (optional) | nixpkgs, plus one patch each | user distro |
 | Windows viewer `sdl-freerdp.exe` | `weaselway/freerdp` flake, `packages.sdl-freerdp` | Windows, started from the store through interop |
 
-[ubuntu/install.sh](ubuntu/install.sh) sets up the same session on Ubuntu 26.04, see
-[Ubuntu](#ubuntu).
+[distro/install.py](distro/install.py) sets up the same session on Ubuntu, Arch Linux and CachyOS,
+see [Other distros](#other-distros).
 
 ### The shared-memory share
 
@@ -144,7 +144,7 @@ problems that show up there but are unrelated to RDP:
 ## Repositories
 
 - **weaselway** (this repository): the flake, the NixOS modules, the overlay, the image
-  configuration, weaselwayd, the shell scripts and the Ubuntu install script.
+  configuration, weaselwayd, the shell scripts and the install script for other distros.
 - **mesa**: the image builds the branch `mesa-26.2.7-wsl` with nixpkgs' Mesa package definition.
   `mesa-26.3.0-wsl` and `main` carry the same commits on top of the 26.3.0 tag and upstream main.
   The image builds `mesa-26.3.0-wsl` while nixpkgs' Mesa is 26.3 (nixos-unstable now), and `main`
@@ -454,16 +454,32 @@ on a WSL installation. This section records those failures. The module's options
   debug over SSH, and change the password with `passwd` first. With mirrored WSL networking the
   distro is reachable from the LAN.
 
-## Ubuntu
+## Other distros
 
-[ubuntu/install.sh](ubuntu/install.sh) installs the session into an Ubuntu 26.04 distro, with the
-steps in [ubuntu/README.md](ubuntu/README.md). GNOME and PipeWire come from Ubuntu. The script
-compiles the Mesa fork at a pinned commit (`MESA_REV`) and weaselwayd, and downloads a dxgdrm
-release for the running kernel and a viewer release, all into `/opt/weaselway`. It installs the
-same units, environment files and PipeWire drop-in as the NixOS module. An apt pin keeps out the
-packages GNOME recommends that do not work in WSL, GDM and NetworkManager among them.
+[distro/install.py](distro/install.py) installs the session into an Ubuntu, Arch Linux or CachyOS
+distro, with the steps in [distro/README.md](distro/README.md). It is one Python file without
+dependencies beyond the standard library, typed and checked with `mypy --strict`. A `Distro`
+class per package manager (`Ubuntu`, `Arch`) installs packages and rebuilds a package with
+patches; everything else is shared. GNOME, Plasma or Hyprland and PipeWire come from the distro.
+The script compiles the Mesa fork at a pinned commit (`MESA_REV`) and weaselwayd, and downloads a
+dxgdrm release for the running kernel and a viewer release, all into `/opt/weaselway`. It installs
+the same units, environment files and PipeWire drop-in as the NixOS module. On Ubuntu an apt pin
+keeps out the packages the desktops recommend that do not work in WSL, GDM, SDDM and
+NetworkManager among them.
 
-With `--with-flatpak` the script builds the same Mesa a second time in each `org.freedesktop.Sdk`
+The compositor packages get the same patches from `nix/` as the overlay, picked by the upstream
+version through `BACKPORTS` in the script. On Ubuntu the script builds the source package from
+`apt-get source` with a `+weaselway1` version; on Arch it builds Arch's PKGBUILD at the
+repository's version, patches the tree after Arch's own `prepare()` (`makepkg --nobuild`, then
+`--noextract`) and appends `.1` to `pkgrel`. A stamp file per package in the build directory
+records the version and the patches, so a rerun only rebuilds when either changed. Arch's FreeRDP
+links FFmpeg and gets `freerdp-dsp-ffmpeg-pcm-s16.patch` the same way; Ubuntu's does not link it.
+
+With `--bluetooth` the script installs the Bluetooth modules from `nix/bluetooth-modules.nix`,
+which `release-image.yml` attaches to every release as `wsl-bluetooth-<kernel>.tar.gz`, and loads
+them with `weaselway-bluetooth.service` like the NixOS module does.
+
+With `--flatpak` the script builds the same Mesa a second time in each `org.freedesktop.Sdk`
 branch in `FLATPAK_BRANCHES` and installs it as the unmaintained GL extension
 `org.freedesktop.Platform.GL.host` in `/var/lib/flatpak/extension`, which Flatpak activates for
 every app and prefers over `GL.default`. A sandbox has no `/dev/dxg` and no `/usr/lib/wsl`, so
@@ -561,8 +577,9 @@ yet, but it exists.
   Fridays and `nix flake update nixpkgs-unstable` on Saturdays, calls build-image.yml with the
   new lock, and commits the lock to `main` only if that build passes. The push uses
   `GITHUB_TOKEN`, so it starts no further build.
-- [ubuntu-install.yml](.github/workflows/ubuntu-install.yml) runs `ubuntu/install.sh` in a fresh
-  Ubuntu 26.04 distro on a `windows-2025` runner, restarts WSL and checks what the script set up.
+- [distro-install.yml](.github/workflows/distro-install.yml) runs `distro/install.py` with
+  `--quick-build` (no optimization) in fresh Ubuntu 26.04 and Arch Linux distros, once per
+  desktop, on `windows-2025` runners, restarts WSL and checks what the script set up.
   It runs on pushes to `main` that change what the script installs. The runner has no GPU, so it
   tests the install and the preparation at boot, not a session on the viewer.
 - The release workflow builds the two images in separate jobs and creates the release in a third,

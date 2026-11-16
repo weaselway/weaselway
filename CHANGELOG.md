@@ -6,14 +6,22 @@ release they led to. Weekly nixpkgs updates are not listed.
 ## Unreleased
 
 - Mesa 26.2.7.
-- Ubuntu: `install.sh` needs `--with-flatpak` or `--without-flatpak`. With
-  `--with-flatpak` it builds weaselway's Mesa as a local Flatpak GL
-  extension for the `25.08` and `26.08` runtimes, so Flatpak apps such as
-  Flathub's Chromium and Firefox render on the GPU. The script no longer
-  adds the xtradeb PPA or Mozilla's repository. Existing installs keep them
+- `distro/install.py` replaces `ubuntu/install.sh` and installs weaselway on
+  Ubuntu, Arch Linux and CachyOS (Arch support by Jexelus, #10). It asks for
+  the desktop (`--desktop gnome|kde|hyprland`), for Flatpak support
+  (`--flatpak`) and for Bluetooth (`--bluetooth`), or takes them as options.
+  It rebuilds the distro's mutter, KWin or aquamarine and Hyprland with the
+  same patches as the NixOS image, and on Arch FreeRDP with the PCM fix. See
+  `distro/README.md`.
+- With `--flatpak` the installer builds weaselway's Mesa as a local Flatpak
+  GL extension for the `25.08` and `26.08` runtimes, so Flatpak apps such as
+  Flathub's Chromium and Firefox render on the GPU. It no longer adds the
+  xtradeb PPA or Mozilla's repository on Ubuntu. Existing installs keep them
   until you remove `/etc/apt/sources.list.d/mozilla.sources`,
   `/etc/apt/preferences.d/{xtradeb,mozilla}` and run
   `sudo add-apt-repository -r ppa:xtradeb/apps`.
+- Releases carry the Bluetooth modules with rfkill as
+  `wsl-bluetooth-<kernel>.tar.gz`, for `distro/install.py --bluetooth`.
 - GNOME no longer hangs when WSL's vgem device is announced again, for
   example when another distro starts in the same WSL VM. mutter closed its
   own display connection and spun at 100% CPU with a black viewer.
