@@ -411,6 +411,10 @@ The viewer lets Windows turn the monitor off and start the screen saver
 (`/sdl-allow-screensaver`). Without that option, SDL keeps the monitor on
 while the viewer runs, even when Windows is locked.
 
+`ww-start-viewer /sdl-windows:2` shows the desktop as two monitors, each in a
+window of its own, which can be resized and moved to different Windows
+monitors. Up to four work.
+
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
 ```sh
@@ -541,6 +545,9 @@ The value after `/sdl-show-stats` is the text scale and is optional.
   started over SSH, from Remote Desktop or by a scheduled task,
   `ww-start-viewer` says so. Then run `wsl --shutdown` and start the distro
   from the desktop.
+- With several monitors, KWin and Hyprland arrange the screens on their own.
+  If their arrangement differs from the viewer's windows, the pointer lands
+  in the wrong place. GNOME follows the viewer.
 - Compositors other than GNOME and Plasma have seen little testing. If one
   does not start on the virtual display, please open an issue.
 

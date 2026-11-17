@@ -11,13 +11,14 @@ node for Mesa's d3d12 driver.
 
 ## Decision
 
-- dxgdrm also provides a virtual display: one CRTC, a primary plane with
-  `FB_DAMAGE_CLIPS`, a cursor plane with a hotspot, and one connector. The
-  compositor drives it on its regular KMS backend, like a monitor (see dxgdrm
-  0011).
+- dxgdrm also provides a virtual display: four outputs, each a CRTC with a
+  primary plane with `FB_DAMAGE_CLIPS`, a cursor plane with a hotspot, and a
+  connector. The compositor drives it on its regular KMS backend, like a set
+  of monitors (see dxgdrm 0011 and 0023).
 - weaselwayd is the userspace half of that display. It waits for each commit
   on the dxgdrm node, reads the frame back, and serves it to the Windows
-  client over RDP. The client's input comes back as uinput devices (see 0008).
+  client over RDP, each output in a window of its own (see 0037). The
+  client's input comes back as uinput devices (see 0008).
 - The RDP server, audio and clipboard code were ported from mutter's backend
   into weaselwayd.
 - This started as a spike (`31b432c`, 3 October 2026) and became the default a

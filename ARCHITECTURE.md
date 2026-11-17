@@ -29,9 +29,15 @@ flowchart TD
 
 The compositor runs on its regular KMS (kernel mode setting, the Linux interface for driving
 displays) backend and has no knowledge of Windows. dxgdrm is a kernel module that presents a virtual
-display: one CRTC (the display controller that scans a buffer out), a primary plane with
-`FB_DAMAGE_CLIPS` (the changed rectangles of each frame), a cursor plane with a hotspot, and one
-connector.
+display with four outputs. Each is a CRTC (the display controller that scans a buffer out), a
+primary plane with `FB_DAMAGE_CLIPS` (the changed rectangles of each frame), a cursor plane with a
+hotspot, and a connector. Output 0 is connected from the start; weaselwayd connects the others when
+the viewer has more than one monitor.
+
+Each output is a monitor of the viewer's layout and is kept apart from end to end: its own mode,
+vblank and flip pacing in dxgdrm, its own readback and gfxredir pool (shared-memory file) in
+weaselwayd, and its own window in the viewer. Output `i` is monitor `i` of the layout, gfxredir
+window `i` and pool `i + 1` ([0037](docs/adr/0037-one-gfxredir-window-per-output.md)).
 
 The scanout buffers are D3D12 textures. weaselwayd waits for a commit on the dxgdrm node and imports
 the buffer into its own GL context (mesa d3d12). It reads the damaged region back into a pixel
@@ -41,15 +47,17 @@ gfxredir buffer (the frame format of WSLg's RDP extension) in the shared memory 
 client maps. The client opens that memory as a Direct3D 12 heap and copies the damaged rectangles
 on the GPU into the texture it draws. Layouts it cannot open that way go through a CPU copy.
 
-weaselwayd acknowledges a frame to dxgdrm before it issues the readback, unless the previous
-readback is still running or the client holds every buffer. dxgdrm withholds the compositor's
+weaselwayd acknowledges a frame to dxgdrm before it issues the readback, unless the output's
+previous readback is still running or the client holds every buffer of its pool. dxgdrm withholds the compositor's
 page-flip event until then, and completes it on its next virtual vblank. A slow client therefore
 slows the compositor down, and frames do not queue up.
 
 The client's keyboard, mouse and touchpad become uinput devices (input devices created from user
-space), which libinput handles like any others. The size of the session follows the viewer's window:
-weaselwayd sets the mode on dxgdrm, and the compositor sees a hotplug event. The viewer has its own
-channel, `Weaselway::Display`, on which it reports two things about the monitor the window is on:
+space), which libinput handles like any others. A pointer position is a point in the client's
+desktop; weaselwayd maps it to an output and onto the absolute axis spanning all outputs. The size
+of each screen follows its viewer window: weaselwayd sets the output's mode on dxgdrm, and the
+compositor sees a hotplug event. The viewer has its own channel, `Weaselway::Display`, on which it
+reports two things about the monitor each window is on:
 
 - its refresh rate, which weaselwayd uses as the mode's rate
   ([0029](docs/adr/0029-refresh-rate-from-the-viewer.md));
@@ -174,7 +182,9 @@ problems that show up there but are unrelated to RDP:
   SDL3 client:
   - a Direct3D 11 presenter on a render thread, which copies gfxredir buffers on the GPU through a
     Direct3D 12 heap on the shared memory (`-sdl-zero-copy` turns that off);
-  - the `wwdisplay` channel, which reports the monitor's refresh rate and the vblank timing;
+  - the `wwdisplay` channel, which reports each monitor's refresh rate and vblank timing;
+  - gfxredir with several pools, each window drawn from its own, and `/sdl-windows:<n>`, which
+    shows the desktop as n monitors in n windows;
   - touchpad gestures, Alt+F4 sent to the session, and the signed 16-bit PCM fix.
 - **mutter**: `main` is upstream main plus the relayout fix, kept in a form that can be submitted
   upstream. The image does not build the fork. It applies the same commit to nixpkgs' mutter as a

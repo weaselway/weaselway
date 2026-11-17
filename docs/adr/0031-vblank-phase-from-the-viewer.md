@@ -19,8 +19,9 @@ ready just after the monitor's vblank waits a whole refresh to be shown.
   follows the window to another monitor. DWM's timing
   (`DwmGetCompositionTimingInfo`) would be simpler, but it is the primary
   monitor's only. About twice a second the viewer sends the 10th percentile
-  in the `PRESENT_TIMING` PDU on `wwdisplay`.
-- weaselwayd moves dxgdrm's vblank (`DXGDRM_SHIFT_VBLANK`, dxgdrm 0020) by
+  in the `PRESENT_TIMING` PDU on `wwdisplay`, for each window under its
+  monitor index.
+- weaselwayd moves that output's vblank (`DXGDRM_SHIFT_VBLANK`, dxgdrm 0020) by
   half the difference to a target of 3 ms, at most 2 ms per step, and not at
   all within 0.5 ms of it. A later vblank makes the frames later and the
   slack smaller.
@@ -41,7 +42,7 @@ ready just after the monitor's vblank waits a whole refresh to be shown.
 - When the compositor cannot keep up with the refresh rate, frames are not
   tied to the vblank, and the loop only moves the phase around. That costs
   nothing.
-- The viewer has one more thread, which wakes on every vblank once frames
-  are measured, and keeps running for the window. Its wake-up delay counts
+- The viewer has one more thread per window, which wakes on every vblank
+  once frames are measured, and keeps running for the window. Its wake-up delay counts
   as slack.
 - Without vsync (`/sdl-no-vsync`) the viewer sends nothing.
