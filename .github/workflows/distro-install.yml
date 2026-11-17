@@ -65,15 +65,16 @@ jobs:
       DISTRO: ${{ matrix.distro }}
     steps:
       # dxgdrm has modules only for recent WSL kernels, and the runner image's
-      # WSL can be older.
+      # WSL can be older. The downloads sometimes fail on the runner (HTTP 403,
+      # DNS errors), so they get retried.
       - name: Update WSL
         run: |
-          wsl --update --web-download
+          for i in 1 2 3 4; do wsl --update --web-download && break; [ $i = 4 ] && exit 1; sleep $((i * 30)); done
           wsl --version
 
       - name: Install the distro
         run: |
-          wsl --install "${DISTRO}" --no-launch --web-download
+          for i in 1 2 3 4; do wsl --install "${DISTRO}" --no-launch --web-download && break; [ $i = 4 ] && exit 1; sleep $((i * 30)); done
           # The first start would ask for a user; the script needs one with
           # sudo that does not ask for a password. The Arch image has no
           # package keys, sudo, git or Python yet.
