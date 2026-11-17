@@ -4,7 +4,8 @@
  * The compositor scans out to dxgdrm's KMS node. This waits for its commits,
  * reads the damaged part of each frame back and hands it to the Windows client
  * through gfxredir shared memory (rdp.c); the client's mouse and keyboard come
- * back as uinput devices (input.c).
+ * back as uinput devices (input.c). Each of dxgdrm's outputs is one monitor of
+ * the client's, and is fetched, read back and presented on its own.
  *
  * The readback goes through GL rather than D3D12 directly: the frame is a
  * D3D12 shared handle, Mesa's d3d12 driver imports one as a dma-buf
@@ -14,12 +15,13 @@
  * instead, which is several times faster than d3d12's CopyTextureRegion.
  *
  * One thread running a GLib main loop: the DRM node (readable when there is a
- * commit to fetch), the RDP server's source, the fence of the readback that
- * is outstanding, and the session's clipboard on D-Bus (selection.c).
+ * commit to fetch), the RDP server's source, the fences of the readbacks that
+ * are outstanding, and the session's clipboard on D-Bus (selection.c).
  */
 
 #define G_LOG_DOMAIN "weaselwayd"
 
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -52,6 +54,8 @@
 
 #define MAX_IMPORTS 8
 
+static_assert(DXGDRM_MAX_OUTPUTS == RDP_MAX_OUTPUTS, "one dxgdrm output per client monitor");
+
 /* One imported scanout buffer. A compositor flips between a handful. */
 struct import {
     uint64_t buffer_id;
@@ -62,8 +66,8 @@ struct import {
 };
 
 /* A readback that has been issued and whose pixels have not landed yet. At
- * most one at a time: damage that arrives meanwhile is kept and read with the
- * next one. */
+ * most one at a time per output: damage that arrives meanwhile is kept and
+ * read with the next one. */
 struct readback {
     bool active;
     /* The fence behind the copy: an EGL one that has a descriptor to wait on
@@ -82,6 +86,63 @@ struct readback {
     int width, height;
     /* @landed: the fence was seen signalled and the copy into @frame began. */
     gint64 started, issued, landed;
+};
+
+/* One of dxgdrm's outputs, and the client's monitor that shows it. */
+struct output {
+    struct weaselwayd *p;
+    int index;
+
+    /* What is on the screen, as DXGDRM_GET_FRAME last described it. */
+    uint64_t seq, primary_seq;
+    /* The frame the compositor has last been told we have taken. */
+    uint64_t acked_seq;
+    bool have_frame;
+    uint64_t buffer_id;
+    bool dumb;
+    int width, height;
+    uint32_t pitch;
+    /* Where DXGDRM_READ_PIXELS puts a dumb frame; NULL until there is one. */
+    uint8_t *dumb_data;
+    size_t dumb_size;
+
+    /* The output's scanout and cursor buffers. A compositor flips between a
+     * handful. */
+    struct import imports[MAX_IMPORTS];
+
+    /* While no compositor owns the display the client gets placeholder.c's
+     * screen, as large as the window it asked for, and while the compositor
+     * has the output off its "Screen is off". @placeholder_owed: it has to be
+     * drawn (again). @placeholder_up: the client may be showing it, so the
+     * compositor's screen has to be sent whole when one is back. */
+    bool placeholder_owed, placeholder_up;
+    int screen_width, screen_height;
+
+    /* The part of the screen that changed and has not been read back. */
+    bool pending;
+    struct rdp_rect pending_rect;
+
+    /* The pixel buffer the readback targets, and the readback using it. */
+    GLuint pbo;
+    size_t pbo_size;
+    struct readback readback;
+    /* The source that looks at the readback's fence: every millisecond if
+     * that is the only way to learn that it has signalled, and otherwise once,
+     * when it should long have. 0 while there is nothing to look at. */
+    guint readback_tick;
+
+    /* The image on the cursor plane, cut down to what is not transparent;
+     * NULL pixels while it cannot be read. */
+    bool cursor_visible;
+    uint64_t cursor_seq;
+    uint8_t *cursor_pixels;
+    int cursor_width, cursor_height, cursor_hot_x, cursor_hot_y;
+
+    unsigned frames;
+    /* Since the last statistics line. */
+    unsigned stat_frames;
+    double stat_ms, stat_pixels;
+    uint64_t stat_primary_seq;
 };
 
 struct weaselwayd {
@@ -105,57 +166,26 @@ struct weaselwayd {
     GLuint compute_prog;
     GLint compute_origin, compute_size, compute_pitch, compute_bgra;
 
-    struct import imports[MAX_IMPORTS];
     uint64_t use_counter;
 
     struct rdp_server *rdp;
     struct input *input;
     struct selection *selection;
 
-    /* What is on the screen, as DXGDRM_GET_FRAME last described it. */
-    uint64_t seq, primary_seq, cursor_seq;
-    /* The frame the compositor has last been told we have taken. */
-    uint64_t acked_seq;
-    bool have_frame, have_cursor, cursor_sent, owned;
-    uint64_t buffer_id;
-    bool dumb;
-    int width, height;
-    uint32_t pitch;
-    /* Where DXGDRM_READ_PIXELS puts a dumb frame; NULL until there is one. */
-    uint8_t *dumb_data;
-    size_t dumb_size;
+    struct output outputs[DXGDRM_MAX_OUTPUTS];
+    /* A compositor owns the display; one flag for all outputs. */
+    bool owned;
+    /* The output whose cursor the client's pointer shows; -1 when it was
+     * hidden, -2 before anything was sent. */
+    int pointer_output;
 
-    /* While no compositor owns the display the client gets placeholder.c's
-     * screen, as large as the window it asked for, and while the compositor
-     * has the display off its "Screen is off". @placeholder_owed: it has
-     * to be drawn (again). @placeholder_up: the client may be showing it, so
-     * the compositor's screen has to be sent whole when one is back. */
-    bool placeholder_owed, placeholder_up;
-    int screen_width, screen_height;
-
-    /* The part of the screen that changed and has not been read back. */
-    bool pending;
-    struct rdp_rect pending_rect;
-
-    /* The pixel buffer the readback targets, and the readback using it. */
-    GLuint pbo;
-    size_t pbo_size;
-    struct readback readback;
     /* EGL_ANDROID_native_fence_sync: a readback's fence can be waited for. */
     bool fence_fds;
-    /* The source that looks at the readback's fence: every millisecond if
-     * that is the only way to learn that it has signalled, and otherwise once,
-     * when it should long have. 0 while there is nothing to look at. */
-    guint readback_tick;
 
     bool verbose;
 
     unsigned frames;
-    /* Since the last statistics line. */
-    unsigned stat_frames;
-    double stat_ms, stat_pixels;
     gint64 stat_since;
-    uint64_t stat_primary_seq;
 };
 
 /* Extension entry points, which libglvnd's libraries do not export. */
@@ -380,23 +410,32 @@ destroy_import(struct weaselwayd *p, struct import *import)
     memset(import, 0, sizeof(*import));
 }
 
+static void
+destroy_imports(struct output *out)
+{
+    for (int i = 0; i < MAX_IMPORTS; i++)
+        destroy_import(out->p, &out->imports[i]);
+}
+
 static struct import *
-find_import(struct weaselwayd *p, uint64_t buffer_id)
+find_import(struct output *out, uint64_t buffer_id)
 {
     for (int i = 0; i < MAX_IMPORTS; i++) {
-        if (p->imports[i].buffer_id == buffer_id)
-            return &p->imports[i];
+        if (out->imports[i].buffer_id == buffer_id)
+            return &out->imports[i];
     }
     return NULL;
 }
 
 /* Import a shared handle, or find the import made for it earlier. Leaves its
- * framebuffer bound for reading. */
+ * framebuffer bound for reading. Per output: one that is resized drops only
+ * its own, and a still one keeps its own however much another flips. */
 static struct import *
-get_import(struct weaselwayd *p, uint64_t buffer_id, int fd, uint32_t width, uint32_t height,
+get_import(struct output *out, uint64_t buffer_id, int fd, uint32_t width, uint32_t height,
            uint32_t format, uint32_t pitch)
 {
-    struct import *import = find_import(p, buffer_id);
+    struct weaselwayd *p = out->p;
+    struct import *import = find_import(out, buffer_id);
     EGLAttrib attribs[] = {
         EGL_WIDTH, (EGLAttrib)width,
         EGL_HEIGHT, (EGLAttrib)height,
@@ -409,10 +448,10 @@ get_import(struct weaselwayd *p, uint64_t buffer_id, int fd, uint32_t width, uin
 
     if (!import) {
         /* In place of the one that has not been used for the longest. */
-        import = &p->imports[0];
+        import = &out->imports[0];
         for (int i = 1; i < MAX_IMPORTS; i++) {
-            if (p->imports[i].last_used < import->last_used)
-                import = &p->imports[i];
+            if (out->imports[i].last_used < import->last_used)
+                import = &out->imports[i];
         }
         destroy_import(p, import);
 
@@ -447,8 +486,8 @@ get_import(struct weaselwayd *p, uint64_t buffer_id, int fd, uint32_t width, uin
         }
 
         import->buffer_id = buffer_id;
-        g_message("imported buffer %" G_GUINT64_FORMAT " (%ux%u, %.4s)", buffer_id, width, height,
-                  (const char *)&format);
+        g_message("output %d: imported buffer %" G_GUINT64_FORMAT " (%ux%u, %.4s)", out->index,
+                  buffer_id, width, height, (const char *)&format);
     }
 
     import->last_used = ++p->use_counter;
@@ -457,23 +496,23 @@ get_import(struct weaselwayd *p, uint64_t buffer_id, int fd, uint32_t width, uin
 }
 
 static void
-add_damage(struct weaselwayd *p, int x1, int y1, int x2, int y2)
+add_damage(struct output *out, int x1, int y1, int x2, int y2)
 {
     struct rdp_rect rect;
 
     x1 = MAX(x1, 0);
     y1 = MAX(y1, 0);
-    x2 = MIN(x2, p->width);
-    y2 = MIN(y2, p->height);
+    x2 = MIN(x2, out->width);
+    y2 = MIN(y2, out->height);
     if (x2 <= x1 || y2 <= y1)
         return;
 
     rect = (struct rdp_rect){ x1, y1, x2 - x1, y2 - y1 };
-    if (p->pending)
-        rdp_rect_union(&p->pending_rect, &rect);
+    if (out->pending)
+        rdp_rect_union(&out->pending_rect, &rect);
     else
-        p->pending_rect = rect;
-    p->pending = true;
+        out->pending_rect = rect;
+    out->pending = true;
 }
 
 /* @rows rows of @row_bytes, between two buffers whose rows are @dst_stride
@@ -501,44 +540,46 @@ swap_red_blue(uint8_t *dst, const uint8_t *src, size_t pixels)
 }
 
 static void
-add_full_damage(struct weaselwayd *p)
+add_full_damage(struct output *out)
 {
-    add_damage(p, 0, 0, p->width, p->height);
+    add_damage(out, 0, 0, out->width, out->height);
 }
 
 /* The frame's pixels are where they belong: show them, and say so. */
 static void
-frame_done(struct weaselwayd *p)
+frame_done(struct output *out)
 {
-    struct readback *rb = &p->readback;
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
     gint64 done = g_get_monotonic_time();
 
     rdp_server_end_frame(p->rdp, &rb->frame, &rb->rect);
     p->frames++;
+    out->frames++;
 
-    p->stat_frames++;
-    p->stat_ms += ms_since(rb->started, done);
-    p->stat_pixels += (double)rb->rect.width * rb->rect.height;
+    out->stat_frames++;
+    out->stat_ms += ms_since(rb->started, done);
+    out->stat_pixels += (double)rb->rect.width * rb->rect.height;
 
     if (p->verbose)
-        g_debug("frame %u: %s buffer %" G_GUINT64_FORMAT ", %dx%d+%d+%d (%.1f%%) read back in "
-                "%.2f ms (issue %.2f, fence %.2f, copy %.2f, %s)",
-                p->frames, p->dumb ? "dumb" : "d3d12", rb->buffer_id, rb->rect.width,
-                rb->rect.height, rb->rect.x, rb->rect.y,
-                100.0 * rb->rect.width * rb->rect.height / ((double)p->width * p->height),
+        g_debug("output %d frame %u: %s buffer %" G_GUINT64_FORMAT ", %dx%d+%d+%d (%.1f%%) read "
+                "back in %.2f ms (issue %.2f, fence %.2f, copy %.2f, %s)",
+                out->index, out->frames, out->dumb ? "dumb" : "d3d12", rb->buffer_id,
+                rb->rect.width, rb->rect.height, rb->rect.x, rb->rect.y,
+                100.0 * rb->rect.width * rb->rect.height / ((double)out->width * out->height),
                 ms_since(rb->started, done), ms_since(rb->started, rb->issued),
                 ms_since(rb->issued, rb->landed), ms_since(rb->landed, done),
-                p->dumb ? "dumb" : readback_path(p));
+                out->dumb ? "dumb" : readback_path(p));
 }
 
 /* The frame did not make it; its part of the screen is still owed. */
 static void
-frame_failed(struct weaselwayd *p)
+frame_failed(struct output *out)
 {
-    struct readback *rb = &p->readback;
+    struct readback *rb = &out->readback;
 
-    rdp_server_cancel_frame(p->rdp, &rb->frame);
-    add_damage(p, rb->rect.x, rb->rect.y, rb->rect.x + rb->rect.width,
+    rdp_server_cancel_frame(out->p->rdp, &rb->frame);
+    add_damage(out, rb->rect.x, rb->rect.y, rb->rect.x + rb->rect.width,
                rb->rect.y + rb->rect.height);
 }
 
@@ -564,9 +605,10 @@ static gboolean on_readback_fence(gint fd, GIOCondition condition, gpointer data
  * a damage-sized readback takes about two.
  */
 static void
-readback_arm(struct weaselwayd *p)
+readback_arm(struct output *out)
 {
-    struct readback *rb = &p->readback;
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
 
     rb->egl_sync = EGL_NO_SYNC;
     rb->sync = NULL;
@@ -582,15 +624,16 @@ readback_arm(struct weaselwayd *p)
     glFlush();
 
     if (rb->fence_fd >= 0)
-        rb->fence_watch = g_unix_fd_add(rb->fence_fd, G_IO_IN, on_readback_fence, p);
-    p->readback_tick =
-        g_timeout_add(rb->fence_fd >= 0 ? 1000 : 1, on_readback_tick, p);
+        rb->fence_watch = g_unix_fd_add(rb->fence_fd, G_IO_IN, on_readback_fence, out);
+    out->readback_tick =
+        g_timeout_add(rb->fence_fd >= 0 ? 1000 : 1, on_readback_tick, out);
 }
 
 static bool
-readback_signalled(struct weaselwayd *p)
+readback_signalled(struct output *out)
 {
-    struct readback *rb = &p->readback;
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
     GLenum status;
 
     /* The descriptor said so. Asked no further: it would be polled readable
@@ -606,11 +649,12 @@ readback_signalled(struct weaselwayd *p)
 
 /* The readback is over, one way or another. */
 static void
-readback_disarm(struct weaselwayd *p)
+readback_disarm(struct output *out)
 {
-    struct readback *rb = &p->readback;
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
 
-    g_clear_handle_id(&p->readback_tick, g_source_remove);
+    g_clear_handle_id(&out->readback_tick, g_source_remove);
     g_clear_handle_id(&rb->fence_watch, g_source_remove);
     g_clear_fd(&rb->fence_fd, NULL);
     if (rb->egl_sync != EGL_NO_SYNC)
@@ -623,23 +667,24 @@ readback_disarm(struct weaselwayd *p)
 }
 
 static bool
-readback_begin(struct weaselwayd *p)
+readback_begin(struct output *out)
 {
-    struct readback *rb = &p->readback;
-    struct import *import = find_import(p, p->buffer_id);
-    size_t full_size = (size_t)p->width * (size_t)p->height * 4;
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
+    struct import *import = find_import(out, out->buffer_id);
+    size_t full_size = (size_t)out->width * (size_t)out->height * 4;
 
     if (!import)
         return false;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, import->fbo);
 
-    if (!p->pbo)
-        glGenBuffers(1, &p->pbo);
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+    if (!out->pbo)
+        glGenBuffers(1, &out->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, out->pbo);
     /* Sized for a whole frame once, so that no damage shape reallocates it. */
-    if (p->pbo_size != full_size) {
+    if (out->pbo_size != full_size) {
         glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)full_size, NULL, GL_STREAM_READ);
-        p->pbo_size = full_size;
+        out->pbo_size = full_size;
     }
 
     /* Tightly packed at offset 0: the transfer is exactly the rect. */
@@ -651,7 +696,7 @@ readback_begin(struct weaselwayd *p)
         glUniform2i(p->compute_size, rb->rect.width, rb->rect.height);
         glUniform1i(p->compute_pitch, rb->rect.width);
         glUniform1i(p->compute_bgra, p->read_bgra ? 1 : 0);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, p->pbo);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, out->pbo);
         glDispatchCompute((GLuint)(rb->rect.width + 15) / 16,
                           (GLuint)(rb->rect.height + 15) / 16, 1);
         /* The pixels are read with a map of the buffer, after the fence. */
@@ -662,7 +707,7 @@ readback_begin(struct weaselwayd *p)
         glReadPixels(rb->rect.x, rb->rect.y, rb->rect.width, rb->rect.height,
                      p->read_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     }
-    readback_arm(p);
+    readback_arm(out);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
     rb->issued = g_get_monotonic_time();
@@ -672,13 +717,13 @@ readback_begin(struct weaselwayd *p)
 
 /* Once the fence has signalled: copy the rect out of the pixel buffer. */
 static bool
-readback_copy(struct weaselwayd *p, uint8_t *pixels, size_t stride)
+readback_copy(struct output *out, uint8_t *pixels, size_t stride)
 {
-    const struct rdp_rect *rect = &p->readback.rect;
+    const struct rdp_rect *rect = &out->readback.rect;
     size_t row_bytes = (size_t)rect->width * 4;
     const uint8_t *src;
 
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, p->pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, out->pbo);
     src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)(row_bytes * (size_t)rect->height),
                            GL_MAP_READ_BIT);
     if (!src) {
@@ -688,7 +733,7 @@ readback_copy(struct weaselwayd *p, uint8_t *pixels, size_t stride)
     }
 
     pixels += (size_t)rect->y * stride + (size_t)rect->x * 4;
-    if (p->read_bgra) {
+    if (out->p->read_bgra) {
         copy_rows(pixels, stride, src, row_bytes, row_bytes, rect->height);
     } else {
         for (int y = 0; y < rect->height; y++)
@@ -704,9 +749,10 @@ readback_copy(struct weaselwayd *p, uint8_t *pixels, size_t stride)
 /* Called with every turn of the main loop: collect the readback if its fence
  * has signalled. */
 static void
-readback_poll(struct weaselwayd *p)
+readback_poll(struct output *out)
 {
-    struct readback *rb = &p->readback;
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
     bool signalled;
     uint8_t *pixels;
     size_t stride;
@@ -714,21 +760,21 @@ readback_poll(struct weaselwayd *p)
     if (!rb->active)
         return;
 
-    signalled = readback_signalled(p);
+    signalled = readback_signalled(out);
     if (!signalled && g_get_monotonic_time() - rb->issued < G_TIME_SPAN_SECOND)
         return;
 
-    readback_disarm(p);
+    readback_disarm(out);
 
     if (!signalled) {
-        g_warning("the readback did not finish within a second");
-        frame_failed(p);
+        g_warning("output %d: the readback did not finish within a second", out->index);
+        frame_failed(out);
         return;
     }
 
     /* The screen changed size under the readback; all of the new one is
      * owed already. */
-    if (rb->width != p->width || rb->height != p->height) {
+    if (rb->width != out->width || rb->height != out->height) {
         rdp_server_cancel_frame(p->rdp, &rb->frame);
         return;
     }
@@ -740,10 +786,10 @@ readback_poll(struct weaselwayd *p)
         return;
 
     rb->landed = g_get_monotonic_time();
-    if (readback_copy(p, pixels, stride))
-        frame_done(p);
+    if (readback_copy(out, pixels, stride))
+        frame_done(out);
     else
-        frame_failed(p);
+        frame_failed(out);
 }
 
 /* A dumb-buffer frame (a compositor rendering without the GPU). The kernel
@@ -751,29 +797,32 @@ readback_poll(struct weaselwayd *p)
  * goes on to the client is @rect. XRGB8888 is B, G, R, X in memory, as
  * wanted. */
 static bool
-read_dumb(struct weaselwayd *p, uint8_t *pixels, size_t stride, const struct rdp_rect *rect)
+read_dumb(struct output *out, uint8_t *pixels, size_t stride, const struct rdp_rect *rect)
 {
-    struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_PRIMARY };
-    size_t size = (size_t)p->pitch * (size_t)p->height;
+    struct drm_dxgdrm_read_pixels read = {
+        .output = (uint32_t)out->index,
+        .plane = DXGDRM_PLANE_PRIMARY,
+    };
+    size_t size = (size_t)out->pitch * (size_t)out->height;
     size_t offset = (size_t)rect->x * 4;
 
-    if (p->dumb_size < size) {
-        g_free(p->dumb_data);
-        p->dumb_data = g_malloc(size);
-        p->dumb_size = size;
+    if (out->dumb_size < size) {
+        g_free(out->dumb_data);
+        out->dumb_data = g_malloc(size);
+        out->dumb_size = size;
     }
-    read.size = (uint32_t)p->dumb_size;
-    read.data = (uintptr_t)p->dumb_data;
+    read.size = (uint32_t)out->dumb_size;
+    read.data = (uintptr_t)out->dumb_data;
 
     /* The plane may have moved on to another buffer since the frame was
      * fetched; the next fetch then says so. */
-    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read) ||
-        (int)read.width != p->width || (int)read.height != p->height ||
+    if (drmIoctl(out->p->drm_fd, DRM_IOCTL_DXGDRM_READ_PIXELS, &read) ||
+        (int)read.width != out->width || (int)read.height != out->height ||
         read.pitch < read.width * 4)
         return false;
 
     copy_rows(pixels + (size_t)rect->y * stride + offset, stride,
-              p->dumb_data + (size_t)rect->y * read.pitch + offset, read.pitch,
+              out->dumb_data + (size_t)rect->y * read.pitch + offset, read.pitch,
               (size_t)rect->width * 4, rect->height);
     return true;
 }
@@ -785,13 +834,14 @@ read_dumb(struct weaselwayd *p, uint8_t *pixels, size_t stride, const struct rdp
  * pixels.
  */
 static uint8_t *
-read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
+read_cursor(struct output *out, const struct drm_dxgdrm_get_frame *frame)
 {
+    struct weaselwayd *p = out->p;
     int width = (int)frame->cursor_width, height = (int)frame->cursor_height;
     g_autofree uint8_t *pixels = g_malloc((size_t)width * (size_t)height * 4);
 
     if (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) {
-        if (!get_import(p, frame->cursor_buffer_id, frame->cursor_fd, frame->cursor_width,
+        if (!get_import(out, frame->cursor_buffer_id, frame->cursor_fd, frame->cursor_width,
                         frame->cursor_height, frame->cursor_format, frame->cursor_pitch))
             return NULL;
 
@@ -803,7 +853,10 @@ read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
         if (!p->read_bgra)
             swap_red_blue(pixels, pixels, (size_t)width * (size_t)height);
     } else {
-        struct drm_dxgdrm_read_pixels read = { .plane = DXGDRM_PLANE_CURSOR };
+        struct drm_dxgdrm_read_pixels read = {
+            .output = (uint32_t)out->index,
+            .plane = DXGDRM_PLANE_CURSOR,
+        };
         size_t size = (size_t)frame->cursor_pitch * (size_t)height;
         g_autofree uint8_t *data = g_malloc(size);
 
@@ -822,17 +875,13 @@ read_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
 }
 
 /*
- * The cursor plane is the client's to draw: its image becomes the client's
- * mouse pointer, and no plane means no pointer. Only the image is sent. The
- * client moves the pointer itself, so a commit that only moves the plane is
- * nothing to it.
- *
- * A compositor makes the plane's buffer as large as the plane can be (256
- * square) and draws a much smaller cursor into its corner, so the image is cut
- * down to what is not transparent, with the hotspot kept inside.
+ * Keep the output's cursor image. A compositor makes the plane's buffer as
+ * large as the plane can be (256 square) and draws a much smaller cursor into
+ * its corner, so the image is cut down to what is not transparent, with the
+ * hotspot kept inside. True if it changed, or was shown or hidden.
  */
-static void
-update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
+static bool
+update_cursor(struct output *out, const struct drm_dxgdrm_get_frame *frame)
 {
     int width = (int)frame->cursor_width, height = (int)frame->cursor_height;
     int hot_x = frame->cursor_hot_x, hot_y = frame->cursor_hot_y;
@@ -840,25 +889,23 @@ update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
     g_autofree uint8_t *pixels = NULL;
 
     if (!(frame->flags & DXGDRM_FRAME_CURSOR)) {
-        if (p->have_cursor || !p->cursor_sent) {
-            g_debug("cursor hidden");
-            rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
-        }
-        p->have_cursor = false;
-        p->cursor_sent = true;
-        return;
-    }
-    if (p->have_cursor && p->cursor_sent && frame->cursor_seq == p->cursor_seq)
-        return;
-    p->have_cursor = true;
-    p->cursor_sent = true;
-    p->cursor_seq = frame->cursor_seq;
+        bool changed = out->cursor_visible;
 
-    pixels = frame->cursor_format == DRM_FORMAT_ARGB8888 ? read_cursor(p, frame) : NULL;
+        out->cursor_visible = false;
+        g_clear_pointer(&out->cursor_pixels, g_free);
+        return changed;
+    }
+    if (out->cursor_visible && frame->cursor_seq == out->cursor_seq)
+        return false;
+    out->cursor_visible = true;
+    out->cursor_seq = frame->cursor_seq;
+    g_clear_pointer(&out->cursor_pixels, g_free);
+
+    pixels = frame->cursor_format == DRM_FORMAT_ARGB8888 ? read_cursor(out, frame) : NULL;
     if (!pixels) {
-        g_warning("cannot read the %dx%d cursor; hiding it", width, height);
-        rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
-        return;
+        g_warning("output %d: cannot read the %dx%d cursor; hiding it", out->index, width,
+                  height);
+        return true;
     }
 
     hot_x = CLAMP(hot_x, 0, width - 1);
@@ -880,109 +927,179 @@ update_cursor(struct weaselwayd *p, const struct drm_dxgdrm_get_frame *frame)
         }
     }
 
-    g_debug("cursor updated: %dx%d %s buffer %" G_GUINT64_FORMAT ", hotspot %d,%d; sent as "
-            "%dx%d+%d+%d",
-            width, height, (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
+    out->cursor_width = x2 - x1;
+    out->cursor_height = y2 - y1;
+    out->cursor_hot_x = hot_x - x1;
+    out->cursor_hot_y = hot_y - y1;
+    out->cursor_pixels = g_malloc((size_t)out->cursor_width * (size_t)out->cursor_height * 4);
+    copy_rows(out->cursor_pixels, (size_t)out->cursor_width * 4,
+              pixels + ((size_t)y1 * (size_t)width + (size_t)x1) * 4, (size_t)width * 4,
+              (size_t)out->cursor_width * 4, out->cursor_height);
+
+    g_debug("output %d: cursor updated: %dx%d %s buffer %" G_GUINT64_FORMAT ", hotspot %d,%d; "
+            "kept as %dx%d+%d+%d",
+            out->index, width, height,
+            (frame->flags & DXGDRM_FRAME_CURSOR_SHARED) ? "d3d12" : "dumb",
             (guint64)frame->cursor_buffer_id, hot_x, hot_y, x2 - x1, y2 - y1, x1, y1);
-    rdp_server_set_pointer(p->rdp, pixels + ((size_t)y1 * (size_t)width + (size_t)x1) * 4,
-                           width * 4, x2 - x1, y2 - y1, hot_x - x1, hot_y - y1);
+    return true;
 }
 
 /*
- * Fetch what DXGDRM_GET_FRAME has to say. Only called when the node polls
- * readable, so it does not wait. False, with @error, if the node is gone.
+ * The cursor planes are the client's to draw: the image of one becomes the
+ * client's mouse pointer, and no plane means no pointer. Only the image is
+ * sent. The client moves the pointer itself, so a commit that only moves a
+ * plane is nothing to it.
+ *
+ * The client has one pointer and the outputs a plane each, which a compositor
+ * shows on the output the pointer is on, or on two while it is across their
+ * edge. The pointer shows @changed's cursor if it has one, else the one it
+ * showed if that is still there, else any.
+ */
+static void
+sync_pointer(struct weaselwayd *p, int changed, bool image_changed)
+{
+    const struct output *out;
+    int target = -1;
+
+    if (p->outputs[changed].cursor_visible)
+        target = changed;
+    else if (p->pointer_output >= 0 && p->outputs[p->pointer_output].cursor_visible)
+        target = p->pointer_output;
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS && target < 0; i++) {
+        if (p->outputs[i].cursor_visible)
+            target = i;
+    }
+
+    if (target == p->pointer_output && !(image_changed && target == changed))
+        return;
+    p->pointer_output = target;
+
+    if (target < 0) {
+        g_debug("cursor hidden");
+        rdp_server_set_pointer(p->rdp, NULL, 0, 0, 0, 0, 0);
+        return;
+    }
+    /* NULL pixels, a cursor that could not be read, hide it. */
+    out = &p->outputs[target];
+    rdp_server_set_pointer(p->rdp, out->cursor_pixels, out->cursor_width * 4, out->cursor_width,
+                           out->cursor_height, out->cursor_hot_x, out->cursor_hot_y);
+}
+
+/*
+ * Fetch what DXGDRM_GET_FRAME has to say about @out, if anything; it does not
+ * wait. False, with @error, if the node is gone.
  */
 static bool
-fetch_frame(struct weaselwayd *p, GError **error)
+fetch_frame(struct output *out, GError **error)
 {
-    struct drm_dxgdrm_get_frame frame = { .seq = p->seq, .timeout_ms = 1 };
-    bool resized;
+    struct weaselwayd *p = out->p;
+    struct drm_dxgdrm_get_frame frame = {
+        .seq = out->seq,
+        .output = (uint32_t)out->index,
+        .flags = DXGDRM_GET_FRAME_NOWAIT,
+    };
+    bool resized, cursor_changed;
 
     if (ioctl(p->drm_fd, DRM_IOCTL_DXGDRM_GET_FRAME, &frame)) {
-        if (errno == ETIME || errno == EINTR)
+        if (errno == EAGAIN || errno == ETIME || errno == EINTR)
             return true;
         g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
                     "DXGDRM_GET_FRAME failed: %s", g_strerror(errno));
         return false;
     }
-    p->seq = frame.seq;
+    out->seq = frame.seq;
 
-    update_cursor(p, &frame);
+    cursor_changed = update_cursor(out, &frame);
     if (frame.cursor_fd >= 0)
         close(frame.cursor_fd);
+    sync_pointer(p, out->index, cursor_changed);
 
-    /* A compositor leaves its last frame up when it goes away. */
+    /* A compositor leaves its last frames up when it goes away. Every output
+     * hears of it; the first one that does acts for all. */
     if (!!(frame.flags & DXGDRM_FRAME_OWNED) != p->owned) {
         p->owned = !p->owned;
         g_message(p->owned ? "a compositor took over the display"
                            : "no compositor owns the display any more");
         if (!p->owned) {
-            /* What it left on the screen is nobody's; the client is told so. */
-            p->pending = false;
-            p->placeholder_owed = true;
+            /* What it left on the screens is nobody's; the client is told
+             * so. */
+            for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+                p->outputs[i].pending = false;
+                p->outputs[i].placeholder_owed = true;
+            }
         }
     }
 
     if (!(frame.flags & DXGDRM_FRAME_PRIMARY)) {
-        if (p->have_frame) {
-            g_message("the compositor turned the display off");
+        if (frame.fd >= 0)
+            close(frame.fd);
+        if (out->have_frame) {
+            g_message("output %d: the compositor turned it off", out->index);
             /* The client would keep the last frame up, as if the screen were
              * still on; it gets "Screen is off" instead. */
-            p->placeholder_owed = true;
+            out->placeholder_owed = true;
         }
-        p->have_frame = false;
-        p->pending = false;
+        out->have_frame = false;
+        out->pending = false;
         return true;
     }
 
-    resized = (int)frame.width != p->width || (int)frame.height != p->height;
-    p->width = (int)frame.width;
-    p->height = (int)frame.height;
-    p->buffer_id = frame.buffer_id;
-    p->dumb = !(frame.flags & DXGDRM_FRAME_SHARED);
-    p->pitch = frame.pitch;
-    if (!p->dumb) {
-        g_clear_pointer(&p->dumb_data, g_free);
-        p->dumb_size = 0;
+    resized = (int)frame.width != out->width || (int)frame.height != out->height;
+    out->width = (int)frame.width;
+    out->height = (int)frame.height;
+    out->buffer_id = frame.buffer_id;
+    out->dumb = !(frame.flags & DXGDRM_FRAME_SHARED);
+    out->pitch = frame.pitch;
+    if (!out->dumb) {
+        g_clear_pointer(&out->dumb_data, g_free);
+        out->dumb_size = 0;
     }
 
     /* The compositor has new buffers for the new size. Imports of the old
      * ones would keep those alive until they had all been pushed out. */
-    if (resized) {
-        for (int i = 0; i < MAX_IMPORTS; i++)
-            destroy_import(p, &p->imports[i]);
-    }
+    if (resized)
+        destroy_imports(out);
 
     /* Imported while the fd is at hand; the readback finds it by its id. */
-    if (!p->dumb && !get_import(p, frame.buffer_id, frame.fd, frame.width, frame.height,
-                                frame.format, frame.pitch)) {
+    if (!out->dumb && !get_import(out, frame.buffer_id, frame.fd, frame.width, frame.height,
+                                  frame.format, frame.pitch)) {
         if (frame.fd >= 0)
             close(frame.fd);
-        p->have_frame = false;
+        out->have_frame = false;
         return true;
     }
     if (frame.fd >= 0)
         close(frame.fd);
 
-    if (!p->have_frame || resized) {
+    if (!out->have_frame || resized) {
         /* Nothing that was read back before applies to this screen. */
-        p->pending = false;
-        add_full_damage(p);
-    } else if (frame.primary_seq != p->primary_seq) {
+        out->pending = false;
+        add_full_damage(out);
+    } else if (frame.primary_seq != out->primary_seq) {
         if (frame.flags & DXGDRM_FRAME_DAMAGE_FULL)
-            add_full_damage(p);
+            add_full_damage(out);
         for (unsigned i = 0; i < frame.num_damage && i < DXGDRM_MAX_DAMAGE_RECTS; i++)
-            add_damage(p, frame.damage[i].x1, frame.damage[i].y1, frame.damage[i].x2,
+            add_damage(out, frame.damage[i].x1, frame.damage[i].y1, frame.damage[i].x2,
                        frame.damage[i].y2);
     }
-    p->primary_seq = frame.primary_seq;
-    p->have_frame = true;
+    out->primary_seq = frame.primary_seq;
+    out->have_frame = true;
 
     /* The client may still be showing the placeholder, which the damage of the
      * next commit does not cover. */
-    if (p->owned && p->placeholder_up) {
-        p->placeholder_up = p->placeholder_owed = false;
-        add_full_damage(p);
+    if (p->owned && out->placeholder_up) {
+        out->placeholder_up = out->placeholder_owed = false;
+        add_full_damage(out);
+    }
+    return true;
+}
+
+static bool
+fetch_frames(struct weaselwayd *p, GError **error)
+{
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+        if (!fetch_frame(&p->outputs[i], error))
+            return false;
     }
     return true;
 }
@@ -996,42 +1113,58 @@ fetch_frame(struct weaselwayd *p, GError **error)
  * that is still connecting: there is nothing to keep pace with.
  */
 static void
-ack_frame(struct weaselwayd *p)
+ack_frame(struct output *out)
 {
-    struct drm_dxgdrm_ack_frame ack = { .primary_seq = p->primary_seq };
+    struct weaselwayd *p = out->p;
+    struct drm_dxgdrm_ack_frame ack = {
+        .primary_seq = out->primary_seq,
+        .output = (uint32_t)out->index,
+    };
 
-    if (!p->have_frame || p->acked_seq == p->primary_seq)
+    if (!out->have_frame || out->acked_seq == out->primary_seq)
         return;
-    if (p->pending &&
-        (p->readback.active || rdp_server_state(p->rdp) == RDP_BUSY))
+    if (out->pending &&
+        (out->readback.active || rdp_server_state(p->rdp, out->index) == RDP_BUSY))
         return;
 
     if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_ACK_FRAME, &ack))
-        g_warning("DXGDRM_ACK_FRAME failed: %s", g_strerror(errno));
-    p->acked_seq = p->primary_seq;
+        g_warning("output %d: DXGDRM_ACK_FRAME failed: %s", out->index, g_strerror(errno));
+    out->acked_seq = out->primary_seq;
 }
 
-/* The client's window has a size and its monitor a refresh rate; ask for a
- * screen of them. The compositor switches to the new mode, and the frames
- * that follow have that size. */
+/* The client's windows have sizes and places, and their monitors refresh
+ * rates; ask for one screen of each. The compositor switches to the new
+ * modes, and the frames that follow have those sizes. The outputs past the
+ * client's last monitor are unplugged. */
 static void
-apply_size_request(struct weaselwayd *p)
+apply_layout_request(struct weaselwayd *p)
 {
-    struct drm_dxgdrm_set_mode mode = { 0 };
-    int width, height;
-    uint32_t refresh_mhz;
+    struct monitor monitors[RDP_MAX_OUTPUTS];
+    int count;
 
-    if (!rdp_server_take_size_request(p->rdp, &width, &height, &refresh_mhz))
+    if (!rdp_server_take_layout_request(p->rdp, monitors, &count))
         return;
 
-    mode.width = (uint32_t)width;
-    mode.height = (uint32_t)height;
-    /* 0 until the client says, which is dxgdrm's default. A dxgdrm older
-     * than the field ignores it. */
-    mode.refresh_mhz = refresh_mhz;
-    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SET_MODE, &mode))
-        g_warning("cannot set a %dx%d mode at %u mHz: %s", width, height, refresh_mhz,
-                  g_strerror(errno));
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+        struct drm_dxgdrm_set_mode mode = { .output = (uint32_t)i };
+
+        if (i < count) {
+            const struct monitor *m = &monitors[i];
+
+            mode.flags = DXGDRM_MODE_CONNECTED;
+            mode.width = (uint32_t)m->width;
+            mode.height = (uint32_t)m->height;
+            /* 0 until the client says, which is dxgdrm's default. */
+            mode.refresh_mhz = m->refresh_mhz;
+            mode.x = (uint32_t)m->x;
+            mode.y = (uint32_t)m->y;
+            mode.width_mm = m->width_mm;
+            mode.height_mm = m->height_mm;
+        }
+        if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SET_MODE, &mode))
+            g_warning("output %d: cannot set a %ux%u+%u+%u mode at %u mHz: %s", i, mode.width,
+                      mode.height, mode.x, mode.y, mode.refresh_mhz, g_strerror(errno));
+    }
 }
 
 /*
@@ -1047,13 +1180,13 @@ apply_size_request(struct weaselwayd *p)
 #define PRESENT_MAX_SHIFT_US 2000
 
 static void
-apply_present_timing(struct weaselwayd *p)
+apply_present_timing(struct output *out)
 {
-    struct drm_dxgdrm_shift_vblank shift = { 0 };
+    struct drm_dxgdrm_shift_vblank shift = { .output = (uint32_t)out->index };
     uint32_t frames;
     int32_t slack_us, error_us;
 
-    if (!rdp_server_take_present_timing(p->rdp, &frames, &slack_us))
+    if (!rdp_server_take_present_timing(out->p->rdp, out->index, &frames, &slack_us))
         return;
 
     error_us = slack_us - PRESENT_TARGET_SLACK_US;
@@ -1061,47 +1194,55 @@ apply_present_timing(struct weaselwayd *p)
         return;
     shift.shift_ns =
         (int64_t)CLAMP(error_us / 2, -PRESENT_MAX_SHIFT_US, PRESENT_MAX_SHIFT_US) * 1000;
-    g_debug("frames ready %d us before the client's vblank (%u frames), shifting ours by %"
-            G_GINT64_FORMAT " us", slack_us, frames, (gint64)shift.shift_ns / 1000);
-    if (drmIoctl(p->drm_fd, DRM_IOCTL_DXGDRM_SHIFT_VBLANK, &shift))
+    g_debug("output %d: frames ready %d us before the client's vblank (%u frames), shifting "
+            "ours by %" G_GINT64_FORMAT " us",
+            out->index, slack_us, frames, (gint64)shift.shift_ns / 1000);
+    if (drmIoctl(out->p->drm_fd, DRM_IOCTL_DXGDRM_SHIFT_VBLANK, &shift))
         g_debug("cannot shift the vblank: %s", g_strerror(errno));
 }
 
-/* The size of the client's screen: the compositor's, or without one the
+/* The size of the client's screen: the compositor's, or without a frame the
  * window the client asked for. */
 static void
-sync_screen_size(struct weaselwayd *p)
+sync_screen_size(struct output *out)
 {
-    int width = p->width, height = p->height;
+    struct weaselwayd *p = out->p;
+    int width = 0, height = 0;
 
-    if (!p->owned)
-        rdp_server_client_size(p->rdp, &width, &height);
-    if (width == p->screen_width && height == p->screen_height)
+    if (p->owned && out->have_frame) {
+        width = out->width;
+        height = out->height;
+    } else if (!rdp_server_client_size(p->rdp, out->index, &width, &height)) {
+        width = height = 0;
+    }
+    if (width == out->screen_width && height == out->screen_height)
         return;
 
-    p->screen_width = width;
-    p->screen_height = height;
-    p->placeholder_owed = true;
-    rdp_server_set_screen_size(p->rdp, width, height);
+    out->screen_width = width;
+    out->screen_height = height;
+    out->placeholder_owed = true;
+    rdp_server_set_screen_size(p->rdp, out->index, width, height);
 }
 
-/* "No compositor running", or "Screen is off" while the compositor has it off,
- * in one frame and only when the client has not got it yet: nothing changes on
- * the screen until a compositor is back or turns the display on. */
+/* "No compositor running", or "Screen is off" while the compositor has the
+ * output off, in one frame and only when the client has not got it yet:
+ * nothing changes on the screen until a compositor is back or turns the
+ * output on. */
 static void
-present_placeholder(struct weaselwayd *p)
+present_placeholder(struct output *out)
 {
-    struct rdp_rect rect = { 0, 0, p->screen_width, p->screen_height };
+    struct weaselwayd *p = out->p;
+    struct rdp_rect rect = { 0, 0, out->screen_width, out->screen_height };
     struct rdp_frame frame;
     uint8_t *pixels;
     size_t stride;
 
-    if (rdp_server_take_full_request(p->rdp))
-        p->placeholder_owed = true;
-    if (!p->placeholder_owed || rdp_server_state(p->rdp) != RDP_READY)
+    if (rdp_server_take_full_request(p->rdp, out->index))
+        out->placeholder_owed = true;
+    if (!out->placeholder_owed || rdp_server_state(p->rdp, out->index) != RDP_READY)
         return;
 
-    if (!rdp_server_begin_frame(p->rdp, &rect, &frame))
+    if (!rdp_server_begin_frame(p->rdp, out->index, &rect, &frame))
         return;
     pixels = rdp_server_frame_pixels(p->rdp, &frame, &stride);
     if (!pixels) {
@@ -1111,10 +1252,10 @@ present_placeholder(struct weaselwayd *p)
 
     placeholder_draw(pixels, stride, rect.width, rect.height, p->owned);
     rdp_server_end_frame(p->rdp, &frame, &rect);
-    p->placeholder_owed = false;
-    p->placeholder_up = true;
-    g_debug("%s: placeholder sent at %dx%d", p->owned ? "display off" : "no compositor",
-            rect.width, rect.height);
+    out->placeholder_owed = false;
+    out->placeholder_up = true;
+    g_debug("output %d: %s: placeholder sent at %dx%d", out->index,
+            p->owned ? "display off" : "no compositor", rect.width, rect.height);
 }
 
 /*
@@ -1126,10 +1267,11 @@ present_placeholder(struct weaselwayd *p)
  * pitch), so the box is widened to a multiple of 64 pixels.
  */
 static void
-try_present(struct weaselwayd *p)
+try_present(struct output *out)
 {
-    struct readback *rb = &p->readback;
-    enum rdp_state state = rdp_server_state(p->rdp);
+    struct weaselwayd *p = out->p;
+    struct readback *rb = &out->readback;
+    enum rdp_state state = rdp_server_state(p->rdp, out->index);
     struct rdp_rect rect;
     uint8_t *pixels;
     size_t stride;
@@ -1137,72 +1279,79 @@ try_present(struct weaselwayd *p)
     if (rb->active)
         return;
 
-    if (!p->owned || !p->have_frame) {
-        present_placeholder(p);
+    if (!p->owned || !out->have_frame) {
+        present_placeholder(out);
         return;
     }
 
-    if (rdp_server_take_full_request(p->rdp))
-        add_full_damage(p);
+    if (rdp_server_take_full_request(p->rdp, out->index))
+        add_full_damage(out);
 
-    if (state == RDP_BUSY || state == RDP_CONNECTING || !p->pending)
+    if (state == RDP_BUSY || state == RDP_CONNECTING || !out->pending)
         return;
 
     /* Nobody to show it to. A client that connects gets the whole screen. */
     if (state == RDP_NO_CLIENT) {
-        p->pending = false;
+        out->pending = false;
         return;
     }
 
-    rect = p->pending_rect;
-    if (!p->dumb) {
+    rect = out->pending_rect;
+    if (!out->dumb) {
         /* Widen to a multiple of 64 pixels, moving left where the right edge
          * is in the way. A screen narrower than that takes the slow path. */
-        int w = MIN((rect.width + 63) & ~63, p->width);
+        int w = MIN((rect.width + 63) & ~63, out->width);
 
-        if (rect.x + w > p->width)
-            rect.x = p->width - w;
+        if (rect.x + w > out->width)
+            rect.x = out->width - w;
         rect.width = w;
     }
 
-    if (!rdp_server_begin_frame(p->rdp, &rect, &rb->frame))
+    if (!rdp_server_begin_frame(p->rdp, out->index, &rect, &rb->frame))
         return;
 
-    p->pending = false;
+    out->pending = false;
     rb->rect = rect;
-    rb->buffer_id = p->buffer_id;
-    rb->width = p->width;
-    rb->height = p->height;
+    rb->buffer_id = out->buffer_id;
+    rb->width = out->width;
+    rb->height = out->height;
     rb->started = g_get_monotonic_time();
 
-    if (!p->dumb) {
-        if (!readback_begin(p))
-            frame_failed(p);
+    if (!out->dumb) {
+        if (!readback_begin(out))
+            frame_failed(out);
         return;
     }
 
     rb->issued = rb->landed = rb->started;
     pixels = rdp_server_frame_pixels(p->rdp, &rb->frame, &stride);
-    if (pixels && read_dumb(p, pixels, stride, &rect))
-        frame_done(p);
+    if (pixels && read_dumb(out, pixels, stride, &rect))
+        frame_done(out);
     else
-        frame_failed(p);
+        frame_failed(out);
 }
 
 /* What every source of the main loop ends with: something changed, so see
- * what can be done about the screen now. */
+ * what can be done about the screens now. */
 static void
 pump(struct weaselwayd *p)
 {
-    apply_size_request(p);
-    apply_present_timing(p);
-    sync_screen_size(p);
-    readback_poll(p);
-    /* Before the readback is issued, which takes a millisecond: the flip
-     * completes on the first vblank after the ack, and the compositor commits
-     * only about that long before it. */
-    ack_frame(p);
-    try_present(p);
+    apply_layout_request(p);
+    /* All sizes first: the client's state depends on every screen's. */
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++)
+        sync_screen_size(&p->outputs[i]);
+
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+        struct output *out = &p->outputs[i];
+
+        apply_present_timing(out);
+        readback_poll(out);
+        /* Before the readback is issued, which takes a millisecond: the flip
+         * completes on the first vblank after the ack, and the compositor
+         * commits only about that long before it. */
+        ack_frame(out);
+        try_present(out);
+    }
 }
 
 static void
@@ -1224,7 +1373,7 @@ on_drm_ready(gint fd, GIOCondition condition, gpointer data)
         fail(p, error);
         return G_SOURCE_REMOVE;
     }
-    if (!fetch_frame(p, &error)) {
+    if (!fetch_frames(p, &error)) {
         fail(p, error);
         return G_SOURCE_REMOVE;
     }
@@ -1238,7 +1387,9 @@ on_drm_ready(gint fd, GIOCondition condition, gpointer data)
 static gboolean
 on_readback_tick(gpointer data)
 {
-    pump(data);
+    struct output *out = data;
+
+    pump(out->p);
     return G_SOURCE_CONTINUE;
 }
 
@@ -1247,11 +1398,11 @@ on_readback_tick(gpointer data)
 static gboolean
 on_readback_fence(gint fd, GIOCondition condition, gpointer data)
 {
-    struct weaselwayd *p = data;
+    struct output *out = data;
 
-    p->readback.fence_fired = true;
-    p->readback.fence_watch = 0;
-    pump(p);
+    out->readback.fence_fired = true;
+    out->readback.fence_watch = 0;
+    pump(out->p);
     return G_SOURCE_REMOVE;
 }
 
@@ -1266,20 +1417,24 @@ on_stats(gpointer data)
 {
     struct weaselwayd *p = data;
     gint64 now = g_get_monotonic_time();
-    double screen = (double)p->width * p->height;
 
-    /* With the compositor held to our pace the two counts match; more
-     * commits than frames means frames were merged. */
-    if (p->stat_frames && !p->verbose)
-        g_message("%u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, %.2f ms and "
-                  "%.0f%% of the screen each on average, %s",
-                  p->stat_frames, p->primary_seq - p->stat_primary_seq,
-                  ms_since(p->stat_since, now) / 1000.0, p->stat_ms / p->stat_frames,
-                  100.0 * p->stat_pixels / p->stat_frames / (screen > 0 ? screen : 1.0),
-                  p->dumb ? "dumb" : readback_path(p));
-    p->stat_frames = 0;
-    p->stat_primary_seq = p->primary_seq;
-    p->stat_ms = p->stat_pixels = 0.0;
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+        struct output *out = &p->outputs[i];
+        double screen = (double)out->width * out->height;
+
+        /* With the compositor held to our pace the two counts match; more
+         * commits than frames means frames were merged. */
+        if (out->stat_frames && !p->verbose)
+            g_message("output %d: %u frame(s) for %" G_GUINT64_FORMAT " commit(s) in %.0f s, "
+                      "%.2f ms and %.0f%% of the screen each on average, %s",
+                      i, out->stat_frames, out->primary_seq - out->stat_primary_seq,
+                      ms_since(p->stat_since, now) / 1000.0, out->stat_ms / out->stat_frames,
+                      100.0 * out->stat_pixels / out->stat_frames / (screen > 0 ? screen : 1.0),
+                      out->dumb ? "dumb" : readback_path(p));
+        out->stat_frames = 0;
+        out->stat_primary_seq = out->primary_seq;
+        out->stat_ms = out->stat_pixels = 0.0;
+    }
     p->stat_since = now;
     return G_SOURCE_CONTINUE;
 }
@@ -1296,7 +1451,7 @@ on_signal(gpointer data)
 int
 main(int argc, char **argv)
 {
-    struct weaselwayd p = { .drm_fd = -1, .placeholder_owed = true };
+    struct weaselwayd p = { .drm_fd = -1, .pointer_output = -2 };
     struct rdp_config rdp_config = {
         .vsock_port = 3389,
         .changed = on_rdp_changed,
@@ -1325,6 +1480,9 @@ main(int argc, char **argv)
     g_autoptr(GError) error = NULL;
     const char *env;
     gint64 port;
+
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++)
+        p.outputs[i] = (struct output){ .p = &p, .index = i, .placeholder_owed = true };
 
     if ((env = g_getenv("WEASELWAY_VSOCK_PORT")) &&
         g_ascii_string_to_signed(env, 10, 1, G_MAXINT, &port, NULL))
@@ -1379,16 +1537,17 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    /* The first call is what makes the node poll readable from then on. It
-     * returns at once if a compositor is already up. */
-    if (!fetch_frame(&p, &error)) {
+    /* The first call for an output is what makes the node poll readable for
+     * it from then on. It returns a frame if a compositor is already up. */
+    if (!fetch_frames(&p, &error)) {
         g_warning("%s", error->message);
         return EXIT_FAILURE;
     }
-    if (!p.have_frame)
+    if (!p.outputs[0].have_frame)
         g_message("waiting for the compositor's first commit");
     p.stat_since = g_get_monotonic_time();
-    p.stat_primary_seq = p.primary_seq;
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++)
+        p.outputs[i].stat_primary_seq = p.outputs[i].primary_seq;
 
     p.loop = g_main_loop_new(NULL, FALSE);
     g_unix_fd_add(p.drm_fd, G_IO_IN, on_drm_ready, &p);
@@ -1399,14 +1558,18 @@ main(int argc, char **argv)
 
     g_main_loop_run(p.loop);
 
-    if (p.readback.active)
-        readback_disarm(&p);
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+        if (p.outputs[i].readback.active)
+            readback_disarm(&p.outputs[i]);
+    }
     rdp_server_free(p.rdp);
     selection_free(p.selection);
     input_free(p.input);
-    for (int i = 0; i < MAX_IMPORTS; i++)
-        destroy_import(&p, &p.imports[i]);
-    g_free(p.dumb_data);
+    for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
+        destroy_imports(&p.outputs[i]);
+        g_free(p.outputs[i].dumb_data);
+        g_free(p.outputs[i].cursor_pixels);
+    }
     g_main_loop_unref(p.loop);
     g_message("%u frame(s)", p.frames);
     return p.exit_status;

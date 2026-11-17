@@ -13,6 +13,7 @@
 #include "audio.h"
 #include "clipboard.h"
 #include "input.h"
+#include "wwdisplay.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -57,11 +58,10 @@
 /* An upper bound on the number of FreeRDP event handles, listener or peer. */
 #define MAX_FREERDP_FDS 32
 
-/* The one fullscreen desktop window, RDP_RAIL_DESKTOP_WINDOW_ID. */
-#define DESKTOP_WINDOW_ID 0xFFFFFFFF
-#define POOL_ID 1
-/* Buffer ids are 1-based. */
-#define BUFFER_ID(i) ((uint64_t)((i) + 1))
+/* Output i is gfxredir window i, in pool i + 1. Pool and buffer ids are
+ * 1-based. */
+#define POOL_ID(output) ((UINT32)(output) + 1)
+#define BUFFER_ID(output, i) (((uint64_t)(output) << 8) | (uint64_t)((i) + 1))
 
 /* Three buffers: one the client is reading, one a readback is landing in, and
  * one free to start the next frame on. */
@@ -93,6 +93,33 @@ struct buffer {
     uint64_t present_id;
     bool is_stale;
     struct rdp_rect stale;
+};
+
+/* An output's buffers, in a gfxredir pool of their own. */
+struct pool {
+    bool created;
+    int width, height, stride;
+    struct buffer buffers[N_BUFFERS];
+    int next_buffer;   /* round-robin cursor */
+    int last_written;  /* the buffer that is up to date, -1 if none */
+    int writing;       /* the buffer of the frame in progress, -1 if none */
+    int n_presents_inflight;
+
+    /* Under notes_lock. */
+    uint64_t acked[N_BUFFERS];
+    int n_acked;
+    /* presentIds are never reused. When the pool is rebuilt this is the
+     * highest one issued against the old pool, so a late ack cannot retire
+     * the same-numbered buffer of the new one. */
+    uint64_t present_id_floor;
+
+    int shm_fd;
+    void *shm_addr;
+    size_t shm_size;
+    /* A GUID in braces, the name of the section the client opens, and the
+     * file on the share that is. */
+    char *shm_name;
+    char *shm_path;
 };
 
 /* FreeRDP allocates this inside the peer (ContextSize), so it has to begin
@@ -128,9 +155,9 @@ struct peer_context {
     int gfxredir_activated;        /* atomic */
     gint64 gfxredir_caps_deadline; /* 0 for none */
 
-    /* MS-RDPEDISP: the client says what size its window has. */
+    /* MS-RDPEDISP: the client says what size its windows have. */
     DispServerContext *disp;
-    /* Weaselway::Display: and what refresh rate its monitor has. */
+    /* Weaselway::Display: and what refresh rate their monitors have. */
     HANDLE wwdisplay;
 
     /* rdpsnd and audin; see audio.h. */
@@ -151,32 +178,14 @@ struct peer_context {
      * the main loop. */
     GMutex notes_lock;
     bool disp_requested;
-    int disp_width, disp_height;
+    struct monitor disp_monitors[RDP_MAX_OUTPUTS];
+    int disp_count;
     bool gfxredir_present_requested;
     const char *gfxredir_caps_error;
-    uint64_t gfxredir_acked[N_BUFFERS];
-    int gfxredir_n_acked;
-    /* presentIds are never reused. When the pool is rebuilt this is the
-     * highest one issued against the old pool, so a late ack cannot retire
-     * the same-numbered buffer of the new one. */
-    uint64_t present_id_floor;
 
-    bool pool_created;
-    int pool_width, pool_height, pool_stride;
-    struct buffer buffers[N_BUFFERS];
-    int next_buffer;   /* round-robin cursor */
-    int last_written;  /* the buffer that is up to date, -1 if none */
-    int writing;       /* the buffer of the frame in progress, -1 if none */
-    int n_presents_inflight;
+    struct pool pools[RDP_MAX_OUTPUTS];
+    /* One sequence for all pools. */
     uint64_t last_present_id;
-
-    int shm_fd;
-    void *shm_addr;
-    size_t shm_size;
-    /* A GUID in braces, the name of the section the client opens, and the
-     * file on the share that is. */
-    char *shm_name;
-    char *shm_path;
 };
 
 /* A descriptor of FreeRDP's that the main loop watches for us. */
@@ -189,6 +198,19 @@ struct watch {
 struct rdp_source {
     GSource source;
     struct rdp_server *server;
+};
+
+struct server_output {
+    int screen_width, screen_height;
+    bool full_requested;
+    /* The refresh rate of the client's monitor; 0 until it says. */
+    uint32_t refresh_mhz;
+    /* The last PRESENT_TIMING, until it is taken. */
+    bool present_timing_pending;
+    uint32_t present_timing_frames;
+    int32_t present_timing_slack_us;
+    /* Bumped whenever the pool goes away, which ends any frame begun on it. */
+    uint64_t generation;
 };
 
 struct rdp_server {
@@ -212,8 +234,7 @@ struct rdp_server {
     gint64 deadline; /* -1 for none */
     int woken;       /* atomic */
 
-    int screen_width, screen_height;
-    bool full_requested;
+    struct server_output outputs[RDP_MAX_OUTPUTS];
 
     /* The pointer's image, bottom-up as the wire wants it; NULL for a hidden
      * pointer. Nothing is sent before the first rdp_server_set_pointer(). */
@@ -222,19 +243,12 @@ struct rdp_server {
     int pointer_width, pointer_height;
     int pointer_hot_x, pointer_hot_y;
 
-    /* The size the client asked for, and until when the screen may take to
-     * get there. */
-    int wanted_width, wanted_height;
+    /* The monitors the client asked for, normalized, and until when the
+     * screens may take to get there. */
+    struct monitor wanted[RDP_MAX_OUTPUTS];
+    int n_wanted;
     gint64 wanted_deadline;
-    bool size_request_pending;
-    /* The refresh rate of the client's monitor; 0 until it says. */
-    uint32_t wanted_refresh_mhz;
-    /* The last PRESENT_TIMING, until it is taken. */
-    bool present_timing_pending;
-    uint32_t present_timing_frames;
-    int32_t present_timing_slack_us;
-    /* Bumped whenever a pool goes away, which ends any frame begun on it. */
-    uint64_t generation;
+    bool layout_request_pending;
 };
 
 #define MS(ms) ((gint64)(ms) * G_TIME_SPAN_MILLISECOND)
@@ -245,6 +259,14 @@ wake(struct rdp_server *server)
 {
     g_atomic_int_set(&server->woken, 1);
     g_main_context_wakeup(server->context);
+}
+
+/* Every output owes the client its whole screen. */
+static void
+request_full(struct rdp_server *server)
+{
+    for (int i = 0; i < RDP_MAX_OUTPUTS; i++)
+        server->outputs[i].full_requested = true;
 }
 
 void
@@ -294,23 +316,23 @@ peer_fail(struct peer_context *peer_ctx, const char *reason)
 /* ------------------------------------------------------------------ */
 
 static void
-free_shared_memory(struct peer_context *peer_ctx)
+free_shared_memory(struct pool *pool)
 {
-    if (peer_ctx->shm_addr)
-        munmap(peer_ctx->shm_addr, peer_ctx->shm_size);
-    peer_ctx->shm_addr = NULL;
-    peer_ctx->shm_size = 0;
+    if (pool->shm_addr)
+        munmap(pool->shm_addr, pool->shm_size);
+    pool->shm_addr = NULL;
+    pool->shm_size = 0;
 
-    g_clear_fd(&peer_ctx->shm_fd, NULL);
-    if (peer_ctx->shm_path)
-        g_unlink(peer_ctx->shm_path);
-    g_clear_pointer(&peer_ctx->shm_path, g_free);
-    g_clear_pointer(&peer_ctx->shm_name, g_free);
+    g_clear_fd(&pool->shm_fd, NULL);
+    if (pool->shm_path)
+        g_unlink(pool->shm_path);
+    g_clear_pointer(&pool->shm_path, g_free);
+    g_clear_pointer(&pool->shm_name, g_free);
 }
 
 /* A GUID-named file on the share; the client opens the section of that name. */
 static bool
-allocate_shared_memory(struct peer_context *peer_ctx, size_t size)
+allocate_shared_memory(struct peer_context *peer_ctx, struct pool *pool, size_t size)
 {
     g_autofree char *uuid = g_uuid_string_random();
     g_autofree char *name = g_strdup_printf("{%s}", uuid);
@@ -334,12 +356,12 @@ allocate_shared_memory(struct peer_context *peer_ctx, size_t size)
         goto fail;
     }
 
-    peer_ctx->shm_fd = g_steal_fd(&fd);
-    peer_ctx->shm_addr = addr;
-    peer_ctx->shm_size = size;
-    peer_ctx->shm_name = g_steal_pointer(&name);
-    peer_ctx->shm_path = g_steal_pointer(&path);
-    g_message("allocated shared memory %s (%zu bytes)", peer_ctx->shm_name, size);
+    pool->shm_fd = g_steal_fd(&fd);
+    pool->shm_addr = addr;
+    pool->shm_size = size;
+    pool->shm_name = g_steal_pointer(&name);
+    pool->shm_path = g_steal_pointer(&path);
+    g_message("allocated shared memory %s (%zu bytes)", pool->shm_name, size);
     return true;
 
 fail:
@@ -349,49 +371,59 @@ fail:
 }
 
 static void
-destroy_pool(struct peer_context *peer_ctx)
+destroy_pool(struct peer_context *peer_ctx, int output)
 {
     GfxRedirServerContext *redir = peer_ctx->gfxredir;
+    struct pool *pool = &peer_ctx->pools[output];
 
-    if (!peer_ctx->pool_created)
+    if (!pool->created)
         return;
 
     /* A frame being written is about to lose the memory under it. */
-    peer_ctx->server->generation++;
+    peer_ctx->server->outputs[output].generation++;
 
     if (redir) {
-        GFXREDIR_CLOSE_POOL_PDU close_pool = { .poolId = POOL_ID };
+        GFXREDIR_CLOSE_POOL_PDU close_pool = { .poolId = POOL_ID(output) };
 
         for (int i = 0; i < N_BUFFERS; i++) {
-            GFXREDIR_DESTROY_BUFFER_PDU destroy_buffer = { .bufferId = BUFFER_ID(i) };
+            GFXREDIR_DESTROY_BUFFER_PDU destroy_buffer = { .bufferId = BUFFER_ID(output, i) };
 
             redir->DestroyBuffer(redir, &destroy_buffer);
         }
         redir->ClosePool(redir, &close_pool);
     }
 
-    free_shared_memory(peer_ctx);
+    free_shared_memory(pool);
 
     /* Every present so far named a buffer that no longer exists. Their acks
      * may still arrive, or never; refuse to retire anything up to here. */
     g_mutex_lock(&peer_ctx->notes_lock);
-    peer_ctx->present_id_floor = peer_ctx->last_present_id;
-    peer_ctx->gfxredir_n_acked = 0;
+    pool->present_id_floor = peer_ctx->last_present_id;
+    pool->n_acked = 0;
     g_mutex_unlock(&peer_ctx->notes_lock);
 
-    memset(peer_ctx->buffers, 0, sizeof(peer_ctx->buffers));
-    peer_ctx->pool_created = false;
-    peer_ctx->next_buffer = 0;
-    peer_ctx->last_written = -1;
-    peer_ctx->writing = -1;
-    peer_ctx->n_presents_inflight = 0;
+    memset(pool->buffers, 0, sizeof(pool->buffers));
+    pool->created = false;
+    pool->next_buffer = 0;
+    pool->last_written = -1;
+    pool->writing = -1;
+    pool->n_presents_inflight = 0;
 }
 
-/* Create the pool and its buffers at the screen's size, once and on resize. */
+static void
+destroy_pools(struct peer_context *peer_ctx, int from)
+{
+    for (int i = from; i < RDP_MAX_OUTPUTS; i++)
+        destroy_pool(peer_ctx, i);
+}
+
+/* Create the output's pool and its buffers at the screen's size, once and on
+ * resize. */
 static bool
-ensure_pool(struct peer_context *peer_ctx, int width, int height)
+ensure_pool(struct peer_context *peer_ctx, int output, int width, int height)
 {
     GfxRedirServerContext *redir = peer_ctx->gfxredir;
+    struct pool *pool = &peer_ctx->pools[output];
     /* Rows a multiple of 256 bytes: the client can then copy them on the GPU
      * straight out of the pool (D3D12's placed-footprint pitch). */
     int stride = (width * 4 + 255) & ~255;
@@ -410,31 +442,31 @@ ensure_pool(struct peer_context *peer_ctx, int width, int height)
     if (width <= 0 || height <= 0)
         return false;
 
-    if (peer_ctx->pool_created && peer_ctx->pool_width == width && peer_ctx->pool_height == height)
+    if (pool->created && pool->width == width && pool->height == height)
         return true;
 
-    destroy_pool(peer_ctx);
+    destroy_pool(peer_ctx, output);
 
-    if (!allocate_shared_memory(peer_ctx, pool_size))
+    if (!allocate_shared_memory(peer_ctx, pool, pool_size))
         return false;
 
     /* The section name is UTF-16 on the wire, counted with its terminator. */
-    section_name = g_utf8_to_utf16(peer_ctx->shm_name, -1, NULL, &section_name_length, NULL);
+    section_name = g_utf8_to_utf16(pool->shm_name, -1, NULL, &section_name_length, NULL);
 
-    open_pool.poolId = POOL_ID;
+    open_pool.poolId = POOL_ID(output);
     open_pool.poolSize = pool_size;
     open_pool.sectionNameLength = (UINT32)section_name_length + 1;
     open_pool.sectionName = section_name;
     if (!section_name || redir->OpenPool(redir, &open_pool) != CHANNEL_RC_OK) {
         g_warning("gfxredir OpenPool failed");
-        free_shared_memory(peer_ctx);
+        free_shared_memory(pool);
         return false;
     }
 
     for (int i = 0; i < N_BUFFERS; i++) {
         GFXREDIR_CREATE_BUFFER_PDU create_buffer = {
-            .poolId = POOL_ID,
-            .bufferId = BUFFER_ID(i),
+            .poolId = POOL_ID(output),
+            .bufferId = BUFFER_ID(output, i),
             .offset = (size_t)i * buffer_pitch,
             .stride = (UINT32)stride,
             .width = (UINT32)width,
@@ -443,40 +475,39 @@ ensure_pool(struct peer_context *peer_ctx, int width, int height)
         };
 
         if (redir->CreateBuffer(redir, &create_buffer) != CHANNEL_RC_OK) {
-            GFXREDIR_CLOSE_POOL_PDU close_pool = { .poolId = POOL_ID };
+            GFXREDIR_CLOSE_POOL_PDU close_pool = { .poolId = POOL_ID(output) };
 
             g_warning("gfxredir CreateBuffer failed");
             redir->ClosePool(redir, &close_pool);
-            free_shared_memory(peer_ctx);
+            free_shared_memory(pool);
             return false;
         }
 
-        peer_ctx->buffers[i] = (struct buffer){ .offset = (size_t)i * buffer_pitch };
+        pool->buffers[i] = (struct buffer){ .offset = (size_t)i * buffer_pitch };
     }
 
-    peer_ctx->pool_created = true;
-    peer_ctx->pool_width = width;
-    peer_ctx->pool_height = height;
-    peer_ctx->pool_stride = stride;
-    peer_ctx->next_buffer = 0;
+    pool->created = true;
+    pool->width = width;
+    pool->height = height;
+    pool->stride = stride;
+    pool->next_buffer = 0;
     /* Nothing has been written, so there is nothing to copy from either; the
      * first frame is a full one. */
-    peer_ctx->last_written = -1;
-    peer_ctx->writing = -1;
-    peer_ctx->n_presents_inflight = 0;
-    g_message("gfxredir pool created: %d buffers of %dx%d, %zu bytes", N_BUFFERS, width, height,
-            pool_size);
+    pool->last_written = -1;
+    pool->writing = -1;
+    pool->n_presents_inflight = 0;
+    g_message("gfxredir pool %d created: %d buffers of %dx%d, %zu bytes", output, N_BUFFERS,
+              width, height, pool_size);
     return true;
 }
 
 static void
-copy_between_buffers(struct peer_context *peer_ctx, int src_index, int dst_index,
-                     const struct rdp_rect *rect)
+copy_between_buffers(struct pool *pool, int src_index, int dst_index, const struct rdp_rect *rect)
 {
-    uint8_t *base = peer_ctx->shm_addr;
-    const uint8_t *src = base + peer_ctx->buffers[src_index].offset;
-    uint8_t *dst = base + peer_ctx->buffers[dst_index].offset;
-    size_t stride = (size_t)peer_ctx->pool_stride;
+    uint8_t *base = pool->shm_addr;
+    const uint8_t *src = base + pool->buffers[src_index].offset;
+    uint8_t *dst = base + pool->buffers[dst_index].offset;
+    size_t stride = (size_t)pool->stride;
     size_t row_bytes = (size_t)rect->width * 4;
 
     for (int y = rect->y; y < rect->y + rect->height; y++) {
@@ -496,20 +527,20 @@ copy_between_buffers(struct peer_context *peer_ctx, int src_index, int dst_index
  * is copied between buffers at all.
  */
 static int
-acquire_buffer(struct peer_context *peer_ctx)
+acquire_buffer(struct pool *pool)
 {
     int best = -1;
     int64_t best_area = 0;
 
     for (int n = 0; n < N_BUFFERS; n++) {
-        int i = (peer_ctx->next_buffer + n) % N_BUFFERS;
-        const struct buffer *buffer = &peer_ctx->buffers[i];
+        int i = (pool->next_buffer + n) % N_BUFFERS;
+        const struct buffer *buffer = &pool->buffers[i];
         int64_t area;
 
         if (buffer->in_flight)
             continue;
 
-        if (i == peer_ctx->last_written) {
+        if (i == pool->last_written) {
             best = i;
             break;
         }
@@ -522,19 +553,24 @@ acquire_buffer(struct peer_context *peer_ctx)
     }
 
     if (best >= 0)
-        peer_ctx->next_buffer = (best + 1) % N_BUFFERS;
+        pool->next_buffer = (best + 1) % N_BUFFERS;
     return best;
 }
 
-static struct peer_context *
-frame_peer(struct rdp_server *server, const struct rdp_frame *frame)
+/* The pool of the frame, NULL if the frame is over. */
+static struct pool *
+frame_pool(struct rdp_server *server, const struct rdp_frame *frame)
 {
     struct peer_context *peer_ctx = server->peer;
+    struct pool *pool;
 
-    if (!peer_ctx || frame->generation != server->generation || !peer_ctx->pool_created ||
-        frame->index < 0 || frame->index != peer_ctx->writing)
+    if (!peer_ctx || frame->output < 0 || frame->output >= RDP_MAX_OUTPUTS ||
+        frame->generation != server->outputs[frame->output].generation)
         return NULL;
-    return peer_ctx;
+    pool = &peer_ctx->pools[frame->output];
+    if (!pool->created || frame->index < 0 || frame->index != pool->writing)
+        return NULL;
+    return pool;
 }
 
 /*
@@ -566,37 +602,41 @@ audio_flush(void *data)
 }
 
 bool
-rdp_server_begin_frame(struct rdp_server *server, const struct rdp_rect *rect,
+rdp_server_begin_frame(struct rdp_server *server, int output, const struct rdp_rect *rect,
                        struct rdp_frame *frame)
 {
     struct peer_context *peer_ctx = server->peer;
+    struct pool *pool;
     struct buffer *buffer;
     int index;
 
-    if (rdp_server_state(server) != RDP_READY)
+    if (rdp_server_state(server, output) != RDP_READY)
         return false;
 
-    if (!ensure_pool(peer_ctx, server->screen_width, server->screen_height)) {
+    if (!ensure_pool(peer_ctx, output, server->outputs[output].screen_width,
+                     server->outputs[output].screen_height)) {
         peer_fail(peer_ctx, "The shared-memory pool could not be created.");
         return false;
     }
 
-    index = acquire_buffer(peer_ctx);
+    pool = &peer_ctx->pools[output];
+    index = acquire_buffer(pool);
     if (index < 0)
         return false;
-    buffer = &peer_ctx->buffers[index];
+    buffer = &pool->buffers[index];
 
     /* Bring the buffer up to date before writing into it: it missed every
      * frame that went to another one. Nothing to do where @rect covers the
      * hole, which in steady state it nearly always does -- the damage lands
      * in much the same place every frame. */
-    if (buffer->is_stale && peer_ctx->last_written >= 0 && peer_ctx->last_written != index &&
+    if (buffer->is_stale && pool->last_written >= 0 && pool->last_written != index &&
         !rect_contains(rect, &buffer->stale))
-        copy_between_buffers(peer_ctx, peer_ctx->last_written, index, &buffer->stale);
+        copy_between_buffers(pool, pool->last_written, index, &buffer->stale);
     buffer->is_stale = false;
 
-    peer_ctx->writing = index;
-    frame->generation = server->generation;
+    pool->writing = index;
+    frame->generation = server->outputs[output].generation;
+    frame->output = output;
     frame->index = index;
     return true;
 }
@@ -604,25 +644,25 @@ rdp_server_begin_frame(struct rdp_server *server, const struct rdp_rect *rect,
 uint8_t *
 rdp_server_frame_pixels(struct rdp_server *server, const struct rdp_frame *frame, size_t *stride)
 {
-    struct peer_context *peer_ctx = frame_peer(server, frame);
+    struct pool *pool = frame_pool(server, frame);
 
-    if (!peer_ctx)
+    if (!pool)
         return NULL;
-    *stride = (size_t)peer_ctx->pool_stride;
-    return (uint8_t *)peer_ctx->shm_addr + peer_ctx->buffers[frame->index].offset;
+    *stride = (size_t)pool->stride;
+    return (uint8_t *)pool->shm_addr + pool->buffers[frame->index].offset;
 }
 
 void
 rdp_server_cancel_frame(struct rdp_server *server, const struct rdp_frame *frame)
 {
-    struct peer_context *peer_ctx = frame_peer(server, frame);
+    struct pool *pool = frame_pool(server, frame);
 
-    if (!peer_ctx)
+    if (!pool)
         return;
 
     /* The buffer was brought up to date and then not written, which leaves it
      * exactly as up to date as the last written one. */
-    peer_ctx->writing = -1;
+    pool->writing = -1;
 }
 
 /* Publish a buffer whose pixels are in shared memory. Any earlier and the
@@ -633,22 +673,23 @@ void
 rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
                      const struct rdp_rect *rect)
 {
-    struct peer_context *peer_ctx = frame_peer(server, frame);
+    struct pool *pool = frame_pool(server, frame);
+    struct peer_context *peer_ctx = server->peer;
     GFXREDIR_PRESENT_BUFFER_PDU present = { 0 };
     RECTANGLE_32 opaque_rect;
     struct buffer *buffer;
 
-    if (!peer_ctx)
+    if (!pool)
         return;
 
-    buffer = &peer_ctx->buffers[frame->index];
-    peer_ctx->writing = -1;
+    buffer = &pool->buffers[frame->index];
+    pool->writing = -1;
 
     /* This buffer is now current; every other one is missing this frame. */
-    peer_ctx->last_written = frame->index;
+    pool->last_written = frame->index;
     for (int i = 0; i < N_BUFFERS; i++) {
         if (i != frame->index)
-            buffer_add_stale(&peer_ctx->buffers[i], rect);
+            buffer_add_stale(&pool->buffers[i], rect);
     }
 
     opaque_rect.left = (UINT32)rect->x;
@@ -658,11 +699,11 @@ rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
 
     present.timestamp = 0; /* no A/V sync on the client */
     present.presentId = ++peer_ctx->last_present_id;
-    present.windowId = DESKTOP_WINDOW_ID;
-    present.bufferId = BUFFER_ID(frame->index);
+    present.windowId = (UINT64)frame->output;
+    present.bufferId = BUFFER_ID(frame->output, frame->index);
     present.orientation = 0;
-    present.targetWidth = (UINT32)peer_ctx->pool_width;
-    present.targetHeight = (UINT32)peer_ctx->pool_height;
+    present.targetWidth = (UINT32)pool->width;
+    present.targetHeight = (UINT32)pool->height;
     present.dirtyRect = opaque_rect;
     present.numOpaqueRects = 1;
     present.opaqueRects = &opaque_rect;
@@ -674,13 +715,13 @@ rdp_server_end_frame(struct rdp_server *server, const struct rdp_frame *frame,
 
     buffer->in_flight = true;
     buffer->present_id = present.presentId;
-    peer_ctx->n_presents_inflight++;
+    pool->n_presents_inflight++;
     flush_channels(peer_ctx);
 
     if (server->config.verbose)
-        g_debug("present %llu: buffer %d, %dx%d+%d+%d, %d in flight",
-                (unsigned long long)present.presentId, frame->index, rect->width, rect->height,
-                rect->x, rect->y, peer_ctx->n_presents_inflight);
+        g_debug("present %llu: output %d buffer %d, %dx%d+%d+%d, %d in flight",
+                (unsigned long long)present.presentId, frame->output, frame->index, rect->width,
+                rect->height, rect->x, rect->y, pool->n_presents_inflight);
 }
 
 /* ------------------------------------------------------------------ */
@@ -758,15 +799,17 @@ gfxredir_present_buffer_ack(GfxRedirServerContext *context,
                             const GFXREDIR_PRESENT_BUFFER_ACK_PDU *ack)
 {
     struct peer_context *peer_ctx = context->custom;
+    struct pool *pool;
 
-    if (ack->windowId != DESKTOP_WINDOW_ID)
+    if (ack->windowId >= RDP_MAX_OUTPUTS)
         return CHANNEL_RC_OK;
+    pool = &peer_ctx->pools[ack->windowId];
 
     g_mutex_lock(&peer_ctx->notes_lock);
     /* An ack at or below the floor is for a pool that is gone. We never have
      * more presents outstanding than buffers, so there is always room. */
-    if (ack->presentId > peer_ctx->present_id_floor && peer_ctx->gfxredir_n_acked < N_BUFFERS)
-        peer_ctx->gfxredir_acked[peer_ctx->gfxredir_n_acked++] = ack->presentId;
+    if (ack->presentId > pool->present_id_floor && pool->n_acked < N_BUFFERS)
+        pool->acked[pool->n_acked++] = ack->presentId;
     g_mutex_unlock(&peer_ctx->notes_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
@@ -776,19 +819,21 @@ gfxredir_present_buffer_ack(GfxRedirServerContext *context,
 static void
 gfxredir_dispatch(struct peer_context *peer_ctx)
 {
-    uint64_t acked[N_BUFFERS];
+    uint64_t acked[RDP_MAX_OUTPUTS][N_BUFFERS];
+    int n_acked[RDP_MAX_OUTPUTS];
     const char *caps_error;
     bool present_requested;
-    int n_acked;
 
     g_mutex_lock(&peer_ctx->notes_lock);
     caps_error = peer_ctx->gfxredir_caps_error;
     peer_ctx->gfxredir_caps_error = NULL;
     present_requested = peer_ctx->gfxredir_present_requested;
     peer_ctx->gfxredir_present_requested = false;
-    n_acked = peer_ctx->gfxredir_n_acked;
-    memcpy(acked, peer_ctx->gfxredir_acked, sizeof(acked));
-    peer_ctx->gfxredir_n_acked = 0;
+    for (int o = 0; o < RDP_MAX_OUTPUTS; o++) {
+        n_acked[o] = peer_ctx->pools[o].n_acked;
+        memcpy(acked[o], peer_ctx->pools[o].acked, sizeof(acked[o]));
+        peer_ctx->pools[o].n_acked = 0;
+    }
     g_mutex_unlock(&peer_ctx->notes_lock);
 
     if (caps_error) {
@@ -797,21 +842,25 @@ gfxredir_dispatch(struct peer_context *peer_ctx)
     }
 
     /* The acked buffers are ours to write again. */
-    for (int a = 0; a < n_acked; a++) {
-        for (int i = 0; i < N_BUFFERS; i++) {
-            struct buffer *buffer = &peer_ctx->buffers[i];
+    for (int o = 0; o < RDP_MAX_OUTPUTS; o++) {
+        struct pool *pool = &peer_ctx->pools[o];
 
-            if (buffer->in_flight && buffer->present_id == acked[a]) {
-                buffer->in_flight = false;
-                peer_ctx->n_presents_inflight--;
-                break;
+        for (int a = 0; a < n_acked[o]; a++) {
+            for (int i = 0; i < N_BUFFERS; i++) {
+                struct buffer *buffer = &pool->buffers[i];
+
+                if (buffer->in_flight && buffer->present_id == acked[o][a]) {
+                    buffer->in_flight = false;
+                    pool->n_presents_inflight--;
+                    break;
+                }
             }
         }
     }
 
     if (present_requested) {
         peer_ctx->gfxredir_caps_deadline = 0;
-        peer_ctx->server->full_requested = true;
+        request_full(peer_ctx->server);
     }
 
     if (peer_ctx->gfxredir_caps_deadline &&
@@ -850,20 +899,41 @@ setup_gfxredir(struct peer_context *peer_ctx)
 }
 
 /* ------------------------------------------------------------------ */
-/* The client's size                                                  */
+/* The client's monitors                                              */
 /* ------------------------------------------------------------------ */
 
-static void
-request_size(struct rdp_server *server, int width, int height)
+/* MS-RDPBCGR and MS-RDPEDISP both say to ignore a physical size outside
+ * 10..10000 mm. */
+static uint32_t
+physical_mm(uint32_t mm)
 {
-    if (width <= 0 || height <= 0)
-        return;
+    return mm >= 10 && mm <= 10000 ? mm : 0;
+}
 
-    g_message("the client wants %dx%d", width, height);
-    server->wanted_width = width;
-    server->wanted_height = height;
+static void
+request_layout(struct peer_context *peer_ctx, const struct monitor *monitors, int count)
+{
+    struct rdp_server *server = peer_ctx->server;
+    struct monitor wanted[RDP_MAX_OUTPUTS];
+
+    if (count <= 0 || count > RDP_MAX_OUTPUTS)
+        return;
+    memcpy(wanted, monitors, sizeof(*monitors) * (size_t)count);
+    if (!layout_normalize(wanted, count)) {
+        g_warning("ignoring a layout of %d monitors with an empty one", count);
+        return;
+    }
+
+    for (int i = 0; i < count; i++)
+        g_message("the client wants monitor %d at %dx%d+%d+%d", i, wanted[i].width,
+                  wanted[i].height, wanted[i].x, wanted[i].y);
+
+    /* The outputs past the last monitor show nothing any more. */
+    destroy_pools(peer_ctx, count);
+    memcpy(server->wanted, wanted, sizeof(wanted));
+    server->n_wanted = count;
     server->wanted_deadline = g_get_monotonic_time() + MS(SIZE_REQUEST_TIMEOUT_MS);
-    server->size_request_pending = true;
+    server->layout_request_pending = true;
 }
 
 /* Channel thread. */
@@ -871,25 +941,26 @@ static UINT
 disp_monitor_layout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU *pdu)
 {
     struct peer_context *peer_ctx = context->custom;
-    const DISPLAY_CONTROL_MONITOR_LAYOUT *primary = NULL;
+    int count = (int)MIN(pdu->NumMonitors, (UINT32)RDP_MAX_OUTPUTS);
 
-    if (pdu->NumMonitors == 0)
+    if (count == 0)
         return CHANNEL_RC_OK;
-
-    /* One screen: the primary monitor, or the first if none is flagged. */
-    for (UINT32 i = 0; i < pdu->NumMonitors; i++) {
-        if (pdu->Monitors[i].Flags & DISPLAY_CONTROL_MONITOR_PRIMARY) {
-            primary = &pdu->Monitors[i];
-            break;
-        }
-    }
-    if (!primary)
-        primary = &pdu->Monitors[0];
 
     g_mutex_lock(&peer_ctx->notes_lock);
     peer_ctx->disp_requested = true;
-    peer_ctx->disp_width = (int)primary->Width;
-    peer_ctx->disp_height = (int)primary->Height;
+    peer_ctx->disp_count = count;
+    for (int i = 0; i < count; i++) {
+        const DISPLAY_CONTROL_MONITOR_LAYOUT *m = &pdu->Monitors[i];
+
+        peer_ctx->disp_monitors[i] = (struct monitor){
+            .x = m->Left,
+            .y = m->Top,
+            .width = (int)m->Width,
+            .height = (int)m->Height,
+            .width_mm = physical_mm(m->PhysicalWidth),
+            .height_mm = physical_mm(m->PhysicalHeight),
+        };
+    }
     g_mutex_unlock(&peer_ctx->notes_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;
@@ -899,40 +970,62 @@ disp_monitor_layout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LA
 static void
 disp_dispatch(struct peer_context *peer_ctx)
 {
+    struct monitor monitors[RDP_MAX_OUTPUTS];
     bool requested;
-    int width, height;
+    int count;
 
     g_mutex_lock(&peer_ctx->notes_lock);
     requested = peer_ctx->disp_requested;
     peer_ctx->disp_requested = false;
-    width = peer_ctx->disp_width;
-    height = peer_ctx->disp_height;
+    count = peer_ctx->disp_count;
+    memcpy(monitors, peer_ctx->disp_monitors, sizeof(monitors));
     g_mutex_unlock(&peer_ctx->notes_lock);
 
-    /* No DesktopResize from here: that goes out once the screen has the new
-     * size, see peer_sync_desktop_size(). */
+    /* No DesktopResize from here: that goes out once the screens have the new
+     * sizes, see peer_sync_desktop_size(). */
     if (requested)
-        request_size(peer_ctx->server, width, height);
+        request_layout(peer_ctx, monitors, count);
+}
+
+/* The monitors the client connected with. A client with one monitor sends
+ * none, and its desktop is that monitor. */
+static void
+request_connect_layout(struct peer_context *peer_ctx)
+{
+    rdpSettings *settings = peer_ctx->peer->context->settings;
+    UINT32 n = freerdp_settings_get_uint32(settings, FreeRDP_MonitorCount);
+    bool attributes = freerdp_settings_get_bool(settings, FreeRDP_HasMonitorAttributes);
+    struct monitor monitors[RDP_MAX_OUTPUTS] = { 0 };
+    int count = (int)MIN(n, (UINT32)RDP_MAX_OUTPUTS);
+
+    for (int i = 0; i < count; i++) {
+        const rdpMonitor *m =
+            freerdp_settings_get_pointer_array(settings, FreeRDP_MonitorDefArray, (size_t)i);
+
+        if (!m) {
+            count = 0;
+            break;
+        }
+        monitors[i] = (struct monitor){ .x = m->x, .y = m->y, .width = m->width, .height = m->height };
+        if (attributes) {
+            monitors[i].width_mm = physical_mm(m->attributes.physicalWidth);
+            monitors[i].height_mm = physical_mm(m->attributes.physicalHeight);
+        }
+    }
+    if (count == 0) {
+        monitors[0].width = (int)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+        monitors[0].height = (int)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+        count = 1;
+    }
+    request_layout(peer_ctx, monitors, count);
 }
 
 /* ------------------------------------------------------------------ */
-/* The client's refresh rate                                          */
+/* The client's refresh rates                                         */
 /* ------------------------------------------------------------------ */
 
-/*
- * Weaselway::Display, the viewer's own channel (wwdisplay in weaselway's
- * FreeRDP): the refresh rate of the monitor the client's window is on, which
- * RDP has no field for. Every PDU is UINT16 type, UINT16 reserved, then the
- * body, little endian; REFRESH_RATE's body is a UINT32 in millihertz,
- * PRESENT_TIMING's a UINT32 frame count and an INT32 slack in microseconds.
- */
-#define WWDISPLAY_DVC_CHANNEL_NAME "Weaselway::Display"
-#define WWDISPLAY_PDU_REFRESH_RATE 1
-#define WWDISPLAY_PDU_PRESENT_TIMING 2
-#define WWDISPLAY_MAX_PDU 64
-
-/* A client without the channel refuses it, and the screen keeps dxgdrm's
- * default rate. */
+/* Weaselway::Display, see wwdisplay.h. A client without the channel refuses
+ * it, and the screens keep dxgdrm's default rate. */
 static void
 setup_wwdisplay(struct peer_context *peer_ctx)
 {
@@ -948,72 +1041,63 @@ setup_wwdisplay(struct peer_context *peer_ctx)
     WTSFreeMemory(session_id);
 }
 
-static uint32_t
-le32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
 /* The PDUs arrive whole, on the main loop, when the channel manager is
  * pumped; this takes whatever came. */
 static void
 wwdisplay_dispatch(struct peer_context *peer_ctx)
 {
     struct rdp_server *server = peer_ctx->server;
-    uint8_t pdu[WWDISPLAY_MAX_PDU];
+    uint8_t data[WWDISPLAY_MAX_PDU];
     ULONG length;
 
     if (!peer_ctx->wwdisplay)
         return;
 
     while (WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, NULL, 0, &length)) {
+        struct wwdisplay_pdu pdu;
+        struct server_output *out;
         ULONG got = 0;
-        unsigned type;
-        uint32_t mhz;
 
         if (length > sizeof(pdu)) {
             g_warning("Weaselway::Display: dropping a %lu byte PDU", (unsigned long)length);
             while (length > 0 &&
-                   WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)pdu, sizeof(pdu), &got) &&
+                   WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)data, sizeof(data), &got) &&
                    got > 0)
                 length -= MIN(length, got);
             continue;
         }
-        if (!WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)pdu, sizeof(pdu), &got))
+        if (!WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, (PCHAR)data, sizeof(data), &got))
             break;
 
-        if (got < 4)
+        if (!wwdisplay_parse(data, got, &pdu)) {
+            g_warning("Weaselway::Display: dropping a malformed %lu byte PDU", (unsigned long)got);
             continue;
-        type = pdu[0] | pdu[1] << 8;
-        if (type == WWDISPLAY_PDU_PRESENT_TIMING) {
-            if (got != 12) {
-                g_warning("Weaselway::Display: PRESENT_TIMING of %lu bytes", (unsigned long)got);
-                continue;
-            }
-            server->present_timing_frames = le32(pdu + 4);
-            server->present_timing_slack_us = (int32_t)le32(pdu + 8);
-            server->present_timing_pending = true;
+        }
+        if (pdu.monitor >= RDP_MAX_OUTPUTS)
+            continue;
+        out = &server->outputs[pdu.monitor];
+
+        if (pdu.type == WWDISPLAY_PDU_PRESENT_TIMING) {
+            out->present_timing_frames = pdu.frames;
+            out->present_timing_slack_us = pdu.slack_us;
+            out->present_timing_pending = true;
             continue;
         }
         /* Unknown types are for a newer client. */
-        if (type != WWDISPLAY_PDU_REFRESH_RATE)
+        if (pdu.type != WWDISPLAY_PDU_REFRESH_RATE)
             continue;
-        if (got != 8) {
-            g_warning("Weaselway::Display: REFRESH_RATE of %lu bytes", (unsigned long)got);
-            continue;
-        }
-        mhz = le32(pdu + 4);
         /* dxgdrm's range. */
-        if (mhz < 1000 || mhz > 1000000) {
-            g_warning("Weaselway::Display: ignoring a refresh rate of %u mHz", mhz);
+        if (pdu.refresh_mhz < 1000 || pdu.refresh_mhz > 1000000) {
+            g_warning("Weaselway::Display: ignoring a refresh rate of %u mHz", pdu.refresh_mhz);
             continue;
         }
-        if (mhz == server->wanted_refresh_mhz)
+        if (pdu.refresh_mhz == out->refresh_mhz)
             continue;
 
-        g_message("the client's monitor runs at %u.%03u Hz", mhz / 1000, mhz % 1000);
-        server->wanted_refresh_mhz = mhz;
-        server->size_request_pending = true;
+        g_message("the client's monitor %u runs at %u.%03u Hz", pdu.monitor,
+                  pdu.refresh_mhz / 1000, pdu.refresh_mhz % 1000);
+        out->refresh_mhz = pdu.refresh_mhz;
+        server->layout_request_pending = true;
     }
 }
 
@@ -1027,7 +1111,7 @@ setup_disp(struct peer_context *peer_ctx)
         return;
 
     disp->custom = peer_ctx;
-    disp->MaxNumMonitors = 1;
+    disp->MaxNumMonitors = RDP_MAX_OUTPUTS;
     disp->MaxMonitorAreaFactorA = DISPLAY_CONTROL_MAX_MONITOR_WIDTH;
     disp->MaxMonitorAreaFactorB = DISPLAY_CONTROL_MAX_MONITOR_HEIGHT;
     disp->DispMonitorLayout = disp_monitor_layout;
@@ -1048,12 +1132,36 @@ setup_disp(struct peer_context *peer_ctx)
 /* Input                                                              */
 /* ------------------------------------------------------------------ */
 
+/* Where the screens are: screen i at monitor i's position, with its own size,
+ * or the monitor's while it has none. */
+static void
+current_screens(struct rdp_server *server, struct monitor *screens)
+{
+    for (int i = 0; i < server->n_wanted; i++) {
+        const struct server_output *out = &server->outputs[i];
+
+        screens[i] = server->wanted[i];
+        if (out->screen_width > 0 && out->screen_height > 0) {
+            screens[i].width = out->screen_width;
+            screens[i].height = out->screen_height;
+        }
+    }
+}
+
+/* A point of the client's desktop onto the uinput pointer, whose axes span all
+ * screens. */
 static void
 pointer_position(struct peer_context *peer_ctx, UINT16 x, UINT16 y)
 {
     struct rdp_server *server = peer_ctx->server;
+    struct monitor screens[RDP_MAX_OUTPUTS];
+    int sx, sy, width, height;
 
-    input_pointer_motion(server->config.input, x, y, server->screen_width, server->screen_height);
+    current_screens(server, screens);
+    if (layout_map_point(server->wanted, screens, server->n_wanted, x, y, &sx, &sy) < 0)
+        return;
+    layout_extent(screens, server->n_wanted, &width, &height);
+    input_pointer_motion(server->config.input, sx, sy, width, height);
 }
 
 static BOOL
@@ -1375,7 +1483,7 @@ on_suppress_output(rdpContext *context, BYTE allow, const RECTANGLE_16 *area)
     g_debug("the client %s", allow ? "shows the screen again" : "stopped showing the screen");
     peer_ctx->suppressed = !allow;
     if (allow)
-        peer_ctx->server->full_requested = true;
+        request_full(peer_ctx->server);
     return TRUE;
 }
 
@@ -1407,7 +1515,7 @@ peer_finish_activation(freerdp_peer *client)
          * recreated at the new size and holds nothing. */
         if (peer_ctx->resize_pending) {
             peer_ctx->resize_pending = false;
-            peer_ctx->server->full_requested = true;
+            request_full(peer_ctx->server);
             g_message("client re-activated at %ux%u",
                     freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopWidth),
                     freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopHeight));
@@ -1422,11 +1530,9 @@ peer_finish_activation(freerdp_peer *client)
     /* The client has no pointer shape until we send one. */
     peer_send_pointer(peer_ctx);
 
-    /* The client dictates the size: the screen is asked to take the one it
-     * connected with. */
-    request_size(peer_ctx->server,
-                 (int)freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopWidth),
-                 (int)freerdp_settings_get_uint32(client->context->settings, FreeRDP_DesktopHeight));
+    /* The client dictates the layout: the screens are asked to take the one
+     * it connected with. */
+    request_connect_layout(peer_ctx);
 
     /* Before gfxredir, as Weston does. The first frame goes out once the
      * client has confirmed gfxredir caps. */
@@ -1542,9 +1648,9 @@ peer_activity(struct peer_context *peer_ctx)
 }
 
 /*
- * Get the client onto the screen's size. Returns true while it is not there
- * yet, in which case nothing may be presented: its surface and its buffer
- * mappings are the old size until it re-activates.
+ * Get the client's desktop onto the screens' extent. Returns true while it is
+ * not there yet, in which case nothing may be presented: its surface and its
+ * buffer mappings are the old size until it re-activates.
  */
 static bool
 peer_sync_desktop_size(struct peer_context *peer_ctx)
@@ -1552,20 +1658,26 @@ peer_sync_desktop_size(struct peer_context *peer_ctx)
     struct rdp_server *server = peer_ctx->server;
     freerdp_peer *client = peer_ctx->peer;
     rdpSettings *settings = client->context->settings;
-    int width = server->screen_width, height = server->screen_height;
+    struct monitor screens[RDP_MAX_OUTPUTS];
+    bool following = false;
+    int width, height;
 
     if (peer_ctx->resize_pending)
         return true;
 
+    current_screens(server, screens);
+    layout_extent(screens, server->n_wanted, &width, &height);
     if ((int)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth) == width &&
         (int)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight) == height)
         return false;
 
-    /* The screen is still on its way to the size the client asked for. If
-     * it is the client that is on that size already, this is all there is to
-     * wait for; if not, the client follows once the screen is there. */
-    if ((width != server->wanted_width || height != server->wanted_height) &&
-        g_get_monotonic_time() < server->wanted_deadline)
+    /* The screens are still on their way to the sizes the client asked for.
+     * If it is the client that is on them already, this is all there is to
+     * wait for; if not, the client follows once the screens are there. */
+    for (int i = 0; i < server->n_wanted; i++)
+        following |= screens[i].width != server->wanted[i].width ||
+                     screens[i].height != server->wanted[i].height;
+    if (following && g_get_monotonic_time() < server->wanted_deadline)
         return true;
 
     if (!freerdp_settings_get_bool(settings, FreeRDP_DesktopResize)) {
@@ -1578,7 +1690,7 @@ peer_sync_desktop_size(struct peer_context *peer_ctx)
     /* Now, while the channel is healthy: the client throws its gfxredir state
      * away on DesktopResize, unacked presents included, and those buffers
      * would stay in flight for good. */
-    destroy_pool(peer_ctx);
+    destroy_pools(peer_ctx, 0);
 
     (void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, (UINT32)width);
     (void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, (UINT32)height);
@@ -1596,9 +1708,11 @@ peer_context_new(freerdp_peer *client, rdpContext *context)
     struct peer_context *peer_ctx = (struct peer_context *)context;
 
     peer_ctx->peer = client;
-    peer_ctx->shm_fd = -1;
-    peer_ctx->last_written = -1;
-    peer_ctx->writing = -1;
+    for (int i = 0; i < RDP_MAX_OUTPUTS; i++) {
+        peer_ctx->pools[i].shm_fd = -1;
+        peer_ctx->pools[i].last_written = -1;
+        peer_ctx->pools[i].writing = -1;
+    }
     g_mutex_init(&peer_ctx->notes_lock);
     g_mutex_init(&peer_ctx->vcm_drain_lock);
     return TRUE;
@@ -1613,10 +1727,11 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
         return;
 
     if (peer_ctx->server) {
-        destroy_pool(peer_ctx);
+        destroy_pools(peer_ctx, 0);
         /* Also when no pool was ever made: a frame begun on this peer must
          * not match the next one. */
-        peer_ctx->server->generation++;
+        for (int i = 0; i < RDP_MAX_OUTPUTS; i++)
+            peer_ctx->server->outputs[i].generation++;
     }
 
     /* These join the audio threads, of which the playback one flushes the
@@ -2139,76 +2254,83 @@ rdp_server_free(struct rdp_server *server)
 }
 
 void
-rdp_server_set_screen_size(struct rdp_server *server, int width, int height)
+rdp_server_set_screen_size(struct rdp_server *server, int output, int width, int height)
 {
-    server->screen_width = width;
-    server->screen_height = height;
+    server->outputs[output].screen_width = width;
+    server->outputs[output].screen_height = height;
 }
 
 bool
-rdp_server_client_size(struct rdp_server *server, int *width, int *height)
+rdp_server_client_size(struct rdp_server *server, int output, int *width, int *height)
 {
     struct peer_context *peer_ctx = server->peer;
 
-    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed || server->wanted_width <= 0 ||
-        server->wanted_height <= 0)
+    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed || output >= server->n_wanted)
         return false;
 
-    *width = server->wanted_width;
-    *height = server->wanted_height;
+    *width = server->wanted[output].width;
+    *height = server->wanted[output].height;
     return true;
 }
 
 enum rdp_state
-rdp_server_state(struct rdp_server *server)
+rdp_server_state(struct rdp_server *server, int output)
 {
     struct peer_context *peer_ctx = server->peer;
+    const struct server_output *out = &server->outputs[output];
+    const struct pool *pool;
 
-    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed || peer_ctx->suppressed)
+    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed || peer_ctx->suppressed ||
+        output >= server->n_wanted)
         return RDP_NO_CLIENT;
-    if (server->screen_width <= 0 || server->screen_height <= 0)
+    if (out->screen_width <= 0 || out->screen_height <= 0)
         return RDP_CONNECTING;
     if (!g_atomic_int_get(&peer_ctx->gfxredir_activated))
         return RDP_CONNECTING;
     if (peer_sync_desktop_size(peer_ctx))
         return RDP_CONNECTING;
-    if (peer_ctx->writing >= 0 || peer_ctx->n_presents_inflight >= N_BUFFERS)
+    pool = &peer_ctx->pools[output];
+    if (pool->writing >= 0 || pool->n_presents_inflight >= N_BUFFERS)
         return RDP_BUSY;
     return RDP_READY;
 }
 
 bool
-rdp_server_take_size_request(struct rdp_server *server, int *width, int *height,
-                             uint32_t *refresh_mhz)
+rdp_server_take_layout_request(struct rdp_server *server,
+                               struct monitor monitors[RDP_MAX_OUTPUTS], int *count)
 {
-    /* A refresh rate can come before the size; it waits for it. */
-    bool requested = server->size_request_pending && server->wanted_width > 0 &&
-                     server->wanted_height > 0;
+    /* A refresh rate can come before the layout; it waits for it. */
+    bool requested = server->layout_request_pending && server->n_wanted > 0;
 
-    if (requested)
-        server->size_request_pending = false;
-    *width = server->wanted_width;
-    *height = server->wanted_height;
-    *refresh_mhz = server->wanted_refresh_mhz;
-    return requested;
+    if (!requested)
+        return false;
+    server->layout_request_pending = false;
+    *count = server->n_wanted;
+    for (int i = 0; i < server->n_wanted; i++) {
+        monitors[i] = server->wanted[i];
+        monitors[i].refresh_mhz = server->outputs[i].refresh_mhz;
+    }
+    return true;
 }
 
 bool
-rdp_server_take_present_timing(struct rdp_server *server, uint32_t *frames, int32_t *slack_us)
+rdp_server_take_present_timing(struct rdp_server *server, int output, uint32_t *frames,
+                               int32_t *slack_us)
 {
-    bool pending = server->present_timing_pending;
+    struct server_output *out = &server->outputs[output];
+    bool pending = out->present_timing_pending;
 
-    server->present_timing_pending = false;
-    *frames = server->present_timing_frames;
-    *slack_us = server->present_timing_slack_us;
+    out->present_timing_pending = false;
+    *frames = out->present_timing_frames;
+    *slack_us = out->present_timing_slack_us;
     return pending;
 }
 
 bool
-rdp_server_take_full_request(struct rdp_server *server)
+rdp_server_take_full_request(struct rdp_server *server, int output)
 {
-    bool requested = server->full_requested;
+    bool requested = server->outputs[output].full_requested;
 
-    server->full_requested = false;
+    server->outputs[output].full_requested = false;
     return requested;
 }

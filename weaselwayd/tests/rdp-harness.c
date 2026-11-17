@@ -20,16 +20,19 @@
 
 static struct rdp_server *server;
 
-/* Stand in for the compositor: the screen takes whatever size is asked for. */
+/* Stand in for the compositor: the screens take whatever sizes are asked for. */
 static void
 on_changed(void *data)
 {
-    int width, height;
-    uint32_t refresh_mhz;
+    struct monitor monitors[RDP_MAX_OUTPUTS];
+    int count;
 
-    if (rdp_server_take_size_request(server, &width, &height, &refresh_mhz))
-        rdp_server_set_screen_size(server, width, height);
-    rdp_server_state(server);
+    if (rdp_server_take_layout_request(server, monitors, &count)) {
+        for (int i = 0; i < RDP_MAX_OUTPUTS; i++)
+            rdp_server_set_screen_size(server, i, i < count ? monitors[i].width : 0,
+                                       i < count ? monitors[i].height : 0);
+    }
+    rdp_server_state(server, 0);
 }
 
 static gboolean
