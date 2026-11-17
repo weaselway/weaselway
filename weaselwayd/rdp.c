@@ -1687,11 +1687,9 @@ peer_sync_desktop_size(struct peer_context *peer_ctx)
 
     g_message("resizing the client's desktop to %dx%d", width, height);
 
-    /* Now, while the channel is healthy: the client throws its gfxredir state
-     * away on DesktopResize, unacked presents included, and those buffers
-     * would stay in flight for good. */
-    destroy_pools(peer_ctx, 0);
-
+    /* The pools survive this: the client keeps its gfxredir state over a
+     * DesktopResize, and an output whose size changed gets a new pool with its
+     * next frame. */
     (void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, (UINT32)width);
     (void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, (UINT32)height);
 
