@@ -11,11 +11,13 @@ LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
 SELECTION := selection.c selection-mutter.c selection-wayland.c ext-data-control-v1-protocol.c
 SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c formats.c placeholder.c log.c \
+           layout.c wwdisplay.c \
            $(SELECTION)
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
 HEADERS := rdp.h input.h audio.h clipboard.h selection.h selection-backends.h formats.h \
+           layout.h wwdisplay.h \
            placeholder.h log.h ext-data-control-v1-client-protocol.h $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
@@ -92,6 +94,10 @@ TEST_LIBS := $(shell pkg-config --libs $(TEST_PKGS))
 tests/test-formats: tests/test-formats.c formats.c formats.h
 	$(CC) $(TEST_CFLAGS) -o $@ tests/test-formats.c formats.c $(TEST_LIBS)
 
+# The monitor layout and the Weaselway::Display parser.
+tests/test-layout: tests/test-layout.c layout.c layout.h wwdisplay.c wwdisplay.h
+	$(CC) $(TEST_CFLAGS) -o $@ tests/test-layout.c layout.c wwdisplay.c
+
 # For trying the selection against a running compositor; see
 # tests/selection-mutter.sh and tests/selection-kwin.sh.
 tests/selection-tool: tests/selection-tool.c $(SELECTION) selection.h selection-backends.h \
@@ -116,14 +122,15 @@ tests/egl-load: tests/egl-load.c tests/xdg-shell-protocol.c tests/xdg-shell-clie
 	$(CC) $(TEST_CFLAGS) -Itests -o $@ tests/egl-load.c tests/xdg-shell-protocol.c \
 		$(shell pkg-config --cflags --libs wayland-client wayland-egl egl glesv2)
 
-check: tests/test-formats
+check: tests/test-formats tests/test-layout
 	tests/test-formats
+	tests/test-layout
 
 install: weaselwayd
 	install -D -m 0755 weaselwayd $(DESTDIR)$(PREFIX)/bin/weaselwayd
 
 clean:
-	rm -f weaselwayd weaselwayd-asan $(OBJECTS) $(ASAN_OBJECTS) tests/test-formats tests/selection-tool \
+	rm -f weaselwayd weaselwayd-asan $(OBJECTS) $(ASAN_OBJECTS) tests/test-formats tests/test-layout tests/selection-tool \
 		tests/rdp-harness tests/egl-load tests/xdg-shell-client-protocol.h tests/xdg-shell-protocol.c \
 		ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
 

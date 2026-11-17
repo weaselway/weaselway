@@ -4,6 +4,7 @@
 /weaselwayd/*.o
 /weaselwayd/gfxredir/*.o
 /weaselwayd/tests/test-formats
+/weaselwayd/tests/test-layout
 /weaselwayd/tests/selection-tool
 /weaselwayd/tests/rdp-harness
 /weaselwayd/tests/egl-load
