@@ -18,22 +18,22 @@ let
       # branch mesa-26.3.0-wsl
       {
         version = "26.3.0";
-        rev = "74d611fe35ac1347616b7e8080f9fb74a66db72b";
-        hash = "sha256-tqe38PZRa3OVbtmtEgsez6hAWkyt2ZCen3a33ldZzi8=";
+        rev = "9c59a6d08abfa010172e4fc449ef0b03d51407fc";
+        hash = "sha256-IzAYrU22/qpwAGIErTjdQHfcuZwgAT3ntPEIPGhxOvE=";
       }
     else if lib.versionOlder prev.mesa.version "27" then
       # branch mesa-26.2.7-wsl
       {
         version = "26.2.7";
-        rev = "853ed140e15f9960a2ded8701f849bf35881b57f";
-        hash = "sha256-wURJaRMQMUFI9YpMx02taRFbxBRjDaH1ntnf0wqkM4A=";
+        rev = "1c7b434247ac17cefc7fc137e1a581047631bc53";
+        hash = "sha256-Zrf64QSmmvhsGa04RYtEB+sMUOCH4sdIPo5cD3YAwh8=";
       }
     else
       # branch main
       {
         version = "27.0.0-devel";
-        rev = "8090654e62381a9474490406e17cb9afc08e2a19";
-        hash = "sha256-oDcI+1f4AOt89npDos+dVhe5SNPc2feJtgasy/spvNc=";
+        rev = "d80250deb66fed0cb3880911a90c8f3b6b7b2832";
+        hash = "sha256-2cbqy/+d+DJrfZlc0RwKNaV2ZqiFoHaw4ZIAMV1cHGI=";
       };
 
   mesaDrivers = {
