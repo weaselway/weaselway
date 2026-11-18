@@ -94,7 +94,7 @@ The NixOS image takes everything from the flake.
 | mesa with the d3d12 changes | `weaselway/mesa`, branch `mesa-26.2.7-wsl` | user distro (`/run/opengl-driver`) |
 | dxgdrm kernel module | `weaselway/dxgdrm` flake | user distro kernel, loaded from the store |
 | weaselwayd | [weaselwayd/](weaselwayd) in this repo | user distro, as a unit of the user manager |
-| mutter | nixpkgs, plus [one patch](nix/mutter-stage-relayout.patch) | user distro (gnome-shell links it) |
+| mutter | nixpkgs, plus three patches (`nix/mutter-*.patch`) | user distro (gnome-shell links it) |
 | KWin (optional) | nixpkgs, plus a damage patch per release | user distro |
 | aquamarine, Hyprland (optional) | nixpkgs, plus one patch each | user distro |
 | Windows viewer `sdl-freerdp.exe` | `weaselway/freerdp` flake, `packages.sdl-freerdp` | Windows, started from the store through interop |
@@ -138,7 +138,10 @@ A compositor needs no patch to run on the virtual display. The patches the image
 problems that show up there but are unrelated to RDP:
 
 - mutter: the overview keeps its old size when the stage is resized, which happens whenever the
-  viewer's window is resized. The fix is the single commit on `main` of `weaselway/mutter`.
+  viewer's window is resized. A failed device open closed fd 0, which hung GNOME when WSL's vgem
+  came back through udev. With several monitors, every view but the last had a viewport past its
+  framebuffer, which Intel Gen9's D3D12 driver draws squeezed, leaving trails. The fixes are the
+  three commits on `main` of `weaselway/mutter`.
 - KWin: it told the kernel that the whole buffer changed, so every frame was read back in full. The
   patch sets `FB_DAMAGE_CLIPS`. It is on `master` of `weaselway/kde-kwin`, with backports on
   `weaselway-6.6.6` and `weaselway-6.7.5`. The overlay picks the patch for KWin 6.6, 6.7 or 6.8

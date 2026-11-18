@@ -1,4 +1,8 @@
-clutter/stage: Keep the GL viewport inside the view's framebuffer
+From 06938689bc8c87f77a4d1c4d02caecfeb6a22aa7 Mon Sep 17 00:00:00 2001
+From: Oliver Bestmann <oliver.bestmann@googlemail.com>
+Date: Wed, 18 Nov 2026 19:27:30 +0100
+Subject: [PATCH] clutter/stage: Keep the GL viewport inside the view's
+ framebuffer
 
 Each view used to render with a viewport as large as the whole stage,
 offset by the view's position, so every view but the last one had a
@@ -11,6 +15,9 @@ and left stale content behind, for example while dragging a window.
 Use the framebuffer rect as the viewport and fold the stage offset and
 scale into the projection, reusing the fractional viewport compensation.
 The combined transform stays the same.
+---
+ clutter/clutter/clutter-stage.c | 28 +++++++++++++++++++---------
+ 1 file changed, 19 insertions(+), 9 deletions(-)
 
 diff --git a/clutter/clutter/clutter-stage.c b/clutter/clutter/clutter-stage.c
 index 4599e32f98..4b9a569c2a 100644
@@ -82,3 +89,6 @@ index 4599e32f98..4b9a569c2a 100644
    clutter_stage_calculate_viewport_and_projection (&priv->projection,
                                                     exact_viewport,
                                                     viewport,
+-- 
+2.56.0
+
