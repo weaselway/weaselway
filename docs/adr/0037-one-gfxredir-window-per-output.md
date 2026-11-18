@@ -35,6 +35,8 @@ window per application.
   `/sdl-windows:<n>` opens n windows side by side and sends the layout with n
   monitors right after the first activation; it does not use FreeRDP's
   `UseMultimon`, which brings fullscreen windows and display hotplug with it.
+  Right Shift+Right Ctrl+N and +X add and remove a window at runtime, and the
+  viewer sends the new layout; weaselwayd drops the pools of removed outputs.
 - Input stays in RDP's one coordinate space. The viewer adds its window's
   monitor origin to each event. weaselwayd maps the point to the monitor it
   falls in, then onto the uinput absolute axis spanning the outputs at their

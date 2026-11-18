@@ -413,7 +413,9 @@ while the viewer runs, even when Windows is locked.
 
 `ww-start-viewer /sdl-windows:2` shows the desktop as two monitors, each in a
 window of its own, which can be resized and moved to different Windows
-monitors. Up to four work.
+monitors. Up to four work. Right Shift+Right Ctrl+N opens one more window at
+runtime, and Right Shift+Right Ctrl+X closes the focused one, but never the
+last. These keys also work without `/sdl-windows`, but not in fullscreen.
 
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
