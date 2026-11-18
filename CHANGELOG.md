@@ -5,6 +5,14 @@ release they led to. Weekly nixpkgs updates are not listed.
 
 ## Unreleased
 
+- Several monitors: `ww-start-viewer /sdl-windows:2` shows the desktop as two
+  monitors, each in a window of its own that can sit on a different Windows
+  monitor. Up to four work. Right Shift+Right Ctrl+N opens one more window,
+  Right Shift+Right Ctrl+X closes the focused one. dxgdrm has four outputs
+  for it, and weaselwayd reads back and sends each one on its own.
+- GNOME patches mutter so that each monitor is drawn with a viewport inside
+  its framebuffer. With several monitors, Intel HD/UHD 620/630 GPUs left
+  trails of dragged windows on all but the rightmost monitor.
 - The laptop's battery shows in GNOME's quick settings and Plasma's battery
   applet. Hyper-V already passed it into WSL; the image now runs UPower to
   read it. UPower takes no action on a critical battery, Windows does.
