@@ -13,6 +13,7 @@
 #include "audio.h"
 #include "clipboard.h"
 #include "input.h"
+#include "screens-wayland.h"
 #include "wwdisplay.h"
 
 #include <errno.h>
@@ -1148,6 +1149,20 @@ current_screens(struct rdp_server *server, struct monitor *screens)
     }
 }
 
+/* Where the compositor put the screens, in its logical layout, which is what
+ * it maps the uinput pointer onto. False until it has said for all of them. */
+static bool
+compositor_screens(struct rdp_server *server, struct monitor *screens)
+{
+    if (!server->config.screens)
+        return false;
+    for (int i = 0; i < server->n_wanted; i++) {
+        if (!wayland_screens_get(server->config.screens, i, &screens[i]))
+            return false;
+    }
+    return layout_normalize(screens, server->n_wanted);
+}
+
 /* A point of the client's desktop onto the uinput pointer, whose axes span all
  * screens. */
 static void
@@ -1157,7 +1172,8 @@ pointer_position(struct peer_context *peer_ctx, UINT16 x, UINT16 y)
     struct monitor screens[RDP_MAX_OUTPUTS];
     int sx, sy, width, height;
 
-    current_screens(server, screens);
+    if (!compositor_screens(server, screens))
+        current_screens(server, screens);
     if (layout_map_point(server->wanted, screens, server->n_wanted, x, y, &sx, &sy) < 0)
         return;
     layout_extent(screens, server->n_wanted, &width, &height);

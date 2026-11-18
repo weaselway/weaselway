@@ -27,6 +27,7 @@
 struct input;
 struct rdp_server;
 struct selection;
+struct wayland_screens;
 
 struct rdp_config {
     /* The vsock port to listen on. */
@@ -41,6 +42,9 @@ struct rdp_config {
     /* The session's clipboard, which the client's is kept in step with; NULL
      * for none. */
     struct selection *selection;
+    /* Where the compositor put the outputs, which the pointer is mapped onto;
+     * NULL, or while it has not said, the client's layout is used. */
+    struct wayland_screens *screens;
     bool verbose;
     /* Called whenever the server has dispatched: the client's state, the
      * size it wants, or whether it wants the whole screen may be another. */

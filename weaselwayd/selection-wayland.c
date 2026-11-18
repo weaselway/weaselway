@@ -3,9 +3,8 @@
  * KWin and the wlroots compositors.
  *
  * The protocol gives a client without a window the seat's clipboard. The
- * compositor starts after weaselwayd and may come and go, so the runtime
- * directory is watched for Wayland sockets. A compositor without the protocol
- * (mutter) is left alone until its socket is replaced.
+ * compositor is found by wayland-watch.c; one without the protocol (mutter) is
+ * left alone until its socket is replaced.
  *
  * Whether the clipboard is ours: KWin cancels the old source before it
  * announces the new selection, so while our source has not been cancelled,
@@ -16,7 +15,6 @@
 
 #include "selection-backends.h"
 
-#include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <string.h>
@@ -27,30 +25,14 @@
 #include <wayland-client.h>
 
 #include "ext-data-control-v1-client-protocol.h"
-
-/* How long to wait for a socket that refused the connection. */
-#define RETRY_SECONDS 3
+#include "wayland-watch.h"
 
 struct wayland_selection {
-    char *runtime_dir;
-    GFileMonitor *monitor;
-    guint retry_id;
-    /* Sockets whose compositor does not have the protocol, until they go. */
-    GHashTable *rejected;
-    /* Said once that there is no clipboard here. */
-    bool complained;
-
-    /* The compositor, once a socket answered; ready once there is a device. */
-    char *socket;
-    struct wl_display *display;
-    guint display_id;
-    struct wl_registry *registry;
-    struct wl_callback *sync;
+    /* The compositor; ready once there is a device. */
+    struct wayland_watch *watch;
     struct wl_seat *seat;
     struct ext_data_control_manager_v1 *manager;
     struct ext_data_control_device_v1 *device;
-    /* A handler found the connection to be of no use; dropped after dispatch. */
-    bool drop;
 
     /* The selection when it is not ours, and what it holds. Never NULL. */
     struct ext_data_control_offer_v1 *offer;
@@ -71,15 +53,10 @@ struct wayland_selection {
     void *listener_data;
 };
 
-static void scan(struct wayland_selection *selection);
-
 static void
 flush(struct wayland_selection *selection)
 {
-    /* A full socket is sent with the next one; a broken one shows up as a
-     * hangup in on_display. */
-    if (selection->display)
-        wl_display_flush(selection->display);
+    wayland_watch_flush(selection->watch);
 }
 
 static void
@@ -167,8 +144,9 @@ on_finished(void *data, struct ext_data_control_device_v1 *device)
 {
     struct wayland_selection *selection = data;
 
-    g_message("%s took the clipboard away; looking for it again", selection->socket);
-    selection->drop = true;
+    g_message("%s took the clipboard away; looking for it again",
+              wayland_watch_socket(selection->watch));
+    wayland_watch_drop(selection->watch, false);
 }
 
 static const struct ext_data_control_device_v1_listener device_listener = {
@@ -245,23 +223,18 @@ take(struct wayland_selection *selection)
 /* ------------------------------------------------------------------ */
 
 static void
-disconnect(struct wayland_selection *selection)
+on_disconnected(void *data)
 {
+    struct wayland_selection *selection = data;
     bool had_types = selection->mime_types[0] != NULL;
 
-    g_clear_handle_id(&selection->display_id, g_source_remove);
     destroy_offer(selection->offer);
     selection->offer = NULL;
     g_clear_pointer(&selection->source, ext_data_control_source_v1_destroy);
     g_clear_pointer(&selection->device, ext_data_control_device_v1_destroy);
     g_clear_pointer(&selection->manager, ext_data_control_manager_v1_destroy);
     g_clear_pointer(&selection->seat, wl_seat_destroy);
-    g_clear_pointer(&selection->sync, wl_callback_destroy);
-    g_clear_pointer(&selection->registry, wl_registry_destroy);
-    g_clear_pointer(&selection->display, wl_display_disconnect);
-    g_clear_pointer(&selection->socket, g_free);
     selection->withdrawn = false;
-    selection->drop = false;
 
     /* Nothing of the session's can be read without it. */
     set_mime_types(selection, NULL, had_types);
@@ -280,154 +253,35 @@ on_global(void *data, struct wl_registry *registry, uint32_t name, const char *i
             wl_registry_bind(registry, name, &ext_data_control_manager_v1_interface, 1);
 }
 
+/* The compositor has told us its globals. A seat that goes later finishes the
+ * device. */
 static void
-on_global_remove(void *data, struct wl_registry *registry, uint32_t name)
-{
-    /* A seat that goes finishes the device. */
-}
-
-static const struct wl_registry_listener registry_listener = {
-    .global = on_global,
-    .global_remove = on_global_remove,
-};
-
-/* The compositor has told us its globals. */
-static void
-on_sync(void *data, struct wl_callback *callback, uint32_t time)
+on_ready(void *data)
 {
     struct wayland_selection *selection = data;
-
-    g_clear_pointer(&selection->sync, wl_callback_destroy);
+    const char *socket = wayland_watch_socket(selection->watch);
 
     if (!selection->manager || !selection->seat) {
-        g_debug("%s has no ext-data-control-v1", selection->socket);
-        g_hash_table_add(selection->rejected, g_strdup(selection->socket));
-        selection->drop = true;
+        g_debug("%s has no ext-data-control-v1", socket);
+        wayland_watch_drop(selection->watch, true);
         return;
     }
 
     selection->device =
         ext_data_control_manager_v1_get_data_device(selection->manager, selection->seat);
     ext_data_control_device_v1_add_listener(selection->device, &device_listener, selection);
-    selection->complained = false;
-    g_message("sharing the session's clipboard (ext-data-control-v1 on %s)", selection->socket);
+    g_message("sharing the session's clipboard (ext-data-control-v1 on %s)", socket);
 
     /* Ours replaces what is there; otherwise the compositor says what that is. */
     if (selection->own)
         take(selection);
 }
 
-static const struct wl_callback_listener sync_listener = {
-    .done = on_sync,
+static const struct wayland_watch_handler watch_handler = {
+    .global = on_global,
+    .ready = on_ready,
+    .disconnected = on_disconnected,
 };
-
-static gboolean
-on_display(int fd, GIOCondition condition, gpointer data)
-{
-    struct wayland_selection *selection = data;
-
-    if (!(condition & G_IO_IN) || wl_display_dispatch(selection->display) < 0) {
-        g_message("lost the connection to %s", selection->socket);
-        selection->drop = true;
-    }
-
-    if (selection->drop) {
-        /* The source is gone with the return value. */
-        selection->display_id = 0;
-        disconnect(selection);
-        scan(selection);
-        return G_SOURCE_REMOVE;
-    }
-
-    flush(selection);
-    return G_SOURCE_CONTINUE;
-}
-
-static gboolean
-on_retry(gpointer data)
-{
-    struct wayland_selection *selection = data;
-
-    selection->retry_id = 0;
-    scan(selection);
-    return G_SOURCE_REMOVE;
-}
-
-/* Connect to @name and ask for its globals. False if nobody answers. */
-static bool
-try_socket(struct wayland_selection *selection, const char *name)
-{
-    g_autofree char *path = g_build_filename(selection->runtime_dir, name, NULL);
-
-    selection->display = wl_display_connect(path);
-    if (!selection->display) {
-        g_debug("cannot connect to %s: %s", name, g_strerror(errno));
-        return false;
-    }
-
-    selection->socket = g_strdup(name);
-    selection->registry = wl_display_get_registry(selection->display);
-    wl_registry_add_listener(selection->registry, &registry_listener, selection);
-    selection->sync = wl_display_sync(selection->display);
-    wl_callback_add_listener(selection->sync, &sync_listener, selection);
-    selection->display_id =
-        g_unix_fd_add(wl_display_get_fd(selection->display), G_IO_IN | G_IO_HUP | G_IO_ERR,
-                      on_display, selection);
-    flush(selection);
-    return true;
-}
-
-static bool
-is_socket_name(const char *name)
-{
-    return g_str_has_prefix(name, "wayland-") && !g_str_has_suffix(name, ".lock");
-}
-
-/* Look for a compositor, unless there is one. */
-static void
-scan(struct wayland_selection *selection)
-{
-    g_autoptr(GDir) dir = NULL;
-    bool refused = false;
-    const char *name;
-
-    if (selection->display)
-        return;
-
-    dir = g_dir_open(selection->runtime_dir, 0, NULL);
-    while (dir && (name = g_dir_read_name(dir))) {
-        if (!is_socket_name(name) || g_hash_table_contains(selection->rejected, name))
-            continue;
-        if (try_socket(selection, name))
-            return;
-        refused = true;
-    }
-
-    /* Bound, but not yet listening. */
-    if (refused && !selection->retry_id)
-        selection->retry_id = g_timeout_add_seconds(RETRY_SECONDS, on_retry, selection);
-
-    if (!selection->complained)
-        g_debug("no compositor with ext-data-control-v1 in %s yet", selection->runtime_dir);
-    selection->complained = true;
-}
-
-static void
-on_runtime_dir_changed(GFileMonitor *monitor, GFile *file, GFile *other, GFileMonitorEvent event,
-                       gpointer data)
-{
-    struct wayland_selection *selection = data;
-    g_autofree char *name = g_file_get_basename(file);
-
-    if (!is_socket_name(name))
-        return;
-
-    /* A new compositor may have taken a name that an old one left. */
-    if (event == G_FILE_MONITOR_EVENT_DELETED || event == G_FILE_MONITOR_EVENT_CREATED)
-        g_hash_table_remove(selection->rejected, name);
-    if (event == G_FILE_MONITOR_EVENT_CREATED)
-        scan(selection);
-}
 
 /* ------------------------------------------------------------------ */
 /* selection-backends.h                                                */
@@ -443,29 +297,10 @@ struct wayland_selection *
 wayland_selection_new(void)
 {
     struct wayland_selection *selection = g_new0(struct wayland_selection, 1);
-    g_autoptr(GFile) dir = NULL;
-    g_autoptr(GError) error = NULL;
 
-    selection->runtime_dir = g_strdup(g_getenv("XDG_RUNTIME_DIR"));
-    selection->rejected = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     selection->requests = g_hash_table_new_full(NULL, NULL, NULL, close_fd);
     selection->mime_types = g_new0(char *, 1);
-
-    if (!selection->runtime_dir) {
-        g_warning("no XDG_RUNTIME_DIR, and so no Wayland compositor to share a clipboard with");
-        return selection;
-    }
-
-    dir = g_file_new_for_path(selection->runtime_dir);
-    selection->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_NONE, NULL, &error);
-    if (selection->monitor)
-        g_signal_connect(selection->monitor, "changed", G_CALLBACK(on_runtime_dir_changed),
-                         selection);
-    else
-        g_warning("cannot watch %s for Wayland compositors: %s", selection->runtime_dir,
-                  error->message);
-
-    scan(selection);
+    selection->watch = wayland_watch_new("clipboard", &watch_handler, selection);
     return selection;
 }
 
@@ -476,16 +311,10 @@ wayland_selection_free(struct wayland_selection *selection)
         return;
 
     selection->listener = NULL;
-    if (selection->monitor)
-        g_signal_handlers_disconnect_by_data(selection->monitor, selection);
-    g_clear_object(&selection->monitor);
-    g_clear_handle_id(&selection->retry_id, g_source_remove);
-    disconnect(selection);
+    wayland_watch_free(selection->watch);
     g_hash_table_unref(selection->requests);
-    g_hash_table_unref(selection->rejected);
     g_strfreev(selection->mime_types);
     g_strfreev(selection->own);
-    g_free(selection->runtime_dir);
     g_free(selection);
 }
 

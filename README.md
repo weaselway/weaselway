@@ -547,9 +547,6 @@ The value after `/sdl-show-stats` is the text scale and is optional.
   started over SSH, from Remote Desktop or by a scheduled task,
   `ww-start-viewer` says so. Then run `wsl --shutdown` and start the distro
   from the desktop.
-- With several monitors, KWin and Hyprland arrange the screens on their own.
-  If their arrangement differs from the viewer's windows, the pointer lands
-  in the wrong place. GNOME follows the viewer.
 - Compositors other than GNOME and Plasma have seen little testing. If one
   does not start on the virtual display, please open an issue.
 

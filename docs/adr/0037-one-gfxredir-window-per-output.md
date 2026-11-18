@@ -39,8 +39,8 @@ window per application.
   viewer sends the new layout; weaselwayd drops the pools of removed outputs.
 - Input stays in RDP's one coordinate space. The viewer adds its window's
   monitor origin to each event. weaselwayd maps the point to the monitor it
-  falls in, then onto the uinput absolute axis spanning the outputs at their
-  suggested positions.
+  falls in, then onto the uinput absolute axis spanning the outputs where
+  the compositor put them.
 - wwdisplay's `REFRESH_RATE` and `PRESENT_TIMING` carry the monitor index in
   what was a reserved field. No compatibility with the old PDUs, ids or
   dxgdrm uapi: viewer, weaselwayd and dxgdrm are updated together.
@@ -50,10 +50,13 @@ window per application.
 - Monitors of different sizes and refresh rates each get a buffer of their
   own size and a vblank in their own phase. A window the client is slow to
   draw holds back only its own output (0007).
-- The pointer is mapped through the suggested positions. mutter honours
-  them; KWin and Hyprland arrange the outputs on their own, and where that
-  differs from the viewer's layout the pointer lands in the wrong place.
-  Reading the compositor's real layout (`xdg_output`) would fix that.
+- The compositor maps the absolute pointer onto the bounding box of its
+  logical layout, which differs from the viewer's as soon as an output is
+  scaled, and with KWin and Hyprland, which arrange the outputs on their
+  own. weaselwayd reads that layout with `xdg_output` (wl_output's name
+  `Virtual-N` is output N-1) and maps the pointer onto it. Until the
+  compositor has said where every output is, it uses the suggested
+  positions and the mode sizes.
 - One render thread presents all windows, so a window on a slow monitor can
   delay the others.
 - There is one RDP pointer. Its image comes from whichever output has a

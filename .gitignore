@@ -12,3 +12,5 @@
 /weaselwayd/tests/xdg-shell-protocol.c
 /weaselwayd/ext-data-control-v1-client-protocol.h
 /weaselwayd/ext-data-control-v1-protocol.c
+/weaselwayd/xdg-output-unstable-v1-client-protocol.h
+/weaselwayd/xdg-output-unstable-v1-protocol.c

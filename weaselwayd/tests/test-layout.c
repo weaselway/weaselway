@@ -77,6 +77,20 @@ test_map_point(void)
     assert(x == 1000 && y == 0);
 
     assert(layout_map_point(m, s, 0, 1, 1, &x, &y) == -1);
+
+    /* The compositor's logical layout, with the second output at scale 4/3. */
+    struct monitor mm[2] = {
+        { .x = 0, .y = 0, .width = 1280, .height = 768 },
+        { .x = 1280, .y = 0, .width = 1280, .height = 768 },
+    };
+    struct monitor logical[2] = {
+        { .x = 0, .y = 0, .width = 1280, .height = 768 },
+        { .x = 1280, .y = 0, .width = 960, .height = 576 },
+    };
+    assert(layout_map_point(mm, logical, 2, 1580, 400, &x, &y) == 1);
+    assert(x == 1504 && y == 299);
+    layout_extent(logical, 2, &x, &y);
+    assert(x == 2240 && y == 768);
 }
 
 static void

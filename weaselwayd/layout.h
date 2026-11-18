@@ -4,9 +4,9 @@
  *
  * Monitor i of the client's layout is shown by dxgdrm output i. A monitor is
  * where the client's window is, in the client's desktop; the screen is where
- * the compositor put the output, at the monitor's position (dxgdrm's suggested
- * X/Y) with the size of the compositor's mode. The two only differ while the
- * compositor has not followed a new layout yet.
+ * the compositor put the output in its logical layout (screens-wayland.c), or,
+ * until it has said, at the monitor's position (dxgdrm's suggested X/Y) with
+ * the size of the compositor's mode.
  */
 
 #ifndef WEASELWAY_LAYOUT_H

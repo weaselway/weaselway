@@ -50,6 +50,7 @@
 #include "log.h"
 #include "placeholder.h"
 #include "rdp.h"
+#include "screens-wayland.h"
 #include "selection.h"
 
 #define MAX_IMPORTS 8
@@ -171,6 +172,7 @@ struct weaselwayd {
     struct rdp_server *rdp;
     struct input *input;
     struct selection *selection;
+    struct wayland_screens *screens;
 
     struct output outputs[DXGDRM_MAX_OUTPUTS];
     /* A compositor owns the display; one flag for all outputs. */
@@ -1524,13 +1526,16 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    if (!no_input)
+    if (!no_input) {
         p.input = input_new();
+        p.screens = wayland_screens_new();
+    }
     if (!no_clipboard)
         p.selection = selection_new();
 
     rdp_config.input = p.input;
     rdp_config.selection = p.selection;
+    rdp_config.screens = p.screens;
     p.rdp = rdp_server_new(&rdp_config, &error);
     if (!p.rdp) {
         g_warning("%s", error->message);
@@ -1564,6 +1569,7 @@ main(int argc, char **argv)
     }
     rdp_server_free(p.rdp);
     selection_free(p.selection);
+    wayland_screens_free(p.screens);
     input_free(p.input);
     for (int i = 0; i < DXGDRM_MAX_OUTPUTS; i++) {
         destroy_imports(&p.outputs[i]);

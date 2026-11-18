@@ -10,6 +10,9 @@ release they led to. Weekly nixpkgs updates are not listed.
   monitor. Up to four work. Right Shift+Right Ctrl+N opens one more window,
   Right Shift+Right Ctrl+X closes the focused one. dxgdrm has four outputs
   for it, and weaselwayd reads back and sends each one on its own.
+- With several monitors, the pointer lands where it is in the viewer's window
+  when the desktop scales the monitors differently, or arranges them other
+  than the viewer's windows, as Plasma and Hyprland do.
 - GNOME patches mutter so that each monitor is drawn with a viewport inside
   its framebuffer. With several monitors, Intel HD/UHD 620/630 GPUs left
   trails of dragged windows on all but the rightmost monitor.

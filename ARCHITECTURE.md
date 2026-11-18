@@ -54,7 +54,9 @@ slows the compositor down, and frames do not queue up.
 
 The client's keyboard, mouse and touchpad become uinput devices (input devices created from user
 space), which libinput handles like any others. A pointer position is a point in the client's
-desktop; weaselwayd maps it to an output and onto the absolute axis spanning all outputs. The size
+desktop; weaselwayd maps it to an output and onto the absolute axis spanning all outputs, where the
+compositor put them in its logical layout. It reads that layout as a Wayland client with
+`xdg-output`, which mutter, KWin and the wlroots compositors offer. The size
 of each screen follows its viewer window: weaselwayd sets the output's mode on dxgdrm, and the
 compositor sees a hotplug event. The viewer has its own channel, `Weaselway::Display`, on which it
 reports two things about the monitor each window is on:
@@ -68,16 +70,16 @@ While no compositor owns the display, the client gets a screen with "No composit
 the compositor has the display off, it gets "Screen is off"
 ([0026](docs/adr/0026-placeholder-without-a-compositor.md)).
 
-The clipboard is the only feature that needs the compositor's cooperation, and there is no protocol
-for it that every compositor implements. weaselwayd runs two backends and uses the one that finds
-its compositor:
+The clipboard needs the compositor's cooperation, and there is no protocol for it that every
+compositor implements. weaselwayd runs two backends and uses the one that finds its compositor:
 
 - With mutter, it uses the D-Bus interface that gnome-remote-desktop uses
   (`org.gnome.Mutter.RemoteDesktop`). It creates a session object with the clipboard enabled and
   never starts it, so gnome-shell shows no screen-sharing indicator.
 - With KWin and the wlroots compositors, it is a Wayland client with `ext-data-control-v1`. It
   watches `$XDG_RUNTIME_DIR` for `wayland-*` sockets and connects to the first compositor that
-  offers the protocol. mutter does not offer it and is left alone.
+  offers the protocol. mutter does not offer it and is left alone. The pointer's layout has its own
+  connection, made the same way (`wayland-watch.c`).
 
 Text, HTML and images are converted between Windows clipboard formats and MIME types.
 

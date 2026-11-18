@@ -9,16 +9,21 @@ CFLAGS  += -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter -pthread
            -I$(DXGDRM_INCLUDE) $(patsubst -I%,-isystem %,$(shell pkg-config --cflags $(PKGS)))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm -pthread
 
-SELECTION := selection.c selection-mutter.c selection-wayland.c ext-data-control-v1-protocol.c
+SELECTION := selection.c selection-mutter.c selection-wayland.c wayland-watch.c \
+             ext-data-control-v1-protocol.c
+# The compositor's monitor layout, for mapping the pointer.
+SCREENS := screens-wayland.c xdg-output-unstable-v1-protocol.c
 SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c formats.c placeholder.c log.c \
            layout.c wwdisplay.c \
-           $(SELECTION)
+           $(SELECTION) $(SCREENS)
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
 HEADERS := rdp.h input.h audio.h clipboard.h selection.h selection-backends.h formats.h \
            layout.h wwdisplay.h \
-           placeholder.h log.h ext-data-control-v1-client-protocol.h $(wildcard gfxredir/*.h)
+           placeholder.h log.h wayland-watch.h screens-wayland.h \
+           ext-data-control-v1-client-protocol.h xdg-output-unstable-v1-client-protocol.h \
+           $(wildcard gfxredir/*.h)
 OBJECTS := $(SOURCES:.c=.o) $(GFXREDIR:.c=.o)
 
 # The clipboard protocol of KWin and the wlroots compositors.
@@ -29,6 +34,15 @@ ext-data-control-v1-client-protocol.h: $(DATA_CONTROL_XML)
 	$(WAYLAND_SCANNER) client-header $< $@
 
 ext-data-control-v1-protocol.c: $(DATA_CONTROL_XML)
+	$(WAYLAND_SCANNER) private-code $< $@
+
+# The logical output layout, which mutter, KWin and the wlroots compositors all offer.
+XDG_OUTPUT_XML := $(shell pkg-config --variable=pkgdatadir wayland-protocols)/unstable/xdg-output/xdg-output-unstable-v1.xml
+
+xdg-output-unstable-v1-client-protocol.h: $(XDG_OUTPUT_XML)
+	$(WAYLAND_SCANNER) client-header $< $@
+
+xdg-output-unstable-v1-protocol.c: $(XDG_OUTPUT_XML)
 	$(WAYLAND_SCANNER) private-code $< $@
 
 # Hardening. None of this makes C memory-safe; it turns the common mistakes
@@ -82,7 +96,8 @@ gfxredir/%.asan.o: gfxredir/%.c $(HEADERS)
 
 # GCC's static analyzer; reports leaks, double frees and NULL dereferences on
 # paths it can prove.
-analyze: ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
+analyze: ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c \
+         xdg-output-unstable-v1-client-protocol.h xdg-output-unstable-v1-protocol.c
 	$(CC) $(CFLAGS) -fanalyzer -fsyntax-only $(SOURCES)
 
 # The clipboard's conversions, which need nothing but GLib and libpng to run.
@@ -101,7 +116,7 @@ tests/test-layout: tests/test-layout.c layout.c layout.h wwdisplay.c wwdisplay.h
 # For trying the selection against a running compositor; see
 # tests/selection-mutter.sh and tests/selection-kwin.sh.
 tests/selection-tool: tests/selection-tool.c $(SELECTION) selection.h selection-backends.h \
-                      ext-data-control-v1-client-protocol.h
+                      wayland-watch.h ext-data-control-v1-client-protocol.h
 	$(CC) $(TEST_CFLAGS) -o $@ tests/selection-tool.c $(SELECTION) $(TEST_LIBS)
 
 # The RDP server and the clipboard without dxgdrm; see tests/clipboard-rdp.sh.
@@ -132,6 +147,7 @@ install: weaselwayd
 clean:
 	rm -f weaselwayd weaselwayd-asan $(OBJECTS) $(ASAN_OBJECTS) tests/test-formats tests/test-layout tests/selection-tool \
 		tests/rdp-harness tests/egl-load tests/xdg-shell-client-protocol.h tests/xdg-shell-protocol.c \
-		ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c
+		ext-data-control-v1-client-protocol.h ext-data-control-v1-protocol.c \
+		xdg-output-unstable-v1-client-protocol.h xdg-output-unstable-v1-protocol.c
 
 .PHONY: install clean asan analyze check
