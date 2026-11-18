@@ -250,7 +250,16 @@ class Backport:
 BACKPORTS: Final[Mapping[str, Sequence[Backport]]] = {
     # The overview keeps its old size when the viewer resizes the display, and a
     # failed device open closed fd 0, which hung GNOME when WSL's vgem came back.
-    "mutter": [Backport((50,), (52,), ("mutter-stage-relayout.patch", "mutter-kms-fd0.patch"))],
+    # From 50.4 on, each monitor's viewport stays inside its framebuffer, which
+    # Intel Gen9 GPUs need with several monitors; older releases lack the helper.
+    "mutter": [
+        Backport((50,), (50, 4), ("mutter-stage-relayout.patch", "mutter-kms-fd0.patch")),
+        Backport(
+            (50, 4),
+            (52,),
+            ("mutter-stage-relayout.patch", "mutter-kms-fd0.patch", "mutter-viewport-in-fb.patch"),
+        ),
+    ],
     # KWin reports its damage (FB_DAMAGE_CLIPS), so weaselwayd does not read back
     # the whole screen every frame.
     "kwin": [
@@ -285,6 +294,10 @@ def backport_patches(package: str, version: str) -> list[Path]:
 
     >>> [p.name for p in backport_patches("kwin", "4:6.6.6-0ubuntu0.1")]
     ['kwin-6.6-fb-damage-clips.patch']
+    >>> [p.name for p in backport_patches("mutter", "50.3-0ubuntu1")]
+    ['mutter-stage-relayout.patch', 'mutter-kms-fd0.patch']
+    >>> [p.name for p in backport_patches("mutter", "51.0-1")][-1]
+    'mutter-viewport-in-fb.patch'
     >>> [p.name for p in backport_patches("aquamarine", "0.16.0")]
     ['aquamarine-0.11-mode-changes.patch']
     >>> backport_patches("kwin", "6.9.0")  # doctest: +IGNORE_EXCEPTION_DETAIL

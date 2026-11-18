@@ -1,0 +1,84 @@
+clutter/stage: Keep the GL viewport inside the view's framebuffer
+
+Each view used to render with a viewport as large as the whole stage,
+offset by the view's position, so every view but the last one had a
+viewport sticking out past its framebuffer. The Intel Gen9 D3D12 driver
+(HD/UHD 620/630) clamps the right and bottom viewport edge to the render
+target when the stencil test is on, which cogl uses for multi-rectangle
+redraw clips. Region-clipped redraws on those views came out squeezed
+and left stale content behind, for example while dragging a window.
+
+Use the framebuffer rect as the viewport and fold the stage offset and
+scale into the projection, reusing the fractional viewport compensation.
+The combined transform stays the same.
+
+diff --git a/clutter/clutter/clutter-stage.c b/clutter/clutter/clutter-stage.c
+index 4599e32f98..4b9a569c2a 100644
+--- a/clutter/clutter/clutter-stage.c
++++ b/clutter/clutter/clutter-stage.c
+@@ -2351,13 +2351,17 @@ clutter_stage_update_view_perspective (ClutterStage *stage)
+   clutter_actor_invalidate_transform (CLUTTER_ACTOR (stage));
+ }
+ 
+-/* Round the exact (possibly fractional) viewport to integers for GL, folding
+- * the rounding remainder into the returned projection so the combined transform
+- * stays pixel-exact. */
++/* Render with the integer GL viewport @viewport (the framebuffer rect) instead
++ * of the exact (possibly fractional, possibly larger than the framebuffer)
++ * stage viewport, folding the difference into the returned projection so the
++ * combined transform stays pixel-exact. Keeping the GL viewport inside the
++ * framebuffer also avoids an Intel Gen9 D3D12 driver bug: with the stencil
++ * test on, it clamps the viewport's right and bottom edge to the render
++ * target, which squeezed region-clipped redraws on all but the last view. */
+ static void
+ clutter_stage_calculate_viewport_and_projection (const graphene_matrix_t *projection,
+                                                  const float              exact_viewport[4],
+-                                                 float                    viewport[4],
++                                                 const float              viewport[4],
+                                                  graphene_matrix_t       *out_projection)
+ {
+   float phase_x, phase_y;
+@@ -2366,11 +2370,6 @@ clutter_stage_calculate_viewport_and_projection (const graphene_matrix_t *projec
+   graphene_matrix_t translate;
+   graphene_matrix_t correction;
+ 
+-  viewport[0] = roundf (exact_viewport[0]);
+-  viewport[1] = roundf (exact_viewport[1]);
+-  viewport[2] = roundf (exact_viewport[2]);
+-  viewport[3] = roundf (exact_viewport[3]);
+-
+   if (viewport[2] <= 0.f || viewport[3] <= 0.f)
+     {
+       *out_projection = *projection;
+@@ -2405,6 +2404,7 @@ _clutter_stage_maybe_setup_viewport (ClutterStage     *stage,
+ {
+   ClutterStagePrivate *priv = clutter_stage_get_instance_private (stage);
+   MtkRectangle view_layout;
++  CoglFramebuffer *framebuffer;
+   float fb_scale;
+   float exact_viewport[4];
+   float viewport[4];
+@@ -2422,6 +2422,12 @@ _clutter_stage_maybe_setup_viewport (ClutterStage     *stage,
+   exact_viewport[2] = priv->viewport[2] * fb_scale;
+   exact_viewport[3] = priv->viewport[3] * fb_scale;
+ 
++  framebuffer = clutter_stage_view_get_framebuffer (view);
++  viewport[0] = 0.f;
++  viewport[1] = 0.f;
++  viewport[2] = cogl_framebuffer_get_width (framebuffer);
++  viewport[3] = cogl_framebuffer_get_height (framebuffer);
++
+   clutter_stage_calculate_viewport_and_projection (&priv->projection,
+                                                    exact_viewport,
+                                                    viewport,
+@@ -2722,6 +2728,10 @@ clutter_stage_paint_to_framebuffer_clipped (ClutterStage       *stage,
+   exact_viewport[1] = -(rect->y * scale);
+   exact_viewport[2] = priv->viewport[2] * scale;
+   exact_viewport[3] = priv->viewport[3] * scale;
++  viewport[0] = 0.f;
++  viewport[1] = 0.f;
++  viewport[2] = cogl_framebuffer_get_width (framebuffer);
++  viewport[3] = cogl_framebuffer_get_height (framebuffer);
+   clutter_stage_calculate_viewport_and_projection (&priv->projection,
+                                                    exact_viewport,
+                                                    viewport,

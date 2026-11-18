@@ -191,7 +191,9 @@ distro's packages, with the patches from [nix/](../nix):
 
 - mutter (GNOME): `mutter-stage-relayout.patch` resizes the overview with the
   viewer's window, and `mutter-kms-fd0.patch` keeps GNOME from hanging when
-  WSL's vgem device comes back.
+  WSL's vgem device comes back. From mutter 50.4 on,
+  `mutter-viewport-in-fb.patch` keeps windows from leaving trails on Intel
+  HD/UHD 620/630 GPUs when the desktop has several monitors.
 - KWin (Plasma): the FB_DAMAGE_CLIPS backport for the KWin release. Without it
   KWin reports the whole screen as changed in every frame, and weaselwayd
   reads back all of it (`100% of the screen each` in the statistics line in

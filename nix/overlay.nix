@@ -107,6 +107,13 @@ in
         name = "mutter-kms-fd0.patch";
         path = ./mutter-kms-fd0.patch;
       })
+      # With 2+ monitors every view but the last had a viewport past its
+      # framebuffer; Intel Gen9's D3D12 driver squeezes such stencil-clipped
+      # draws, leaving trails while dragging windows.
+      (builtins.path {
+        name = "mutter-viewport-in-fb.patch";
+        path = ./mutter-viewport-in-fb.patch;
+      })
     ];
   });
 
