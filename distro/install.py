@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Final, NoReturn
 
 # The versions the NixOS image ships (flake.lock, nix/overlay.nix).
-DXGDRM_VERSION: Final = "v1.3.2"
+DXGDRM_VERSION: Final = "v1.4.0"
 VIEWER_VERSION: Final = "v1.2.0"
 MESA_REV: Final = "1c7b434247ac17cefc7fc137e1a581047631bc53"  # branch mesa-26.2.7-wsl
 
