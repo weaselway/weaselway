@@ -416,6 +416,9 @@ window of its own, which can be resized and moved to different Windows
 monitors. Up to four work. Right Shift+Right Ctrl+N opens one more window at
 runtime, and Right Shift+Right Ctrl+X closes the focused one, but never the
 last. These keys also work without `/sdl-windows`, but not in fullscreen.
+Each monitor can have its own scale in the desktop's display settings, and
+the desktop can arrange the monitors differently from the windows. The
+pointer still lands where it is in the viewer window.
 
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
@@ -540,8 +543,10 @@ The value after `/sdl-show-stats` is the text scale and is optional.
 
 - Weaselway supports only the WSL kernel releases listed under
   [Requirements](#requirements). See [Updating](#updating) for `wsl --update`.
-- The scale factor of the Windows display is not passed on. Set the scale in
-  the desktop's display settings.
+- The scale factor of the Windows display is not passed on. The viewer shows
+  the desktop in physical pixels, so at 150% in Windows the desktop looks
+  smaller than Windows applications. Set the scale in the desktop's display
+  settings, per monitor if your Windows monitors use different scales.
 - Touchscreens are not forwarded. Touchpad gestures are.
 - The viewer works only in the Windows session that started WSL. If WSL was
   started over SSH, from Remote Desktop or by a scheduled task,

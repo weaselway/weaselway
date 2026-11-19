@@ -53,13 +53,20 @@ page-flip event until then, and completes it on its next virtual vblank. A slow 
 slows the compositor down, and frames do not queue up.
 
 The client's keyboard, mouse and touchpad become uinput devices (input devices created from user
-space), which libinput handles like any others. A pointer position is a point in the client's
-desktop; weaselwayd maps it to an output and onto the absolute axis spanning all outputs, where the
-compositor put them in its logical layout. It reads that layout as a Wayland client with
-`xdg-output`, which mutter, KWin and the wlroots compositors offer. The size
-of each screen follows its viewer window: weaselwayd sets the output's mode on dxgdrm, and the
-compositor sees a hotplug event. The viewer has its own channel, `Weaselway::Display`, on which it
-reports two things about the monitor each window is on:
+space), which libinput handles like any others. The viewer sends sizes, positions and mouse events
+in physical pixels, whatever scale Windows uses. A pointer position is a point in the client's
+desktop. weaselwayd finds the output it is on and moves the uinput pointer, whose absolute axes
+span all outputs, to the same spot on that output.
+
+The compositor maps those axes onto its logical layout (where it placed the outputs, in units that
+already include each output's scale). weaselwayd reads that layout as a Wayland client with
+`xdg-output`, which mutter, KWin and the wlroots compositors offer. The output named `Virtual-N` is
+dxgdrm output N-1. Until the compositor has reported every output, weaselwayd places them at the
+viewer's positions with the size of their mode.
+
+The size of each screen follows its viewer window: weaselwayd sets the output's mode on dxgdrm,
+and the compositor sees a hotplug event. The viewer has its own channel, `Weaselway::Display`, on
+which it reports two things about the monitor each window is on:
 
 - its refresh rate, which weaselwayd uses as the mode's rate
   ([0029](docs/adr/0029-refresh-rate-from-the-viewer.md));
@@ -78,8 +85,9 @@ compositor implements. weaselwayd runs two backends and uses the one that finds 
   never starts it, so gnome-shell shows no screen-sharing indicator.
 - With KWin and the wlroots compositors, it is a Wayland client with `ext-data-control-v1`. It
   watches `$XDG_RUNTIME_DIR` for `wayland-*` sockets and connects to the first compositor that
-  offers the protocol. mutter does not offer it and is left alone. The pointer's layout has its own
-  connection, made the same way (`wayland-watch.c`).
+  offers the protocol. mutter does not offer it and is left alone. The layout for the pointer is
+  read over a second connection, found the same way (`wayland-watch.c`), because it also needs
+  mutter.
 
 Text, HTML and images are converted between Windows clipboard formats and MIME types.
 
@@ -731,7 +739,7 @@ The limitations that affect users are listed in the
 when working on the code.
 
 - Two features of the RDP backend that mutter used to carry have not been ported: the client's
-  scale factor, and the error frame (a client is disconnected instead, with the reason in the log).
+  scale factor (the viewer sends one per monitor, and weaselwayd ignores it), and the error frame (a client is disconnected instead, with the reason in the log).
   There is no touchscreen device, only the touchpad.
 - The clipboard does not carry files, and needs mutter or a compositor with `ext-data-control-v1`.
   - A client that connects with text or an image on its clipboard replaces the session's clipboard
