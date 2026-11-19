@@ -19,6 +19,11 @@ release they led to. Weekly nixpkgs updates are not listed.
 - GNOME patches mutter so that each monitor is drawn with a viewport inside
   its framebuffer. With several monitors, Intel HD/UHD 620/630 GPUs left
   trails of dragged windows on all but the rightmost monitor.
+- d3d12 reuses idle textures instead of allocating a new one every frame,
+  which made GTK's GL renderer slow. `eglExportDMABUFImageMESA` works on GL
+  textures that were not created as shared.
+- dzn gains `fullDrawIndexUint32`, `dualSrcBlend` and
+  `VK_KHR_swapchain_mutable_format`, and blends correctly with MIN and MAX.
 - The laptop's battery shows in GNOME's quick settings and Plasma's battery
   applet. Hyper-V already passed it into WSL; the image now runs UPower to
   read it. UPower takes no action on a critical battery, Windows does.
