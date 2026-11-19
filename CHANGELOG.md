@@ -19,6 +19,9 @@ release they led to. Weekly nixpkgs updates are not listed.
 - The laptop's battery shows in GNOME's quick settings and Plasma's battery
   applet. Hyper-V already passed it into WSL; the image now runs UPower to
   read it. UPower takes no action on a critical battery, Windows does.
+- With NumLock on, touchpad gestures that Windows turns into arrow keys typed
+  8, 4 or 6 in the desktop. They send the arrow keys now (#8). Installs on
+  Ubuntu and Arch get this with the next viewer release.
 - The desktop no longer offers to suspend, or suspends when idle. Windows
   suspends the machine.
 - X11 applications work in a session started after `nixos-rebuild switch`.
