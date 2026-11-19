@@ -22,6 +22,10 @@ release they led to. Weekly nixpkgs updates are not listed.
 - With NumLock on, touchpad gestures that Windows turns into arrow keys typed
   8, 4 or 6 in the desktop. They send the arrow keys now (#8). Installs on
   Ubuntu and Arch get this with the next viewer release.
+- `weaselway.viewer.copyTo = "/mnt/c/work"` makes `ww-start-viewer` copy
+  the viewer and its DLLs to `C:\work\<hash>\` and run it from there,
+  instead of from the store over `\\wsl.localhost`. `<hash>` is the store
+  hash of the viewer build.
 - The desktop no longer offers to suspend, or suspends when idle. Windows
   suspends the machine.
 - X11 applications work in a session started after `nixos-rebuild switch`.

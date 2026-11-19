@@ -424,6 +424,10 @@ on a WSL installation. This section records those failures. The module's options
   `SDL3.dll` and `SDL3_ttf.dll` from the same directory. The script passes
   `/sdl-allow-screensaver`. Without it, SDL holds a display power request, and Windows keeps the
   monitor on while the viewer runs, even when Windows is locked.
+- `weaselway.viewer.copyTo` sets `WEASELWAY_VIEWER_COPY_TO` in the session variables.
+  `ww-start-viewer` then copies the directory of `WEASELWAY_VIEWER` to a subdirectory named after
+  its store hash, and runs the copy. It copies into a temporary directory and renames it, so a
+  cut-short copy is never used, and it never replaces a directory that exists.
 
 ### WSL integration
 

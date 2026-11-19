@@ -426,6 +426,19 @@ To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 WEASELWAY_VIEWER=/mnt/c/Weaselway/sdl-freerdp.exe ww-start-viewer
 ```
 
+The viewer runs from the store, over `\\wsl.localhost`. To run it from a
+Windows directory instead, set `weaselway.viewer.copyTo` in
+`/etc/nixos/configuration.nix`:
+
+```nix
+weaselway.viewer.copyTo = "/mnt/c/work";
+```
+
+`ww-start-viewer` then copies the viewer and its DLLs to
+`C:\work\<hash>\` and runs it from there. `<hash>` is the store hash of the
+viewer build, so it changes only when the viewer changes. A directory that is
+there is never replaced; old ones can be deleted.
+
 ### nixpkgs and the binary cache
 
 The image runs on the stable NixOS release. weaselway's lock also pins

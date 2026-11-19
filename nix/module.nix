@@ -81,6 +81,19 @@ in
       description = "Session that `ww-start-session` starts when given none.";
     };
 
+    viewer.copyTo = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/mnt/c/work";
+      description = ''
+        Windows directory, as a path in the distro, that `ww-start-viewer`
+        copies the viewer to before it runs it, into a subdirectory named
+        after the store hash of the viewer build. A copy that is there is
+        never replaced. Null runs the viewer from the store over
+        \\wsl.localhost.
+      '';
+    };
+
     usbip.devices = lib.mkOption {
       type = lib.types.listOf (lib.types.strMatching "[0-9a-fA-F]{4}:[0-9a-fA-F]{4}");
       default = [ ];
@@ -298,6 +311,9 @@ in
         }
         // lib.optionalAttrs (cfg.adapter != null) {
           MESA_D3D12_DEFAULT_ADAPTER_NAME = cfg.adapter;
+        }
+        // lib.optionalAttrs (cfg.viewer.copyTo != null) {
+          WEASELWAY_VIEWER_COPY_TO = cfg.viewer.copyTo;
         };
       }
 
