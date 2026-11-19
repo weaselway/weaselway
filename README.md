@@ -537,11 +537,14 @@ for. This usually follows a `wsl --update`, see [Updating](#updating).
 Two viewer options help with display problems. They can be combined.
 
 ```sh
-ww-start-viewer /sdl-show-stats:2   # frame and bandwidth counters, text at 2x
-ww-start-viewer /sdl-show-damage    # tint the regions updated in each frame
+ww-start-viewer /sdl-show-stats:2   # frame timings and graphs, text at 2x
+ww-start-viewer /sdl-show-damage    # outline the regions updated in each frame
 ```
 
 The value after `/sdl-show-stats` is the text scale and is optional.
+Right Shift+Right Ctrl+A and Right Shift+Right Ctrl+P turn the two overlays
+on and off while the viewer runs. Right Shift+Right Ctrl+H lists all of the
+viewer's hotkeys.
 
 <!-- IMAGE + VIDEO: (1) a screenshot of a 2560x1440 session with the
      /sdl-show-stats overlay showing 60 fps, with the GPU named in the caption.

@@ -22,6 +22,17 @@ release they led to. Weekly nixpkgs updates are not listed.
 - With NumLock on, touchpad gestures that Windows turns into arrow keys typed
   8, 4 or 6 in the desktop. They send the arrow keys now (#8). Installs on
   Ubuntu and Arch get this with the next viewer release.
+- The viewer's stats overlay (`/sdl-show-stats`) draws a bar per frame with
+  the time each stage took, and one with the time since the frame before,
+  scaled to the monitor's refresh rate. It shows the latency from a frame's
+  arrival to its display, late and dropped frames, and how evenly frames
+  arrive. With several monitors, each window shows its own numbers.
+- Viewer hotkeys: Right Shift+Right Ctrl+A turns the stats overlay on and
+  off, Right Shift+Right Ctrl+P outlines the regions each frame updates, and
+  Right Shift+Right Ctrl+H lists all hotkeys. The viewer says when the
+  keyboard grab changes, and shows each window's monitor number after a
+  window is opened or closed. Installs on Ubuntu and Arch get these with the
+  next viewer release.
 - `weaselway.viewer.copyTo = "/mnt/c/work"` makes `ww-start-viewer` copy
   the viewer and its DLLs to `C:\work\<hash>\` and run it from there,
   instead of from the store over `\\wsl.localhost`. `<hash>` is the store
