@@ -13,6 +13,10 @@ release they led to. Weekly nixpkgs updates are not listed.
   Arch keep viewer v1.3.0.
 - Images on nixos-unstable, where Mesa is 26.3, build the Mesa fixes on
   Mesa 26.3.1 instead of 26.3.0.
+- d3d12 takes a lock when it allocates and frees sampler descriptors. GL
+  apps create samplers on their own thread while Mesa's driver thread
+  frees deleted ones into the same pool, so a sampler could end up with a
+  descriptor that was still in use.
 
 ## v1.9.0 - 2026-11-20
 

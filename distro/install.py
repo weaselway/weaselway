@@ -36,7 +36,7 @@ from typing import Final, NoReturn
 # The versions the NixOS image ships (flake.lock, nix/overlay.nix).
 DXGDRM_VERSION: Final = "v1.4.0"
 VIEWER_VERSION: Final = "v1.3.0"
-MESA_REV: Final = "00409ab4581b4e0b62b13a12091bef92dc936568"  # branch mesa-26.2.7-wsl
+MESA_REV: Final = "8aa6a89c3da6bc894f8baff96320be5150169fcf"  # branch mesa-26.2.7-wsl
 
 # The runtime branches the Flatpak GL extension is built for; apps on other
 # branches get the runtime's own Mesa.
