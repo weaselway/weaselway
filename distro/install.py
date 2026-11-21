@@ -386,7 +386,7 @@ class Ubuntu(Distro):
     freerdp_uses_ffmpeg = False
     base_packages = (
         "pipewire-pulse", "wireplumber", "upower", "mesa-utils", "vulkan-tools", "kbd", "curl", "git", "unzip",
-        "build-essential", "pkg-config", "freerdp3-dev", "libwinpr3-dev", "libssl-dev", "libglib2.0-dev",
+        "build-essential", "pkg-config", "freerdp3-dev", "libwinpr3-dev", "libglib2.0-dev",
         "libpng-dev", "libwayland-dev", "wayland-protocols", "libgbm-dev", "libdrm-dev", "libegl-dev",
         "libgles-dev",
     )  # fmt: skip
@@ -492,7 +492,7 @@ class Arch(Distro):
     # freerdp is not listed: the patched package is built from Arch's PKGBUILD,
     # and asking for the repository's would replace it.
     base_packages = (
-        "pipewire", "pipewire-pulse", "wireplumber", "upower", "glib2", "openssl", "libpng", "libdrm", "libglvnd", "mesa",
+        "pipewire", "pipewire-pulse", "wireplumber", "upower", "glib2", "libpng", "libdrm", "libglvnd", "mesa",
         "wayland", "wayland-protocols", "vulkan-icd-loader", "mesa-utils", "vulkan-tools", "libva", "kbd", "kmod",
         "base-devel", "git", "curl", "unzip",
         # Mesa's build dependencies, from Arch's mesa PKGBUILD without what
