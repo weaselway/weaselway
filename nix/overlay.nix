@@ -188,7 +188,6 @@ in
       final.libgbm
       final.libdrm
       final.weaselway-freerdp
-      final.openssl
       final.glib
       final.libpng
       final.wayland

@@ -1,7 +1,7 @@
 # The uapi header lives in the dxgdrm repo; point DXGDRM_INCLUDE at a checkout.
 DXGDRM_INCLUDE ?= ../../dxgdrm
 
-PKGS    := egl glesv2 gbm libdrm freerdp3 freerdp-server3 winpr3 libcrypto \
+PKGS    := egl glesv2 gbm libdrm freerdp3 freerdp-server3 winpr3 \
            glib-2.0 gio-2.0 gio-unix-2.0 libpng wayland-client
 CFLAGS  ?= -O2 -g
 # -isystem: FreeRDP's headers warn about their own deprecated declarations.

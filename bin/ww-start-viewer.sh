@@ -85,7 +85,7 @@ COMMAND=(
     "${VIEWER}" /u:dummy /d:dummy /p:dummy
     /v:vsock://"${VM_ID}":"${PORT}"
     /wslgsharedmemorypath:"${SHARED_MEMORY_PATH}"
-    /cert:ignore
+    /sec:rdp
     /dynamic-resolution
     /w:1280
     /log-level:warn

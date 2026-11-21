@@ -36,7 +36,7 @@ are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 | [0021](0021-image-defaults-user-password-sshd.md) | The image user is `nixos` with the password `nixos`, and sshd is off | Accepted |
 | [0022](0022-dxgdrm-keyed-on-the-kernel-release.md) | dxgdrm is loaded from the store, keyed on the kernel release | Accepted |
 | [0023](0023-session-environment.md) | The user manager's environment selects d3d12 and runs WebKit unsandboxed | Accepted |
-| [0024](0024-unauthenticated-rdp-on-vsock.md) | RDP on a Hyper-V socket, with a throwaway certificate and no authentication | Accepted |
+| [0024](0024-unauthenticated-rdp-on-vsock.md) | RDP on a Hyper-V socket, without encryption or authentication | Accepted |
 | [0025](0025-custom-session-for-other-compositors.md) | Other compositors start through a session script the user provides | Accepted |
 | [0026](0026-placeholder-without-a-compositor.md) | A placeholder screen while no compositor owns the display | Accepted |
 | [0027](0027-immutable-releases.md) | Releases are immutable and carry both images | Accepted |

@@ -78,8 +78,8 @@ connect() {
         wait "$client" 2>/dev/null || true
     fi
     before=$(grep -c "clipboard channel ready" "$log.harness" || true)
-    DISPLAY=$display xfreerdp /v:127.0.0.1:"$port" /u:test /p:test /cert:ignore /size:800x600 \
-        +clipboard /sec:tls >>"$log.client" 2>&1 &
+    DISPLAY=$display xfreerdp /v:127.0.0.1:"$port" /u:test /p:test /size:800x600 \
+        +clipboard /sec:rdp >>"$log.client" 2>&1 &
     client=$!
     pids+=("$client")
     for _ in $(seq 100); do

@@ -30,10 +30,6 @@
 #include <linux/input-event-codes.h>
 #include <linux/vm_sockets.h>
 
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
 
 #include <freerdp/freerdp.h>
 #include <freerdp/channels/channels.h>
@@ -220,8 +216,6 @@ struct rdp_server {
     freerdp_listener *listener;
     /* The vsock until the listener has taken it, -1 after that. */
     int owned_listen_fd;
-    char *cert_pem;
-    char *key_pem;
 
     /* One client at a time. */
     struct peer_context *peer;
@@ -582,7 +576,8 @@ frame_pool(struct rdp_server *server, const struct rdp_frame *frame)
  * CheckFileDescriptorEx() can be reached from another thread: the message
  * queue has its own lock, every PDU gets a stream of its own, and the
  * transport serialises writes. Legacy RDP encryption, with its RC4 state and
- * sequence counter, would not be safe, but only TLS is ever enabled here.
+ * sequence counter, would not be safe, but the connection is not encrypted
+ * at all (see peer_init).
  * Opening drdynvc is the main loop's business, hence autoOpen FALSE.
  */
 static void
@@ -1790,12 +1785,34 @@ peer_context_free(freerdp_peer *client, rdpContext *context)
     g_mutex_clear(&peer_ctx->vcm_drain_lock);
 }
 
+/* Self-signed, RSA-2048, CN weaselwayd, valid until 2126. Its private key was
+ * thrown away: nothing encrypts with it, see peer_init. */
+static const char server_cert_pem[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDDTCCAfWgAwIBAgIUH3pkFcBHRWQed/RUaLcDCgTpjywwDQYJKoZIhvcNAQEL\n"
+    "BQAwFTETMBEGA1UEAwwKd2Vhc2Vsd2F5ZDAgFw0yNjExMjEwODMyNDBaGA8yMTI2\n"
+    "MTAyODA4MzI0MFowFTETMBEGA1UEAwwKd2Vhc2Vsd2F5ZDCCASIwDQYJKoZIhvcN\n"
+    "AQEBBQADggEPADCCAQoCggEBALOBb2cIHuBToeVk+6kIbo2Ml3AthSB0xmyFkBay\n"
+    "9Yi+ztDd97lx+YAlSZ5YU2k/TzvZiSnNaG6Vj8CGczg62iMg2L1+GN7u98Y50/yn\n"
+    "Ss6hzDRi0lDYLcookZtJOjYYKWIgbZ7iRFmCoXDHJPWX6vMw3VIUgrwu2Nm0ripI\n"
+    "BL+lyzijT0Afsy1q6Hrdx27sfUnHqC3Gn7DfEcu+Wl2J2cRid2KJYpqbsap7/sP2\n"
+    "PlVUboDLInZ0TvkJGwAQD6ddsVu3ADL9NQIrrkj1cleCAdWmwQJ6an+2Q/14OyvG\n"
+    "vO/aUWU38fr6H/g3brEnMkeUqUkwoTyg6RRidEUD08vmZbUCAwEAAaNTMFEwHQYD\n"
+    "VR0OBBYEFM3XVbWGyO7WO2KdcDNqjIRY3SGRMB8GA1UdIwQYMBaAFM3XVbWGyO7W\n"
+    "O2KdcDNqjIRY3SGRMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB\n"
+    "AIqv5+iLWmrNzt1CxFGnPHGpEvA68Ub+mfi4R71EmRW9bGd/SMmoD1qP+kksGKUv\n"
+    "X8nW8mwUHZheZgrfPz2eZprAsrQUfAe5rdL4ij5QZdtbvE7SKTuNKXM1cFwzEQPh\n"
+    "Cp1L1NAbe2JOw0lnkyuXvB2+LgCrN7TVgEMkfAKj+7ZNYWzINkYTxdaBgmcFauKZ\n"
+    "3lQTvBBxdj1xEtHT1WAgBUUbs3C6Xmofad5hsDKcCYSb+uQQljg5vyR2Wfc4xgRC\n"
+    "Qg66YwUxS2Hyc75YMtgZLdZxi4WiwB0ZMY5Zoie5y1B1ueoV1tTgidN7jpeFshr7\n"
+    "1Bmhij6E216pf+Y0oux4YhY=\n"
+    "-----END CERTIFICATE-----\n";
+
 static bool
 peer_init(freerdp_peer *client, struct rdp_server *server)
 {
     struct peer_context *peer_ctx;
     rdpSettings *settings;
-    rdpPrivateKey *key;
     rdpCertificate *cert;
     rdpInput *input;
 
@@ -1809,27 +1826,21 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     peer_ctx->server = server;
     settings = client->context->settings;
 
-    /* TLS with the throwaway certificate and no NLA. Nothing verifies it --
-     * the client runs with /cert:ignore and the transport is a Hyper-V socket
-     * inside the machine -- but FreeRDP will not initialize a peer without
-     * one. The settings take ownership of both objects. */
-    key = freerdp_key_new_from_pem(server->key_pem);
-    cert = freerdp_certificate_new_from_pem(server->cert_pem);
-    if (!key || !cert) {
-        freerdp_key_free(key);
-        freerdp_certificate_free(cert);
+    /* Standard RDP security without encryption, no TLS and no NLA: the
+     * transport is a Hyper-V socket inside the machine. FreeRDP turns
+     * encryption off for local peers only, and counts a vsock peer as local
+     * only when it was built with vsock support, so say so here. It still
+     * wants an RSA-2048 certificate, but no key. The settings own cert. */
+    client->local = TRUE;
+    cert = freerdp_certificate_new_from_pem(server_cert_pem);
+    if (!cert)
         goto fail;
-    }
-    if (!freerdp_settings_set_pointer_len(settings, FreeRDP_RdpServerRsaKey, key, 1)) {
-        freerdp_key_free(key);
-        freerdp_certificate_free(cert);
-        goto fail;
-    }
     if (!freerdp_settings_set_pointer_len(settings, FreeRDP_RdpServerCertificate, cert, 1)) {
         freerdp_certificate_free(cert);
         goto fail;
     }
-    (void)freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, TRUE);
+    (void)freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, TRUE);
+    (void)freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, FALSE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, FALSE);
     /* NLA with the extended handshake, on by default since FreeRDP 3.32. */
     (void)freerdp_settings_set_bool(settings, FreeRDP_ExtSecurity, FALSE);
@@ -1906,61 +1917,6 @@ on_peer_accepted(freerdp_listener *listener, freerdp_peer *client)
 /* ------------------------------------------------------------------ */
 /* The listener                                                       */
 /* ------------------------------------------------------------------ */
-
-static char *
-bio_to_string(BIO *bio)
-{
-    char *data = NULL;
-    long length = BIO_get_mem_data(bio, &data);
-
-    return length > 0 ? g_strndup(data, (gsize)length) : NULL;
-}
-
-/* A self-signed RSA-2048 certificate, made in memory and never written. */
-static bool
-generate_session_tls(struct rdp_server *server, GError **error)
-{
-    EVP_PKEY *pkey = EVP_RSA_gen(2048);
-    X509 *x509 = X509_new();
-    BIO *cert_bio = BIO_new(BIO_s_mem());
-    BIO *key_bio = BIO_new(BIO_s_mem());
-    X509_NAME *name;
-    bool ok = false;
-
-    if (!pkey || !x509 || !cert_bio || !key_bio)
-        goto out;
-
-    if (!X509_set_version(x509, X509_VERSION_3) ||
-        !ASN1_INTEGER_set(X509_get_serialNumber(x509), 1) ||
-        !X509_gmtime_adj(X509_getm_notBefore(x509), 0) ||
-        !X509_gmtime_adj(X509_getm_notAfter(x509), 365L * 24 * 60 * 60) ||
-        !X509_set_pubkey(x509, pkey))
-        goto out;
-
-    name = X509_get_subject_name(x509);
-    if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                    (const unsigned char *)"weaselwayd", -1, -1, 0) ||
-        !X509_set_issuer_name(x509, name) || !X509_sign(x509, pkey, EVP_sha256()))
-        goto out;
-
-    if (!PEM_write_bio_X509(cert_bio, x509) ||
-        !PEM_write_bio_PrivateKey(key_bio, pkey, NULL, NULL, 0, NULL, NULL))
-        goto out;
-
-    server->cert_pem = bio_to_string(cert_bio);
-    server->key_pem = bio_to_string(key_bio);
-    ok = server->cert_pem && server->key_pem;
-
-out:
-    if (!ok)
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "generating the session's TLS certificate failed");
-    BIO_free(key_bio);
-    BIO_free(cert_bio);
-    X509_free(x509);
-    EVP_PKEY_free(pkey);
-    return ok;
-}
 
 static int
 create_vsock_fd(int port, GError **error)
@@ -2194,9 +2150,6 @@ rdp_server_new(const struct rdp_config *config, GError **error)
         goto fail;
     }
 
-    if (!generate_session_tls(server, error))
-        goto fail;
-
     server->listener = freerdp_listener_new();
     if (!server->listener) {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "cannot create a listener");
@@ -2261,8 +2214,6 @@ rdp_server_free(struct rdp_server *server)
     g_clear_fd(&server->owned_listen_fd, NULL);
     g_array_unref(server->watches);
     g_main_context_unref(server->context);
-    g_free(server->cert_pem);
-    g_free(server->key_pem);
     g_free(server->pointer);
     g_free(server);
 }

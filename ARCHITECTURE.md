@@ -243,9 +243,9 @@ affect ([0015](docs/adr/0015-forks-fetched-with-git.md)).
   and libgbm (which load the patched mesa at run time), `weaselway-freerdp`, and the uapi header from
   the dxgdrm input. The gfxredir server channel is compiled in from
   [weaselwayd/gfxredir](weaselwayd/gfxredir), because distributions build FreeRDP without it.
-  weaselwayd is a GLib program with one main loop. It uses GIO for D-Bus and sockets, libcrypto for
-  its certificate, libpng for images on the clipboard, and libwayland-client for the clipboard of
-  compositors other than mutter. The build runs `make check`.
+  weaselwayd is a GLib program with one main loop. It uses GIO for D-Bus and sockets, libpng for
+  images on the clipboard, and libwayland-client for the clipboard of compositors other than
+  mutter. The build runs `make check`.
 - `weaselway-freerdp`: nixpkgs' freerdp plus
   [nix/freerdp-dsp-ffmpeg-pcm-s16.patch](nix/freerdp-dsp-ffmpeg-pcm-s16.patch). Only weaselwayd
   links it.
@@ -570,7 +570,7 @@ cd /tmp && sudo /nix/store/<hash>-nixos-wsl-tarball-builder/bin/nixos-wsl-tarbal
 ### Building weaselwayd alone
 
 Run `make` in [weaselwayd/](weaselwayd). It needs `DXGDRM_INCLUDE` set to a dxgdrm checkout, and
-FreeRDP 3, GLib, libcrypto, libpng, EGL, GLES, gbm, libdrm, wayland-client and wayland-protocols
+FreeRDP 3, GLib, libpng, EGL, GLES, gbm, libdrm, wayland-client and wayland-protocols
 from pkg-config, and `wayland-scanner`. `nix develop` provides all of these.
 
 - `make check` tests the format conversions of the clipboard.
@@ -720,10 +720,12 @@ These decisions and fixes are easy to undo by accident.
 
 - **No codec fallback.** The client either supports gfxredir or is disconnected, with the reason in
   weaselwayd's log.
-- **The certificate is generated in memory.** `winpr-makecert` is not on `PATH` on NixOS, so
-  weaselwayd creates a self-signed RSA-2048 certificate with libcrypto. The certificate cannot be
-  omitted: FreeRDP's server refuses to initialise a peer without one, even with standard RDP
-  security.
+- **The connection is not encrypted.** weaselwayd offers only standard RDP security (the
+  protocol's mode without TLS), and marks every client as local, so FreeRDP turns encryption off.
+  FreeRDP's server still refuses to initialise a peer without an RSA-2048 certificate, so
+  `rdp.c` contains a fixed self-signed one whose private key was thrown away. Nothing encrypts
+  with it. The thread-safe channel writes (see below) rely on this: legacy RDP encryption keeps
+  RC4 state that two threads must not share.
 - **Access to the channel manager is serialised.** weaselwayd's playback thread and its main loop
   both drain FreeRDP's virtual channel manager, and a lock keeps them apart.
 - **Alt+F4 goes to the session.** On Windows, SDL turns Alt+F4 into a close request for the viewer's
