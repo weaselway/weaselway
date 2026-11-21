@@ -15,11 +15,11 @@ let
   # from src would be import-from-derivation.
   mesaFork =
     if lib.versions.majorMinor prev.mesa.version == "26.3" then
-      # branch mesa-26.3.0-wsl
+      # branch mesa-26.3.1-wsl
       {
-        version = "26.3.0";
-        rev = "4c2a28e5587b53130cecaecae7ee2ffe2afa4a95";
-        hash = "sha256-NjkxTgsR3PT/euQfny+vTsenS0reZTys93QQXZ95/uU=";
+        version = "26.3.1";
+        rev = "5cf6f237e8441464489ee45e2ec83fa428ba4fc3";
+        hash = "sha256-qRVMG+In0qkQDz40oM+45tAr8Whq4xpV2n+ie8szT3s=";
       }
     else if lib.versionOlder prev.mesa.version "27" then
       # branch mesa-26.2.7-wsl
@@ -32,8 +32,8 @@ let
       # branch main
       {
         version = "27.0.0-devel";
-        rev = "3e3eb262fbe534a9195110263bf426d37f9adae4";
-        hash = "sha256-EqROvQloMMWedyNC1POkIRGKmU6No+H4P083SrhjYyA=";
+        rev = "e66b14c443325021b1600cd9c12aca76e5bbd1b0";
+        hash = "sha256-x7/9KlPlPQeXyKMH0AaO/jSW5rqdC9AjqlM+eRwqgm8=";
       };
 
   mesaDrivers = {

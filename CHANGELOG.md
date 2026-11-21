@@ -9,6 +9,10 @@ release they led to. Weekly nixpkgs updates are not listed.
   It never leaves the machine, and the viewer ignored the certificate, so
   TLS protected nothing. weaselwayd no longer generates a certificate at
   startup and no longer needs libcrypto.
+- The images build the viewer on FreeRDP 3.33.1. Installs on Ubuntu and
+  Arch keep viewer v1.3.0.
+- Images on nixos-unstable, where Mesa is 26.3, build the Mesa fixes on
+  Mesa 26.3.1 instead of 26.3.0.
 
 ## v1.9.0 - 2026-11-20
 

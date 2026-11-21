@@ -19,7 +19,7 @@ search path on which they would be found.
 - The source is a release branch of the Mesa fork (now `mesa-26.2.7-wsl`),
   which can be newer than nixpkgs' Mesa (26.1.8). Rusticl is off, because
   its crates are pinned to nixpkgs' release. While nixpkgs' Mesa is 26.3,
-  `mesa-26.3.0-wsl` is built, with the same commits. Once nixpkgs' Mesa is 27 or
+  `mesa-26.3.1-wsl` is built, with the same commits. Once nixpkgs' Mesa is 27 or
   newer, the fork's `main` is built instead, since nixpkgs' package fails on
   older majors.
 - LLVM is linked statically. Intel's driver compiles shaders with its own

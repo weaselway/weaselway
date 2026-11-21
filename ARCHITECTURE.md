@@ -167,8 +167,8 @@ problems that show up there but are unrelated to RDP:
 - **weaselway** (this repository): the flake, the NixOS modules, the overlay, the image
   configuration, weaselwayd, the shell scripts and the install script for other distros.
 - **mesa**: the image builds the branch `mesa-26.2.7-wsl` with nixpkgs' Mesa package definition.
-  `mesa-26.3.0-wsl` and `main` carry the same commits on top of the 26.3.0 tag and upstream main.
-  The image builds `mesa-26.3.0-wsl` while nixpkgs' Mesa is 26.3 (nixos-unstable now), and `main`
+  `mesa-26.3.1-wsl` and `main` carry the same commits on top of the 26.3.1 tag and upstream main.
+  The image builds `mesa-26.3.1-wsl` while nixpkgs' Mesa is 26.3 (nixos-unstable now), and `main`
   once it is 27 or newer, because nixpkgs' package only builds the Mesa major it targets. The
   commits change d3d12 and dzn (Mesa's Vulkan driver on D3D12):
   - scanout buffers on the dxgdrm KMS node, with a GEM handle (the kernel's buffer handle) and a

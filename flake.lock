@@ -46,10 +46,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1795082729,
-        "narHash": "sha256-O2f1mTCCEEYQ9+eNas3XhAw4KNTw8GQXK3jM49NXjpk=",
+        "lastModified": 1795257574,
+        "narHash": "sha256-eMX73qms6CNS25oaj/GX0oBdDsIZn3be7rvxb/8Fd5o=",
         "ref": "main",
-        "rev": "1322187f84f48ca81ee515a9df578976d593a1b9",
+        "rev": "05ec5f1c24cc04dfd096823a754ebfb5a481544a",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/weaselway/freerdp"
