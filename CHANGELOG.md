@@ -3,7 +3,7 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
-## Unreleased
+## v1.9.1 - 2026-11-23
 
 - The RDP connection between the viewer and weaselwayd no longer uses TLS.
   It never leaves the machine, and the viewer ignored the certificate, so
