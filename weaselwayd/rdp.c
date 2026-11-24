@@ -156,6 +156,8 @@ struct peer_context {
     DispServerContext *disp;
     /* Weaselway::Display: and what refresh rate their monitors have. */
     HANDLE wwdisplay;
+    /* The WWDISPLAY_INHIBIT_* flags the client holds. */
+    uint32_t inhibit_sent;
 
     /* rdpsnd and audin; see audio.h. */
     struct audio_out *audio_out;
@@ -244,6 +246,9 @@ struct rdp_server {
     int n_wanted;
     gint64 wanted_deadline;
     bool layout_request_pending;
+
+    /* WWDISPLAY_INHIBIT_* flags, for the client to hold. */
+    uint32_t inhibit;
 };
 
 #define MS(ms) ((gint64)(ms) * G_TIME_SPAN_MILLISECOND)
@@ -1037,6 +1042,34 @@ setup_wwdisplay(struct peer_context *peer_ctx)
     WTSFreeMemory(session_id);
 }
 
+/* Once the client has opened the channel, and after every change. A client
+ * that refused it gets nothing. */
+static void
+wwdisplay_send_inhibit(struct peer_context *peer_ctx)
+{
+    uint32_t flags = peer_ctx->server->inhibit;
+    uint8_t pdu[8] = { WWDISPLAY_PDU_INHIBIT, 0, 0, 0, flags, flags >> 8, flags >> 16, flags >> 24 };
+    BOOL *ready = NULL;
+    DWORD bytes = 0;
+    bool open;
+
+    if (flags == peer_ctx->inhibit_sent ||
+        !WTSVirtualChannelQuery(peer_ctx->wwdisplay, WTSVirtualChannelReady, (void **)&ready,
+                                &bytes))
+        return;
+    open = ready && *ready;
+    WTSFreeMemory(ready);
+    if (!open)
+        return;
+
+    if (!WTSVirtualChannelWrite(peer_ctx->wwdisplay, (PCHAR)pdu, sizeof(pdu), NULL)) {
+        g_warning("Weaselway::Display: cannot send the inhibit flags");
+        return;
+    }
+    peer_ctx->inhibit_sent = flags;
+    flush_channels(peer_ctx);
+}
+
 /* The PDUs arrive whole, on the main loop, when the channel manager is
  * pumped; this takes whatever came. */
 static void
@@ -1048,6 +1081,8 @@ wwdisplay_dispatch(struct peer_context *peer_ctx)
 
     if (!peer_ctx->wwdisplay)
         return;
+
+    wwdisplay_send_inhibit(peer_ctx);
 
     while (WTSVirtualChannelRead(peer_ctx->wwdisplay, 0, NULL, 0, &length)) {
         struct wwdisplay_pdu pdu;
@@ -2276,6 +2311,13 @@ rdp_server_take_layout_request(struct rdp_server *server,
         monitors[i].refresh_mhz = server->outputs[i].refresh_mhz;
     }
     return true;
+}
+
+void
+rdp_server_set_inhibit(struct rdp_server *server, uint32_t flags)
+{
+    server->inhibit = flags;
+    wake(server);
 }
 
 bool

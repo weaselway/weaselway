@@ -116,6 +116,11 @@ enum rdp_state rdp_server_state(struct rdp_server *server, int output);
  * windows again. */
 bool rdp_server_take_full_request(struct rdp_server *server, int output);
 
+/* What the session asks Windows to hold off, WWDISPLAY_INHIBIT_* flags. The
+ * client gets them when it connects and on every change, and holds them for
+ * as long as it is connected. */
+void rdp_server_set_inhibit(struct rdp_server *server, uint32_t flags);
+
 /*
  * What the client's mouse pointer looks like: @width x @height pixels, B G R A
  * premultiplied, top row first, @stride bytes a row, with the hotspot inside.

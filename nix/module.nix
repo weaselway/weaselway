@@ -351,6 +351,9 @@ in
 
         environment.systemPackages = [
           pkgs.adwaita-icon-theme
+          # Plasma adds it only with powerManagement, which NixOS-WSL turns off.
+          # It keeps the apps' sleep and idle inhibitors, which weaselwayd reads.
+          pkgs.kdePackages.powerdevil
         ];
       })
     ]

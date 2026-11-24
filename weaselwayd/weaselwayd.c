@@ -46,6 +46,7 @@
 #include <drm_fourcc.h>
 
 #include "dxgdrm_drm.h"
+#include "inhibit.h"
 #include "input.h"
 #include "log.h"
 #include "placeholder.h"
@@ -173,6 +174,7 @@ struct weaselwayd {
     struct input *input;
     struct selection *selection;
     struct wayland_screens *screens;
+    struct inhibit *inhibit;
 
     struct output outputs[DXGDRM_MAX_OUTPUTS];
     /* A compositor owns the display; one flag for all outputs. */
@@ -1414,6 +1416,14 @@ on_rdp_changed(void *data)
     pump(data);
 }
 
+static void
+on_inhibit_changed(void *data, uint32_t flags)
+{
+    struct weaselwayd *p = data;
+
+    rdp_server_set_inhibit(p->rdp, flags);
+}
+
 static gboolean
 on_stats(gpointer data)
 {
@@ -1541,6 +1551,7 @@ main(int argc, char **argv)
         g_warning("%s", error->message);
         return EXIT_FAILURE;
     }
+    p.inhibit = inhibit_new(on_inhibit_changed, &p);
 
     /* The first call for an output is what makes the node poll readable for
      * it from then on. It returns a frame if a compositor is already up. */
@@ -1567,6 +1578,7 @@ main(int argc, char **argv)
         if (p.outputs[i].readback.active)
             readback_disarm(&p.outputs[i]);
     }
+    inhibit_free(p.inhibit);
     rdp_server_free(p.rdp);
     selection_free(p.selection);
     wayland_screens_free(p.screens);

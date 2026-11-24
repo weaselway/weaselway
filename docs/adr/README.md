@@ -50,6 +50,7 @@ are in dxgdrm's `docs/adr`, and are referred to as "dxgdrm NNNN".
 | [0035](0035-bluetooth-modules-with-rfkill.md) | Bluetooth modules are rebuilt with rfkill and loaded in place of WSL's | Accepted |
 | [0036](0036-one-python-installer-for-other-distros.md) | One Python installer for other distros, patching the distro's packages | Accepted |
 | [0037](0037-one-gfxredir-window-per-output.md) | One gfxredir window and pool per output | Accepted |
+| [0038](0038-session-inhibitors-reach-windows.md) | The session's sleep and idle inhibitors reach Windows | Accepted |
 
 ## Known risks
 

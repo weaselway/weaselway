@@ -19,6 +19,7 @@ monitor layout carries size, position and scale only.
   (window moved to another monitor, display mode changed). The PDU carries
   the monitor's index in the layout, which is also the output's (0037). The
   format is in that repository's `include/freerdp/channels/wwdisplay.h`.
+  The server sends one PDU of its own on the channel, `INHIBIT` (0038).
 - The rate is the physical one, the highest the monitor runs at:
   `QueryDisplayConfig` for the window's monitor, the larger of the path's
   rate and the target mode's signal rate. With Windows' dynamic refresh rate

@@ -8,6 +8,11 @@
  *   REFRESH_RATE    UINT32 refresh rate in millihertz
  *   PRESENT_TIMING  UINT32 frame count, INT32 slack in microseconds: how long
  *                   before the monitor's vblank the last frames were ready
+ *
+ * The one PDU the server sends, with monitor 0:
+ *
+ *   INHIBIT         UINT32 WWDISPLAY_INHIBIT_* flags: what the session asks
+ *                   Windows to hold off, sent on every change
  */
 
 #ifndef WEASELWAY_WWDISPLAY_H
@@ -20,6 +25,9 @@
 #define WWDISPLAY_DVC_CHANNEL_NAME "Weaselway::Display"
 #define WWDISPLAY_PDU_REFRESH_RATE 1
 #define WWDISPLAY_PDU_PRESENT_TIMING 2
+#define WWDISPLAY_PDU_INHIBIT 3
+#define WWDISPLAY_INHIBIT_SYSTEM 1  /* sleep */
+#define WWDISPLAY_INHIBIT_DISPLAY 2 /* turning the display off */
 #define WWDISPLAY_MAX_PDU 64
 
 struct wwdisplay_pdu {

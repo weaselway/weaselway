@@ -14,13 +14,13 @@ SELECTION := selection.c selection-mutter.c selection-wayland.c wayland-watch.c 
 # The compositor's monitor layout, for mapping the pointer.
 SCREENS := screens-wayland.c xdg-output-unstable-v1-protocol.c
 SOURCES := weaselwayd.c rdp.c input.c audio.c clipboard.c formats.c placeholder.c log.c \
-           layout.c wwdisplay.c \
+           layout.c wwdisplay.c inhibit.c \
            $(SELECTION) $(SCREENS)
 # The gfxredir server channel, which distributions build FreeRDP without; see
 # gfxredir/README.md. Upstream code, so it is spared our warnings.
 GFXREDIR := gfxredir/gfxredir_server.c gfxredir/gfxredir_common.c
 HEADERS := rdp.h input.h audio.h clipboard.h selection.h selection-backends.h formats.h \
-           layout.h wwdisplay.h \
+           layout.h wwdisplay.h inhibit.h \
            placeholder.h log.h wayland-watch.h screens-wayland.h \
            ext-data-control-v1-client-protocol.h xdg-output-unstable-v1-client-protocol.h \
            $(wildcard gfxredir/*.h)

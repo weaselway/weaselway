@@ -411,6 +411,11 @@ The viewer lets Windows turn the monitor off and start the screen saver
 (`/sdl-allow-screensaver`). Without that option, SDL keeps the monitor on
 while the viewer runs, even when Windows is locked.
 
+When an application in the desktop asks the desktop not to sleep or not to
+blank the screen, for example a video player, the viewer passes this on.
+Windows then does not go to sleep on its own, and keeps the monitor on
+until you lock Windows. `powercfg /requests` lists the viewer while this holds.
+
 `ww-start-viewer /sdl-windows:2` shows the desktop as two monitors, each in a
 window of its own, which can be resized and moved to different Windows
 monitors. Up to four work. Right Shift+Right Ctrl+N opens one more window at

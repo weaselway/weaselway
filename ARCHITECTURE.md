@@ -195,7 +195,8 @@ problems that show up there but are unrelated to RDP:
   SDL3 client:
   - a Direct3D 11 presenter on a render thread, which copies gfxredir buffers on the GPU through a
     Direct3D 12 heap on the shared memory (`-sdl-zero-copy` turns that off);
-  - the `wwdisplay` channel, which reports each monitor's refresh rate and vblank timing;
+  - the `wwdisplay` channel, which reports each monitor's refresh rate and vblank timing, and
+    receives the session's sleep and idle inhibitors;
   - gfxredir with several pools, each window drawn from its own, and `/sdl-windows:<n>`, which
     shows the desktop as n monitors in n windows;
   - touchpad gestures, Alt+F4 sent to the session, and the signed 16-bit PCM fix.
@@ -424,6 +425,10 @@ on a WSL installation. This section records those failures. The module's options
   `SDL3.dll` and `SDL3_ttf.dll` from the same directory. The script passes
   `/sdl-allow-screensaver`. Without it, SDL holds a display power request, and Windows keeps the
   monitor on while the viewer runs, even when Windows is locked.
+- weaselwayd watches the session's inhibitors in gnome-session, PowerDevil and logind
+  (`weaselwayd/inhibit.c`) and sends them to the viewer in a `wwdisplay` PDU. The viewer turns
+  them into Windows power requests and drops the display request while Windows is locked. See
+  [ADR 0038](docs/adr/0038-session-inhibitors-reach-windows.md).
 - `weaselway.viewer.copyTo` sets `WEASELWAY_VIEWER_COPY_TO` in the session variables.
   `ww-start-viewer` then copies the directory of `WEASELWAY_VIEWER` to a subdirectory named after
   its store hash, and runs the copy. It copies into a temporary directory and renames it, so a

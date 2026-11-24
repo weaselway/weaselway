@@ -3,6 +3,17 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
+## Unreleased
+
+- When an application in the session asks the desktop not to sleep or not
+  to blank the screen, such as a video player or a download manager, the
+  viewer asks Windows the same. Windows then does not go to sleep, and
+  keeps the display on unless it is locked. This works with GNOME, Plasma and logind
+  inhibitors (`systemd-inhibit`), and needs a new viewer.
+- The NixOS Plasma image now includes PowerDevil, Plasma's power
+  management. Plasma's power settings work, and Plasma dims and turns off
+  its screen when idle.
+
 ## v1.9.1 - 2026-11-23
 
 - The RDP connection between the viewer and weaselwayd no longer uses TLS.
