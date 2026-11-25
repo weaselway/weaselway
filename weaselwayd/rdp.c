@@ -1210,12 +1210,41 @@ pointer_position(struct peer_context *peer_ctx, UINT16 x, UINT16 y)
     input_pointer_motion(server->config.input, sx, sy, width, height);
 }
 
+/* The button in a mouse event's flags, if there is one. */
+static void
+pointer_button(struct input *input, UINT16 flags)
+{
+    uint16_t button = 0;
+
+    if (flags & PTR_FLAGS_BUTTON1)
+        button = BTN_LEFT;
+    else if (flags & PTR_FLAGS_BUTTON2)
+        button = BTN_RIGHT;
+    else if (flags & PTR_FLAGS_BUTTON3)
+        button = BTN_MIDDLE;
+    if (button)
+        input_pointer_button(input, button, !!(flags & PTR_FLAGS_DOWN));
+}
+
+/* The same for an extended mouse event's. */
+static void
+pointer_xbutton(struct input *input, UINT16 flags)
+{
+    uint16_t button = 0;
+
+    if (flags & PTR_XFLAGS_BUTTON1)
+        button = BTN_SIDE;
+    else if (flags & PTR_XFLAGS_BUTTON2)
+        button = BTN_EXTRA;
+    if (button)
+        input_pointer_button(input, button, !!(flags & PTR_XFLAGS_DOWN));
+}
+
 static BOOL
 on_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
 {
     struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
     struct input *input = peer_ctx->server->config.input;
-    uint16_t button = 0;
 
     if (!peer_ctx->activated || !input)
         return TRUE;
@@ -1232,15 +1261,7 @@ on_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
     }
 
     pointer_position(peer_ctx, x, y);
-
-    if (flags & PTR_FLAGS_BUTTON1)
-        button = BTN_LEFT;
-    else if (flags & PTR_FLAGS_BUTTON2)
-        button = BTN_RIGHT;
-    else if (flags & PTR_FLAGS_BUTTON3)
-        button = BTN_MIDDLE;
-    if (button)
-        input_pointer_button(input, button, !!(flags & PTR_FLAGS_DOWN));
+    pointer_button(input, flags);
     return TRUE;
 }
 
@@ -1249,19 +1270,12 @@ on_extended_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
 {
     struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
     struct input *input = peer_ctx->server->config.input;
-    uint16_t button = 0;
 
     if (!peer_ctx->activated || !input)
         return TRUE;
 
     pointer_position(peer_ctx, x, y);
-
-    if (flags & PTR_XFLAGS_BUTTON1)
-        button = BTN_SIDE;
-    else if (flags & PTR_XFLAGS_BUTTON2)
-        button = BTN_EXTRA;
-    if (button)
-        input_pointer_button(input, button, !!(flags & PTR_XFLAGS_DOWN));
+    pointer_xbutton(input, flags);
     return TRUE;
 }
 
