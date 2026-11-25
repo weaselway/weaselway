@@ -21,6 +21,8 @@ release they led to. Weekly nixpkgs updates are not listed.
   longer show a gray fringe around their outline. weaselwayd and the viewer
   each darkened the edge pixels; both are fixed, so the full fix needs a
   new viewer.
+- Installs on Ubuntu and Arch get viewer v1.4.0, built on FreeRDP 3.33.1.
+  It is the new viewer that the sleep and cursor entries above need.
 
 ## v1.9.1 - 2026-11-23
 
