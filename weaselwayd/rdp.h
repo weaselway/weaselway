@@ -133,8 +133,9 @@ void rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, in
 
 /*
  * Where the pointer is: @x, @y on output @output. Passed on to the client only
- * while relative motion moves the pointer, rather than the client's absolute
- * positions; a client that grabbed the mouse holds its cursor there.
+ * while relative motion or touch input moves the pointer, rather than the
+ * client's absolute positions; a client that grabbed the mouse holds its cursor
+ * there.
  */
 void rdp_server_set_pointer_position(struct rdp_server *server, int output, int x, int y);
 

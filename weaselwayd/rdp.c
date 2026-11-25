@@ -171,8 +171,8 @@ struct peer_context {
     /* When the last touch frame came, while fingers are down; 0 otherwise.
      * Under notes_lock. */
     gint64 touch_last;
-    /* Relative motion moved the pointer last, not an absolute position: the
-     * client is told where it went. Under notes_lock. */
+    /* Relative motion or touch input moved the pointer last, not an absolute
+     * position: the client is told where it went. Under notes_lock. */
     bool server_moves_pointer;
 
     /* The gfxredir, disp and rdpei callbacks run on the channels' own reader
@@ -1420,6 +1420,8 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
 
     g_mutex_lock(&peer_ctx->notes_lock);
     peer_ctx->touch_last = g_get_monotonic_time();
+    /* With the viewer's /sdl-touchpad-raw, the fingers move the pointer. */
+    peer_ctx->server_moves_pointer = true;
     g_mutex_unlock(&peer_ctx->notes_lock);
     wake(peer_ctx->server);
     return CHANNEL_RC_OK;

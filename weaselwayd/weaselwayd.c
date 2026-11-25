@@ -951,8 +951,9 @@ update_cursor(struct output *out, const struct drm_dxgdrm_get_frame *frame)
 /*
  * The cursor planes are the client's to draw: the image of one becomes the
  * client's mouse pointer, and no plane means no pointer. The client moves the
- * pointer itself, except while relative motion moves it here: the plane's
- * position is then where it has to go (rdp_server_set_pointer_position).
+ * pointer itself, except while relative motion or touch input moves it here:
+ * the plane's position is then where it has to go
+ * (rdp_server_set_pointer_position).
  *
  * The client has one pointer and the outputs a plane each, which a compositor
  * shows on the output the pointer is on, or on two while it is across their
