@@ -171,6 +171,10 @@ struct peer_context {
     /* When the last touch frame came, while fingers are down; 0 otherwise.
      * Under notes_lock. */
     gint64 touch_last;
+    /* Touch frames counted since touch_rate_since, for the debug log of their
+     * rate. Only the rdpei thread uses them. */
+    gint64 touch_rate_since;
+    unsigned touch_rate_frames;
     /* Relative motion or touch input moved the pointer last, not an absolute
      * position: the client is told where it went. Under notes_lock. */
     bool server_moves_pointer;
@@ -1403,6 +1407,7 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
     rdpSettings *settings = peer_ctx->peer->context->settings;
     double width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
     double height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+    gint64 now;
 
     if (!input || width < 2 || height < 2)
         return CHANNEL_RC_OK;
@@ -1428,8 +1433,20 @@ rdpei_touch_event(RdpeiServerContext *context, const RDPINPUT_TOUCH_EVENT *event
         input_touchpad_frame(input);
     }
 
+    now = g_get_monotonic_time();
+    peer_ctx->touch_rate_frames += event->frameCount;
+    if (now - peer_ctx->touch_rate_since >= G_TIME_SPAN_SECOND) {
+        /* A count that spans a pause tells no rate. */
+        if (now - peer_ctx->touch_rate_since < 2 * G_TIME_SPAN_SECOND)
+            g_debug("touch: %.0f frames/s",
+                    peer_ctx->touch_rate_frames * (double)G_TIME_SPAN_SECOND /
+                        (now - peer_ctx->touch_rate_since));
+        peer_ctx->touch_rate_since = now;
+        peer_ctx->touch_rate_frames = 0;
+    }
+
     g_mutex_lock(&peer_ctx->notes_lock);
-    peer_ctx->touch_last = g_get_monotonic_time();
+    peer_ctx->touch_last = now;
     /* With the viewer's /sdl-touchpad-raw, the fingers move the pointer. */
     peer_ctx->server_moves_pointer = true;
     g_mutex_unlock(&peer_ctx->notes_lock);
