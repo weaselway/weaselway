@@ -3,6 +3,13 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
+## Unreleased
+
+- GNOME's hot corner works in a fullscreen viewer: pushing the mouse into
+  the top-left corner opens the overview. GNOME waits for the pointer to
+  push against the edge, and the Windows cursor stops there, so the viewer
+  now sends that push. This needs a new viewer.
+
 ## v1.10.0 - 2026-11-25
 
 - When an application in the session asks the desktop not to sleep or not

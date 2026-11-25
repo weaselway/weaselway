@@ -14,6 +14,12 @@ unmodified compositor.
 - weaselwayd creates a keyboard, a pointer and a multitouch touchpad on
   `/dev/uinput`, and writes the client's events to them. libinput in the
   compositor handles them like any other devices.
+- A second pointer moves relatively and takes RDP relative mouse events.
+  The absolute pointer cannot go past the edge of the screen, and the
+  Windows cursor stops there too, so neither pushes against the barriers
+  compositors put at the edge (GNOME's hot corner needs 100 px of push).
+  While the cursor sits on such an edge of a viewer window, the viewer sends
+  what the mouse moves past it, read from Raw Input, as relative motion.
 - The client's touchpad contacts (MS-RDPEI, three fingers and more) go to the
   touchpad as they are (`6e10ba2`). libinput recognises the gestures, as it
   would on the machine's own pad.

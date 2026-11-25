@@ -1279,6 +1279,29 @@ on_extended_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
     return TRUE;
 }
 
+/* The viewer sends how far the mouse pushes past the edge of the screen, where
+ * the Windows cursor stops, so that the pointer presses against the
+ * compositor's barriers there. Other clients send relative motion while they
+ * hold the mouse grab, with the buttons. */
+static BOOL
+on_rel_mouse_event(rdpInput *rdp_input, UINT16 flags, INT16 dx, INT16 dy)
+{
+    struct peer_context *peer_ctx = (struct peer_context *)rdp_input->context;
+    struct input *input = peer_ctx->server->config.input;
+
+    if (!peer_ctx->activated || !input)
+        return TRUE;
+
+    if (flags & PTR_FLAGS_MOVE)
+        input_pointer_relative(input, dx, dy);
+    /* The extended buttons have flags of their own, in the same field. */
+    if (flags & (PTR_XFLAGS_BUTTON1 | PTR_XFLAGS_BUTTON2))
+        pointer_xbutton(input, flags);
+    else
+        pointer_button(input, flags);
+    return TRUE;
+}
+
 static BOOL
 on_keyboard_event(rdpInput *rdp_input, UINT16 flags, UINT8 code)
 {
@@ -1921,6 +1944,7 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     (void)freerdp_settings_set_bool(settings, FreeRDP_SupportMonitorLayoutPdu, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_HasExtendedMouseEvent, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_HasHorizontalWheel, TRUE);
+    (void)freerdp_settings_set_bool(settings, FreeRDP_HasRelativeMouseEvent, TRUE);
     (void)freerdp_settings_set_bool(settings, FreeRDP_FastPathInput, TRUE);
     /* FreeRDP 3 added two connect-time steps that need callbacks or a UDP
      * path we do not have; without them the state machine is the 2.x one. */
@@ -1938,6 +1962,7 @@ peer_init(freerdp_peer *client, struct rdp_server *server)
     input->SynchronizeEvent = on_synchronize_event;
     input->MouseEvent = on_mouse_event;
     input->ExtendedMouseEvent = on_extended_mouse_event;
+    input->RelMouseEvent = on_rel_mouse_event;
     input->KeyboardEvent = on_keyboard_event;
     input->UnicodeKeyboardEvent = on_unicode_keyboard_event;
 

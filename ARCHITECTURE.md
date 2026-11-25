@@ -56,7 +56,10 @@ The client's keyboard, mouse and touchpad become uinput devices (input devices c
 space), which libinput handles like any others. The viewer sends sizes, positions and mouse events
 in physical pixels, whatever scale Windows uses. A pointer position is a point in the client's
 desktop. weaselwayd finds the output it is on and moves the uinput pointer, whose absolute axes
-span all outputs, to the same spot on that output.
+span all outputs, to the same spot on that output. Windows stops the cursor at the edge of the
+screen, so pushing on past the edge (GNOME's hot corner) reaches the session as RDP relative mouse
+events: the viewer reads them from Raw Input, and weaselwayd writes them to a second, relative
+uinput pointer.
 
 The compositor maps those axes onto its logical layout (where it placed the outputs, in units that
 already include each output's scale). weaselwayd reads that layout as a Wayland client with
