@@ -9,6 +9,11 @@ release they led to. Weekly nixpkgs updates are not listed.
   the top-left corner opens the overview. GNOME waits for the pointer to
   push against the edge, and the Windows cursor stops there, so the viewer
   now sends that push. This needs a new viewer.
+- `ww-start-viewer /mouse:relative` captures the mouse and keyboard while
+  the viewer has the focus and sends the mouse's motion as it is, for games
+  and 3D views. The cursor stays visible where the desktop's pointer is.
+  Right Shift+Right Ctrl+G releases it, and a note at the bottom of the
+  window shows while it is released. This needs a new viewer.
 
 ## v1.10.0 - 2026-11-25
 

@@ -431,6 +431,14 @@ Each monitor can have its own scale in the desktop's display settings, and
 the desktop can arrange the monitors differently from the windows. The
 pointer still lands where it is in the viewer window.
 
+`ww-start-viewer /mouse:relative` is for games and 3D views that turn the
+camera with the mouse. While the viewer window has the focus, it captures
+the mouse and the keyboard and sends the mouse's motion as it is, so the
+mouse never stops at the edge of the screen. The cursor stays visible where
+the desktop puts its pointer. Right Shift+Right Ctrl+G releases and
+captures again, and switching to another window releases too. While the
+mouse is not captured, a note at the bottom of the window says so.
+
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
 ```sh

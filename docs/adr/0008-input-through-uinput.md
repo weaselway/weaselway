@@ -20,6 +20,11 @@ unmodified compositor.
   compositors put at the edge (GNOME's hot corner needs 100 px of push).
   While the cursor sits on such an edge of a viewer window, the viewer sends
   what the mouse moves past it, read from Raw Input, as relative motion.
+- With `/mouse:relative` the viewer captures the mouse and sends all its
+  motion as relative events. The relative pointer then moves the session's
+  pointer, so weaselwayd sends the client the pointer's new position (RDP
+  pointer position updates), and the viewer holds the visible Windows
+  cursor there.
 - The client's touchpad contacts (MS-RDPEI, three fingers and more) go to the
   touchpad as they are (`6e10ba2`). libinput recognises the gestures, as it
   would on the machine's own pad.
