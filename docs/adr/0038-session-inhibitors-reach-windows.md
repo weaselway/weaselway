@@ -31,6 +31,10 @@ The desktops keep these inhibitors in different places:
 - The NixOS module installs PowerDevil with Plasma. nixpkgs adds it only
   with `powerManagement.enable`, which NixOS-WSL turns off, and without it
   only KWin knows of the apps' inhibitors.
+- By default (`weaselway.idle.leaveToWindows`) the desktops do not lock or
+  turn off the screen on idle: Windows does, and inhibitors keep it from
+  doing so. Blanking inside the desktop only shows a black frame in the
+  viewer; it does not turn off the Windows monitor.
 - The flags go to the viewer on the `wwdisplay` channel (0029) as a new PDU,
   `INHIBIT`, the first one that the server sends. weaselwayd sends it once the
   channel is open and on every change.

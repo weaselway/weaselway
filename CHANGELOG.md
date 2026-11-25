@@ -11,8 +11,11 @@ release they led to. Weekly nixpkgs updates are not listed.
   keeps the display on unless it is locked. This works with GNOME, Plasma and logind
   inhibitors (`systemd-inhibit`), and needs a new viewer.
 - The NixOS Plasma image now includes PowerDevil, Plasma's power
-  management. Plasma's power settings work, and Plasma dims and turns off
-  its screen when idle.
+  management, so Plasma's power settings work.
+- Plasma no longer locks or turns off the screen when idle, and GNOME no
+  longer goes idle; Windows locks and turns off the monitor instead.
+  `weaselway.idle.leaveToWindows = false` brings back the desktops' own
+  defaults.
 
 ## v1.9.1 - 2026-11-23
 

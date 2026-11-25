@@ -94,6 +94,26 @@ in
       '';
     };
 
+    idle.leaveToWindows = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether the desktop leaves locking and turning off the screen on idle
+        to Windows, which still does both, and which the session's
+        inhibitors keep awake. True sets system defaults that the user can
+        change in the desktop's settings:
+
+        - Plasma: PowerDevil neither dims nor turns off the screen, and the
+          screen locker does not lock on idle.
+        - GNOME: the session never goes idle (`idle-delay` 0). Without GDM,
+          GNOME has no lock screen and does not blank either way.
+
+        False keeps the desktops' own defaults: Plasma locks after 5 minutes
+        and turns the virtual display off, which the viewer shows as a black
+        frame.
+      '';
+    };
+
     usbip.devices = lib.mkOption {
       type = lib.types.listOf (lib.types.strMatching "[0-9a-fA-F]{4}:[0-9a-fA-F]{4}");
       default = [ ];
@@ -354,6 +374,35 @@ in
           # Plasma adds it only with powerManagement, which NixOS-WSL turns off.
           # It keeps the apps' sleep and idle inhibitors, which weaselwayd reads.
           pkgs.kdePackages.powerdevil
+        ];
+      })
+
+      (lib.mkIf (config.services.desktopManager.plasma6.enable && cfg.idle.leaveToWindows) {
+        environment.etc = {
+          "xdg/powerdevilrc".text =
+            lib.concatMapStrings
+              (profile: ''
+                [${profile}][Display]
+                DimDisplayWhenIdle=false
+                TurnOffDisplayWhenIdle=false
+
+              '')
+              [
+                "AC"
+                "Battery"
+                "LowBattery"
+              ];
+          "xdg/kscreenlockerrc".text = ''
+            [Daemon]
+            Autolock=false
+          '';
+        };
+      })
+
+      (lib.mkIf (config.services.desktopManager.gnome.enable && cfg.idle.leaveToWindows) {
+        # Never idle: no blank screen, and so no lock either.
+        programs.dconf.profiles.user.databases = [
+          { settings."org/gnome/desktop/session".idle-delay = lib.gvariant.mkUint32 0; }
         ];
       })
     ]

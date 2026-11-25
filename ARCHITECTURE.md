@@ -301,7 +301,8 @@ affect ([0015](docs/adr/0015-forks-fetched-with-git.md)).
 Most settings in [nix/module.nix](nix/module.nix) work around a specific failure that was observed
 on a WSL installation. This section records those failures. The module's options are
 `weaselway.enable`, `weaselway.adapter` (the GPU), `weaselway.session` (the default session of
-`ww-start-session`) and `weaselway.usbip.devices`. [nix/bluetooth.nix](nix/bluetooth.nix) adds
+`ww-start-session`), `weaselway.usbip.devices` and `weaselway.idle.leaveToWindows` (no idle
+lock or screen off in the desktop, see [ADR 0038](docs/adr/0038-session-inhibitors-reach-windows.md)). [nix/bluetooth.nix](nix/bluetooth.nix) adds
 `weaselway.bluetooth.enable`.
 
 ### Graphics

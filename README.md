@@ -390,6 +390,7 @@ deviates from the NixOS defaults in two places:
 | `weaselway.session` | `"gnome"` | The default session |
 | `weaselway.bluetooth.enable` | `false` | Bluetooth modules with rfkill |
 | `weaselway.usbip.devices` | `[ ]` | USB devices to keep attached |
+| `weaselway.idle.leaveToWindows` | `true` | No idle lock or screen off in the desktop |
 
 - **`weaselway.adapter`** matches a part of the GPU's name, for example
   `"nvidia"` or `"Intel"`. `null` selects the first adapter Windows lists.
@@ -401,6 +402,11 @@ deviates from the NixOS defaults in two places:
   described under [USB devices and Bluetooth](#usb-devices-and-bluetooth).
   The service behind `weaselway.usbip.devices` expects usbipd-win in its
   default location, `C:\Program Files\usbipd-win`.
+- **`weaselway.idle.leaveToWindows`** leaves locking and turning off the
+  screen to Windows. GNOME then never counts as idle, and Plasma neither
+  dims, turns off nor locks the screen when idle. These are defaults, which
+  the desktop's settings can still change. Set it to `false` for the
+  desktops' own defaults.
 
 ### Viewer options
 

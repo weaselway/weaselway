@@ -13,6 +13,8 @@
   weaselway.enable = true;
   # The GPU to render on, by a substring of its name.
   # weaselway.adapter = "nvidia";
+  # Let the desktop lock and turn off the screen on idle, not only Windows.
+  # weaselway.idle.leaveToWindows = false;
 
   # GNOME, without a display manager: ww-start-session does its job.
   services.desktopManager.gnome.enable = true;
