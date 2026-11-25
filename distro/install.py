@@ -149,6 +149,7 @@ class Options:
     bluetooth: bool
     jobs: int
     quick_build: bool
+    leave_idle_to_windows: bool
 
 
 def ask(question: str, choices: Sequence[str], default: str) -> str:
@@ -189,6 +190,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="parallel compile jobs (default: CPU threads, at most 8, since a WSL VM with 8 GiB swaps with more)",
     )
     parser.add_argument(
+        "--leave-idle-to-windows",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="keep the desktop from locking and turning off the screen when idle, and leave both to Windows (default)",
+    )
+    parser.add_argument(
         "--quick-build",
         action="store_true",
         help="compile without optimization, for CI: faster to build, slower to run",
@@ -215,6 +222,7 @@ def complete_options(parser: argparse.ArgumentParser, args: argparse.Namespace) 
         bluetooth=args.bluetooth,
         jobs=args.jobs,
         quick_build=args.quick_build,
+        leave_idle_to_windows=args.leave_idle_to_windows,
     )
 
 
@@ -397,6 +405,8 @@ class Ubuntu(Distro):
         ),
         Desktop.KDE: (
             "plasma-desktop", "plasma-workspace", "kwin-wayland", "konsole", "dolphin", "xdg-desktop-portal-kde",
+            # Keeps the apps' sleep and idle inhibitors, which weaselwayd reads.
+            "powerdevil",
         ),
         Desktop.HYPRLAND: ("hyprland", "kitty", "xdg-desktop-portal-hyprland"),
     }  # fmt: skip
@@ -510,7 +520,7 @@ class Arch(Distro):
         ),
         Desktop.KDE: (
             "plasma-desktop", "plasma-workspace", "plasma-integration", "kglobalacceld", "xdg-desktop-portal",
-            "xdg-desktop-portal-kde", "konsole", "dolphin",
+            "xdg-desktop-portal-kde", "konsole", "dolphin", "powerdevil",
         ),
         Desktop.HYPRLAND: ("hyprland", "kitty", "xdg-desktop-portal-hyprland"),
     }  # fmt: skip
@@ -915,6 +925,41 @@ def install_hyprland_session() -> None:
     )
 
 
+# Defaults that keep the desktop from locking and turning off the screen when
+# idle, as weaselway.idle.leaveToWindows does on NixOS. The desktop's settings
+# still override them.
+IDLE_DEFAULTS: Final[dict[Desktop, dict[str, str]]] = {
+    # Compiled into the schemas, also by later package updates. Without GDM
+    # GNOME neither locks nor blanks; this keeps it from going idle at all.
+    Desktop.GNOME: {
+        "/usr/share/glib-2.0/schemas/90_weaselway.gschema.override": "[org.gnome.desktop.session]\nidle-delay=uint32 0\n",
+    },
+    Desktop.KDE: {
+        "/etc/xdg/powerdevilrc": "\n".join(
+            f"[{profile}][Display]\nDimDisplayWhenIdle=false\nTurnOffDisplayWhenIdle=false\n"
+            for profile in ("AC", "Battery", "LowBattery")
+        ),
+        "/etc/xdg/kscreenlockerrc": "[Daemon]\nAutolock=false\n",
+    },
+}
+
+
+def install_idle_defaults(options: Options) -> None:
+    wanted = IDLE_DEFAULTS.get(options.desktop, {}) if options.leave_idle_to_windows else {}
+    for files in IDLE_DEFAULTS.values():
+        for name, content in files.items():
+            path = Path(name)
+            if path.exists() and MARKER not in path.read_text(errors="replace"):
+                if name in wanted:
+                    print(f"warning: keeping your {path}", file=sys.stderr)
+            elif name in wanted:
+                write_root(path, f"# {MARKER}.\n{content}")
+            elif path.exists():
+                sudo("rm", "-f", path)
+    if shutil.which("glib-compile-schemas"):
+        sudo("glib-compile-schemas", "/usr/share/glib-2.0/schemas")
+
+
 def install_bluetooth(options: Options) -> None:
     unit = "/etc/systemd/system/weaselway-bluetooth.service"
     if not options.bluetooth:
@@ -1003,6 +1048,7 @@ def install(options: Options, distro: Distro) -> None:
     install_weaselwayd()
     install_releases()
     install_configuration(options)
+    install_idle_defaults(options)
     install_bluetooth(options)
 
     print(

@@ -8,13 +8,14 @@ release they led to. Weekly nixpkgs updates are not listed.
 - When an application in the session asks the desktop not to sleep or not
   to blank the screen, such as a video player or a download manager, the
   viewer asks Windows the same. Windows then does not go to sleep, and
-  keeps the display on unless it is locked. This works with GNOME, Plasma and logind
-  inhibitors (`systemd-inhibit`), and needs a new viewer.
-- The NixOS Plasma image now includes PowerDevil, Plasma's power
-  management, so Plasma's power settings work.
+  keeps the display on unless it is locked. This works with GNOME, Plasma
+  and logind inhibitors (`systemd-inhibit`), and needs a new viewer.
+- The NixOS Plasma image and the installer's Plasma now include
+  PowerDevil, Plasma's power management, so Plasma's power settings work.
 - Plasma no longer locks or turns off the screen when idle, and GNOME no
   longer goes idle; Windows locks and turns off the monitor instead.
-  `weaselway.idle.leaveToWindows = false` brings back the desktops' own
+  `weaselway.idle.leaveToWindows = false` on NixOS and
+  `install.py --no-leave-idle-to-windows` bring back the desktops' own
   defaults.
 
 ## v1.9.1 - 2026-11-23

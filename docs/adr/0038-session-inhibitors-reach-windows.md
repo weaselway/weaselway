@@ -30,8 +30,10 @@ The desktops keep these inhibitors in different places:
   report changes with signals, so nothing polls.
 - The NixOS module installs PowerDevil with Plasma. nixpkgs adds it only
   with `powerManagement.enable`, which NixOS-WSL turns off, and without it
-  only KWin knows of the apps' inhibitors.
-- By default (`weaselway.idle.leaveToWindows`) the desktops do not lock or
+  only KWin knows of the apps' inhibitors. The installer lists it with
+  Plasma too, since Arch's `plasma-desktop` does not pull it in.
+- By default (`weaselway.idle.leaveToWindows` on NixOS,
+  `--leave-idle-to-windows` in the installer) the desktops do not lock or
   turn off the screen on idle: Windows does, and inhibitors keep it from
   doing so. Blanking inside the desktop only shows a black frame in the
   viewer; it does not turn off the Windows monitor.

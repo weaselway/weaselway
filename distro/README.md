@@ -90,6 +90,8 @@ command line instead:
 - `--jobs N` sets the number of parallel compile jobs. The default is one per
   CPU thread, at most 8: a WSL VM with the default 8 GiB of RAM swaps with
   more during the Mesa and KWin builds, which looks like a hung build.
+- `--no-leave-idle-to-windows` lets the desktop lock and turn off the screen
+  when idle, see [Desktops](#desktops).
 - `--quick-build` compiles without optimization. It is for CI: the builds
   finish sooner, and the desktop runs slower.
 
@@ -170,13 +172,21 @@ session, run `ww-start-session stop`.
 
 ## Desktops
 
-**GNOME** has no lock screen here: gnome-shell only locks when GDM runs, and
-the script keeps GDM out. Lock Windows instead.
+The script leaves locking and turning off the screen when idle to Windows.
+It installs defaults that the desktop's settings can still change, and
+`--no-leave-idle-to-windows` removes them again:
 
-**Plasma** blanks the virtual display and locks the session after it has been
+**GNOME** has no lock screen here: gnome-shell only locks when GDM runs, and
+the script keeps GDM out. Lock Windows instead. The script also keeps GNOME
+from going idle, with `idle-delay` 0 in
+`/usr/share/glib-2.0/schemas/90_weaselway.gschema.override`.
+
+**Plasma** neither dims, turns off nor locks the screen when idle, set in
+`/etc/xdg/powerdevilrc` and `/etc/xdg/kscreenlockerrc`. The script keeps
+these files if you wrote them yourself. With `--no-leave-idle-to-windows`,
+Plasma blanks the virtual display and locks the session after it has been
 idle for a while. Moving the mouse in the viewer wakes it. If it does not,
-run `kscreen-doctor --dpms on` and log in, or turn off the screen locker and
-the display power saving in Plasma's settings.
+run `kscreen-doctor --dpms on` and log in.
 
 **Hyprland** starts through `ww-start-session custom`, which runs
 `/usr/local/bin/custom-weaselway-session`. The script writes that file unless
