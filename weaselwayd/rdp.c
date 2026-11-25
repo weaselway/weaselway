@@ -1498,10 +1498,21 @@ rdp_server_set_pointer(struct rdp_server *server, const uint8_t *pixels, int str
         server->pointer = g_malloc((size_t)width * 4 * (size_t)height);
 
         /* Pointer bitmaps are bottom-up, like a Windows DIB. B G R A in
-         * memory is what the wire calls ARGB. */
-        for (int y = 0; y < height; y++)
-            memcpy(server->pointer + (size_t)(height - 1 - y) * (size_t)width * 4,
-                   pixels + (size_t)y * (size_t)stride, (size_t)width * 4);
+         * memory is what the wire calls ARGB. Its alpha is straight, as in a
+         * Windows icon: premultiplied colors make soft edges darker, a gray
+         * fringe around a white outline. */
+        for (int y = 0; y < height; y++) {
+            const uint8_t *src = pixels + (size_t)y * (size_t)stride;
+            uint8_t *dst = server->pointer + (size_t)(height - 1 - y) * (size_t)width * 4;
+
+            for (int x = 0; x < width * 4; x += 4) {
+                unsigned a = src[x + 3];
+
+                for (int c = 0; c < 3; c++)
+                    dst[x + c] = a ? (uint8_t)MIN(255u, (src[x + c] * 255u + a / 2) / a) : 0;
+                dst[x + 3] = (uint8_t)a;
+            }
+        }
         server->pointer_width = width;
         server->pointer_height = height;
         server->pointer_hot_x = CLAMP(hot_x, 0, width - 1);

@@ -17,6 +17,10 @@ release they led to. Weekly nixpkgs updates are not listed.
   `weaselway.idle.leaveToWindows = false` on NixOS and
   `install.py --no-leave-idle-to-windows` bring back the desktops' own
   defaults.
+- Mouse pointers with soft edges, such as the Bibata cursor themes, no
+  longer show a gray fringe around their outline. weaselwayd and the viewer
+  each darkened the edge pixels; both are fixed, so the full fix needs a
+  new viewer.
 
 ## v1.9.1 - 2026-11-23
 
