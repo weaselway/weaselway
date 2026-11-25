@@ -171,6 +171,9 @@ struct peer_context {
     /* When the last touch frame came, while fingers are down; 0 otherwise.
      * Under notes_lock. */
     gint64 touch_last;
+    /* Relative motion moved the pointer last, not an absolute position: the
+     * client is told where it went. Under notes_lock. */
+    bool server_moves_pointer;
 
     /* The gfxredir, disp and rdpei callbacks run on the channels' own reader
      * threads. They only record what happened here, under this lock, and wake
@@ -239,6 +242,8 @@ struct rdp_server {
     uint8_t *pointer;
     int pointer_width, pointer_height;
     int pointer_hot_x, pointer_hot_y;
+    /* Where it is on the client's desktop, as last reported. */
+    int pointer_x, pointer_y;
 
     /* The monitors the client asked for, normalized, and until when the
      * screens may take to get there. */
@@ -1202,6 +1207,9 @@ pointer_position(struct peer_context *peer_ctx, UINT16 x, UINT16 y)
     struct monitor screens[RDP_MAX_OUTPUTS];
     int sx, sy, width, height;
 
+    g_mutex_lock(&peer_ctx->notes_lock);
+    peer_ctx->server_moves_pointer = false;
+    g_mutex_unlock(&peer_ctx->notes_lock);
     if (!compositor_screens(server, screens))
         current_screens(server, screens);
     if (layout_map_point(server->wanted, screens, server->n_wanted, x, y, &sx, &sy) < 0)
@@ -1279,10 +1287,10 @@ on_extended_mouse_event(rdpInput *rdp_input, UINT16 flags, UINT16 x, UINT16 y)
     return TRUE;
 }
 
-/* The viewer sends how far the mouse pushes past the edge of the screen, where
- * the Windows cursor stops, so that the pointer presses against the
- * compositor's barriers there. Other clients send relative motion while they
- * hold the mouse grab, with the buttons. */
+/* The viewer sends relative motion, with the buttons, while it holds the mouse
+ * grab with /mouse:relative. Otherwise it sends how far the mouse pushes past
+ * the edge of the screen, where the Windows cursor stops, so that the pointer
+ * presses against the compositor's barriers there. */
 static BOOL
 on_rel_mouse_event(rdpInput *rdp_input, UINT16 flags, INT16 dx, INT16 dy)
 {
@@ -1292,8 +1300,12 @@ on_rel_mouse_event(rdpInput *rdp_input, UINT16 flags, INT16 dx, INT16 dy)
     if (!peer_ctx->activated || !input)
         return TRUE;
 
-    if (flags & PTR_FLAGS_MOVE)
+    if (flags & PTR_FLAGS_MOVE) {
+        g_mutex_lock(&peer_ctx->notes_lock);
+        peer_ctx->server_moves_pointer = true;
+        g_mutex_unlock(&peer_ctx->notes_lock);
         input_pointer_relative(input, dx, dy);
+    }
     /* The extended buttons have flags of their own, in the same field. */
     if (flags & (PTR_XFLAGS_BUTTON1 | PTR_XFLAGS_BUTTON2))
         pointer_xbutton(input, flags);
@@ -1516,6 +1528,39 @@ peer_send_pointer(struct peer_context *peer_ctx)
 
         update->pointer->PointerSystem(update->context, &pointer);
     }
+    update->EndPaint(update->context);
+}
+
+void
+rdp_server_set_pointer_position(struct rdp_server *server, int output, int x, int y)
+{
+    struct peer_context *peer_ctx = server->peer;
+    POINTER_POSITION_UPDATE position;
+    rdpUpdate *update;
+    bool send;
+
+    if (output < 0 || output >= server->n_wanted)
+        return;
+    x += server->wanted[output].x;
+    y += server->wanted[output].y;
+    if (x == server->pointer_x && y == server->pointer_y)
+        return;
+    server->pointer_x = x;
+    server->pointer_y = y;
+
+    if (!peer_ctx || !peer_ctx->activated || peer_ctx->failed)
+        return;
+    g_mutex_lock(&peer_ctx->notes_lock);
+    send = peer_ctx->server_moves_pointer;
+    g_mutex_unlock(&peer_ctx->notes_lock);
+    if (!send)
+        return;
+
+    position.xPos = (UINT32)MAX(x, 0);
+    position.yPos = (UINT32)MAX(y, 0);
+    update = peer_ctx->peer->context->update;
+    update->BeginPaint(update->context);
+    update->pointer->PointerPosition(update->context, &position);
     update->EndPaint(update->context);
 }
 

@@ -950,9 +950,9 @@ update_cursor(struct output *out, const struct drm_dxgdrm_get_frame *frame)
 
 /*
  * The cursor planes are the client's to draw: the image of one becomes the
- * client's mouse pointer, and no plane means no pointer. Only the image is
- * sent. The client moves the pointer itself, so a commit that only moves a
- * plane is nothing to it.
+ * client's mouse pointer, and no plane means no pointer. The client moves the
+ * pointer itself, except while relative motion moves it here: the plane's
+ * position is then where it has to go (rdp_server_set_pointer_position).
  *
  * The client has one pointer and the outputs a plane each, which a compositor
  * shows on the output the pointer is on, or on two while it is across their
@@ -1017,6 +1017,9 @@ fetch_frame(struct output *out, GError **error)
     if (frame.cursor_fd >= 0)
         close(frame.cursor_fd);
     sync_pointer(p, out->index, cursor_changed);
+    if ((frame.flags & DXGDRM_FRAME_CURSOR) && out->index == p->pointer_output)
+        rdp_server_set_pointer_position(p->rdp, out->index, frame.cursor_x + frame.cursor_hot_x,
+                                        frame.cursor_y + frame.cursor_hot_y);
 
     /* A compositor leaves its last frames up when it goes away. Every output
      * hears of it; the first one that does acts for all. */
