@@ -3,7 +3,7 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
-## Unreleased
+## v1.10.0 - 2026-11-25
 
 - When an application in the session asks the desktop not to sleep or not
   to blank the screen, such as a video player or a download manager, the
