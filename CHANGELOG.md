@@ -14,6 +14,9 @@ release they led to. Weekly nixpkgs updates are not listed.
   and 3D views. The cursor stays visible where the desktop's pointer is.
   Right Shift+Right Ctrl+G releases it, and a note at the bottom of the
   window shows while it is released. This needs a new viewer.
+- The viewer's notifications, such as "Mouse and keyboard captured", fade
+  and slide in and out instead of appearing at once. This needs a new
+  viewer.
 
 ## v1.10.0 - 2026-11-25
 
