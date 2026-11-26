@@ -354,6 +354,41 @@ niri 26.04 was tested with this config on the GNOME image: the viewer shows
 niri, the clipboard works, and niri follows the size of the viewer window.
 Keyboard, mouse, audio and X11 apps have not been tested.
 
+COSMIC runs as a custom session too. Its compositor, cosmic-comp, takes the
+GPU as a device number, and it keeps its first size when the viewer window
+changes size: it ignores new modes of a display that stays connected
+([pop-os/cosmic-epoch#1351](https://github.com/pop-os/cosmic-epoch/issues/1351)).
+[nix/cosmic-comp-1.11-mode-changes.patch](nix/cosmic-comp-1.11-mode-changes.patch)
+fixes the resizing. weaselway does not apply it: copy it to `/etc/nixos` and
+add it in `configuration.nix`:
+
+```nix
+services.desktopManager.cosmic.enable = true;
+weaselway.session = "custom";
+environment.systemPackages = [
+  (pkgs.writeShellScriptBin "custom-weaselway-session" ''
+    dev=$(stat -L -c '%Hr:%Lr' /dev/dri/by-path/platform-dxgdrm-render)
+    export COSMIC_RENDER_DEVICE=$dev COSMIC_DRM_ALLOW_DEVICES=$dev
+    exec start-cosmic "$@"
+  '')
+];
+nixpkgs.overlays = [
+  (final: prev: {
+    cosmic-comp = prev.cosmic-comp.overrideAttrs (old: {
+      patches = (old.patches or [ ]) ++ [ ./cosmic-comp-1.11-mode-changes.patch ];
+      doCheck = false; # the test build needs more than 16 GB of memory
+    });
+  })
+];
+```
+
+On the GNOME image, also set `services.orca.enable = lib.mkForce false;`,
+because GNOME and COSMIC set it to different values. The patch is for
+COSMIC 1.11, which is in nixos-unstable as of 2026-11-26. With it,
+cosmic-comp is built from source, which takes about 20 minutes. It was tested
+on the GNOME image: COSMIC follows the viewer window, but the panel and the
+dock sometimes keep their old size until their content changes.
+
 ## Configuration
 
 ### Changing the system

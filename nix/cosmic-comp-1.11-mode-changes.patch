@@ -1,0 +1,94 @@
+From 353a27ca375e2730cb3d564aad57670f11df06d6 Mon Sep 17 00:00:00 2001
+From: Oliver Bestmann <oliver.bestmann@googlemail.com>
+Date: Thu, 26 Nov 2026 12:41:28 +0100
+Subject: [PATCH] kms: pick up mode changes of connected connectors
+
+device_changed only read a connector's modes when the connector was added.
+A connector that stays connected and changes its modes, like a virtual
+display resized by its host, kept the old list and the old mode.
+
+Compare the modes of each connected output with the connector's after a
+hotplug. If they differ, replace them, switch the output config to the new
+preferred mode and store it, so that the refresh_output_config after the
+hotplug applies it.
+---
+ src/backend/kms/device.rs | 50 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/src/backend/kms/device.rs b/src/backend/kms/device.rs
+index c58450b..7af60c4 100644
+--- a/src/backend/kms/device.rs
++++ b/src/backend/kms/device.rs
+@@ -296,12 +296,55 @@ impl State {
+         let drm_node = DrmNode::from_dev_id(dev)?;
+         let mut outputs_removed = Vec::new();
+         let mut outputs_added = Vec::new();
++        let mut modes_changed = false;
+ 
+         {
+             let backend = self.backend.kms();
+             if let Some(device) = backend.drm_devices.get_mut(&drm_node) {
+                 let changes = device.enumerate_surfaces()?;
+ 
++                // A connector can change its modes and stay connected, like a virtual
++                // display that its host resizes. Pick up the new list and switch to its
++                // preferred mode.
++                for (conn, output) in device.inner.outputs.iter() {
++                    if changes.removed.contains(conn)
++                        || changes.added.iter().any(|(c, _)| c == conn)
++                    {
++                        continue;
++                    }
++                    // enumerate_surfaces probed already
++                    let Ok(conn_info) = device.drm.device_mut().get_connector(*conn, false) else {
++                        continue;
++                    };
++                    if conn_info.state() != connector::State::Connected {
++                        continue;
++                    }
++                    let old = output.modes();
++                    let same = conn_info.modes().len() == old.len()
++                        && conn_info.modes().iter().all(|mode| {
++                            old.contains(&OutputMode {
++                                size: (mode.size().0 as i32, mode.size().1 as i32).into(),
++                                refresh: drm_helpers::calculate_refresh_rate(*mode) as i32,
++                            })
++                        });
++                    if same {
++                        continue;
++                    }
++
++                    if let Err(err) =
++                        populate_modes(device.drm.device_mut(), output, *conn, false, (0, 0))
++                    {
++                        warn!(?err, "Failed to read the new modes of {}", output.name());
++                        continue;
++                    }
++                    if let Some(mode) = output.preferred_mode() {
++                        info!(?mode, "Modes of {} changed", output.name());
++                        output.config_mut().mode =
++                            ((mode.size.w, mode.size.h), Some(mode.refresh as u32));
++                        modes_changed = true;
++                    }
++                }
++
+                 let mut w = self.common.shell.read().global_space().size.w as u32;
+                 for conn in changes.removed {
+                     // contains conns with updated crtcs, just drop the surface and re-create
+@@ -375,6 +418,13 @@ impl State {
+             self.common.remove_output(&output);
+         }
+ 
++        // The caller re-reads the stored output config next: store the new modes in it.
++        if modes_changed {
++            self.common
++                .config
++                .write_outputs(self.common.output_configuration_state.outputs());
++        }
++
+         self.backend.kms().refresh_used_devices()?;
+         Ok(outputs_added)
+     }
+-- 
+2.56.0
+
