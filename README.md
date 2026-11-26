@@ -63,8 +63,9 @@ ww-start-viewer
 - A GPU with a Windows driver that supports WSL GPU compute (the same driver
   that provides GPU access to other WSL distros).
 - One of the WSL kernels `6.18.40.1-microsoft-standard-WSL2` (WSL 3.0.1),
-  `6.18.54.1-microsoft-standard-WSL2` (WSL 3.0.3) or
-  `6.18.58.1-microsoft-standard-WSL2` (WSL 3.0.5). The `dxgdrm` module is built
+  `6.18.54.1-microsoft-standard-WSL2` (WSL 3.0.3),
+  `6.18.58.1-microsoft-standard-WSL2` (WSL 3.0.5) or
+  `6.18.64.1-microsoft-standard-WSL2` (not in a WSL release yet). The `dxgdrm` module is built
   for these kernel releases, and another release cannot load it. Check yours
   with `uname -r` inside any WSL distro. [Updating](#updating) explains what
   to do when WSL updates its kernel.

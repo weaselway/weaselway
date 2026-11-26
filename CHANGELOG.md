@@ -21,6 +21,9 @@ release they led to. Weekly nixpkgs updates are not listed.
   the touchpad, not only gestures of three or more, so the desktop handles
   pointer motion, taps and scrolling as on a Linux laptop.
   Right Ctrl+Right Shift+T turns it off and on. This needs a new viewer.
+- dxgdrm v1.4.1 adds WSL kernel 6.18.64.1, which Microsoft published on
+  2026-11-23. No WSL release ships it yet; once one does, the NixOS images
+  and the installer can load dxgdrm on it.
 
 ## v1.10.0 - 2026-11-25
 

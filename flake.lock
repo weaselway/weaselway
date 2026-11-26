@@ -10,11 +10,11 @@
         "wsl-kernel": "wsl-kernel"
       },
       "locked": {
-        "lastModified": 1794952133,
-        "narHash": "sha256-IGZtWiJu7FebXo84wolhc2hTh3ejbarqggStQwsDtQA=",
+        "lastModified": 1795636943,
+        "narHash": "sha256-dQsZh0I829gxi3oPc4+f/JdzPy73eXvMvTGykYRSiWw=",
         "owner": "weaselway",
         "repo": "dxgdrm",
-        "rev": "87ad880c095f8b481f37f9624df8b0e24c1e7535",
+        "rev": "0e11b142b764da88cb675398d39f66af7b93a9d4",
         "type": "github"
       },
       "original": {
@@ -144,11 +144,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1794299984,
-        "narHash": "sha256-Rc65J1ZD/SYgPPw7aSJV/OjSqR5Fwr1s8D7Ch2QPC4Y=",
+        "lastModified": 1795485597,
+        "narHash": "sha256-0CkkPIz4jZGFFZnoMQWidD5/hOpfeWcZQiqezhPLWfM=",
         "owner": "weaselway",
         "repo": "wsl-kernel",
-        "rev": "c7ffb91f2b33f34b1d908735d6eee47c5084d6d8",
+        "rev": "fa47ad4b8969afe5f1f4f5106496cf740e394ec2",
         "type": "github"
       },
       "original": {

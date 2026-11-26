@@ -340,11 +340,11 @@ lock or screen off in the desktop, see [ADR 0038](docs/adr/0038-session-inhibito
 
 - The module is keyed on the kernel release. `weaselway-prep` loads
   `dxgdrm-all/lib/modules/$(uname -r)/extra/dxgdrm.ko`, and dxgdrm is built for every release the
-  `wsl-kernel` flake lists in its `kernels` attribute, currently `6.18.40.1`, `6.18.54.1` and
-  `6.18.58.1` (`-microsoft-standard-WSL2`). On any other kernel the file does not exist, the unit
+  `wsl-kernel` flake lists in its `kernels` attribute, currently `6.18.40.1`, `6.18.54.1`,
+  `6.18.58.1` and `6.18.64.1` (`-microsoft-standard-WSL2`). On any other kernel the file does not exist, the unit
   logs that, and `ww-start-session` refuses to start for lack of the KMS node. Supporting a new WSL
   kernel means running wsl-kernel's `add-kernel.sh`, then updating dxgdrm's and weaselway's locks.
-- `6.18.40.1` has no DRM core, and `6.18.54.1` and `6.18.58.1` have it but no KMS helpers. For
+- `6.18.40.1` has no DRM core, and `6.18.54.1` and later have it but no KMS helpers. For
   those kernels the package also contains what is missing (`hdmi.ko`, `drm.ko`,
   `drm_kms_helper.ko`, or only the last), built from the same kernel source, and a `modules.dep`
   that loads them before `dxgdrm`. From `6.18.54.1` on, WSL's built-in `vgem` takes `card0` and
