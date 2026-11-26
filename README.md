@@ -418,7 +418,37 @@ deviates from the NixOS defaults in two places:
 ### Viewer options
 
 `ww-start-viewer` appends its arguments to the `sdl-freerdp.exe` command line,
-so any FreeRDP option can be added or overridden for one run.
+so any FreeRDP option can be added or overridden for one run. These are the
+ones you are most likely to need:
+
+| Option | Effect |
+|---|---|
+| `/f` | Start in fullscreen |
+| `/w:<width> /h:<height>` | Window size at start, 1280x768 by default |
+| `/sdl-windows:<count>` | The desktop as up to four monitors, one window each |
+| `/mouse:relative` | Capture the mouse, for games and 3D views |
+| `/sdl-touchpad-raw` | Send every touchpad finger to the desktop (experimental) |
+| `/sdl-show-stats[:<scale>]` | Overlay with frame rate and timings |
+| `/sdl-allow-screensaver:off` | Keep the monitor on while the viewer runs |
+
+The desktop takes the size of the window, also when you resize it later.
+The sections below and [Keyboard, touchpad and audio](#keyboard-touchpad-and-audio)
+describe the options in more detail.
+
+While the viewer has the focus, hold Right Shift+Right Ctrl and press one of
+these keys:
+
+| Key | Action |
+|---|---|
+| Enter | Fullscreen on or off |
+| G | Capture or release the keyboard, and the mouse with `/mouse:relative` |
+| N / X | Add a monitor window, or close the focused one |
+| T | Switch the touchpad mode, with `/sdl-touchpad-raw` only |
+| A | Stats overlay on or off |
+| P | Outlines of the regions each frame changes on or off |
+| M | Minimize |
+| D | Disconnect and close the viewer |
+| H | Show these keys in the window |
 
 The viewer lets Windows turn the monitor off and start the screen saver
 (`/sdl-allow-screensaver`). Without that option, SDL keeps the monitor on
@@ -445,6 +475,12 @@ mouse never stops at the edge of the screen. The cursor stays visible where
 the desktop puts its pointer. Right Shift+Right Ctrl+G releases and
 captures again, and switching to another window releases too. While the
 mouse is not captured, a note at the bottom of the window says so.
+
+With `/mouse:relative`, Windows applies no pointer speed or acceleration
+("Enhance pointer precision") to the captured mouse. The desktop applies its
+own instead, so you set both in its mouse settings, for example
+Settings → Mouse & Touchpad in GNOME. With Mouse Acceleration off there, the
+desktop only scales the motion by the pointer speed.
 
 To run a different build of the viewer, set `WEASELWAY_VIEWER`:
 
