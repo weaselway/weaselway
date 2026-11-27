@@ -759,7 +759,9 @@ when working on the code.
 
 - Two features of the RDP backend that mutter used to carry have not been ported: the client's
   scale factor (the viewer sends one per monitor, and weaselwayd ignores it), and the error frame (a client is disconnected instead, with the reason in the log).
-  There is no touchscreen device, only the touchpad.
+  There is no touchscreen device: the viewer sends a touchscreen's contacts over RDPEI (the RDP
+  touch input channel), and weaselwayd puts them on its uinput touchpad like a touchpad's. This
+  was tested with contacts injected by `InjectTouchInput`, not with a real touchscreen.
 - The clipboard does not carry files, and needs mutter or a compositor with `ext-data-control-v1`.
   - A client that connects with text or an image on its clipboard replaces the session's clipboard
     content.

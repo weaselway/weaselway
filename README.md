@@ -660,7 +660,8 @@ viewer's hotkeys.
   the desktop in physical pixels, so at 150% in Windows the desktop looks
   smaller than Windows applications. Set the scale in the desktop's display
   settings, per monitor if your Windows monitors use different scales.
-- Touchscreens are not forwarded. Touchpad gestures are.
+- A touchscreen works like a touchpad: a finger moves the pointer from
+  where it is, instead of touching the spot under it.
 - The viewer works only in the Windows session that started WSL. If WSL was
   started over SSH, from Remote Desktop or by a scheduled task,
   `ww-start-viewer` says so. Then run `wsl --shutdown` and start the distro
