@@ -31,6 +31,9 @@ release they led to. Weekly nixpkgs updates are not listed.
 - dxgdrm v1.4.1 adds WSL kernel 6.18.64.1, which Microsoft published on
   2026-11-23. No WSL release ships it yet; once one does, the NixOS images
   and the installer can load dxgdrm on it.
+- Installs on Ubuntu and Arch get viewer v1.5.0. It is the new viewer that
+  the hot corner, mouse capture, notification, touchpad and touch entries
+  above need.
 
 ## v1.10.0 - 2026-11-25
 
