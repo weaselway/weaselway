@@ -3,7 +3,7 @@
 Notable changes per release. Pre-releases (`-rcN`) are folded into the
 release they led to. Weekly nixpkgs updates are not listed.
 
-## Unreleased
+## v1.11.0 - 2026-11-27
 
 - GNOME's hot corner works in a fullscreen viewer: pushing the mouse into
   the top-left corner opens the overview. GNOME waits for the pointer to
